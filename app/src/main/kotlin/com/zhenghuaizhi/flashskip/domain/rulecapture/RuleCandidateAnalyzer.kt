@@ -1,0 +1,171 @@
+package com.zhenghuaizhi.flashskip.domain.rulecapture
+
+import com.zhenghuaizhi.flashskip.domain.model.AdRule
+import com.zhenghuaizhi.flashskip.domain.model.AppVersion
+import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
+import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
+import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
+import com.zhenghuaizhi.flashskip.domain.model.RuleCandidateAnalysis
+import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
+import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
+import java.util.Locale
+
+object RuleCandidateAnalyzer {
+    const val REQUIRED_STABLE_SAMPLES = 5
+    const val REQUIRED_UNIQUE_PROBES = 2
+    const val COOLDOWN_MS = 10_000L
+
+    fun analyze(
+        samples: List<CaptureSample>,
+        targetAppId: TargetAppId,
+        currentVersion: AppVersion?,
+    ): RuleCandidateAnalysis {
+        val targetSamples = samples.filter { it.targetAppId == targetAppId }
+        val currentSamples = currentVersion?.let { version ->
+            targetSamples.filter {
+                it.appVersion == version &&
+                    it.clickedAfterTargetMs >= 0 &&
+                    it.activityName.isNotBlank()
+            }
+        }.orEmpty()
+        val ranked = rankSelectors(currentSamples)
+        val primary = ranked.firstOrNull { it.ready } ?: ranked.firstOrNull()
+        val readyCandidates = ranked.filter(SelectorRank::ready)
+        val status = when {
+            currentVersion == null && targetSamples.isNotEmpty() -> RuleCardStatus.STALE
+            currentVersion != null && currentSamples.isEmpty() && targetSamples.isNotEmpty() ->
+                RuleCardStatus.STALE
+            readyCandidates.isNotEmpty() -> RuleCardStatus.READY
+            else -> RuleCardStatus.CANDIDATE
+        }
+        val primarySamples = primary?.samples.orEmpty()
+        val activities = primarySamples.map(CaptureSample::activityName).toSet()
+        val minimumDelay = primarySamples.minOfOrNull(CaptureSample::clickedAfterTargetMs)
+        val rule = if (status == RuleCardStatus.READY && currentVersion != null) {
+            AdRule(
+                id = localRuleId(targetAppId, currentVersion, requireNotNull(primary).selector),
+                targetAppId = targetAppId,
+                packageName = TargetAppRegistry.expectedPackage(targetAppId),
+                allowedActivities = activities,
+                selectors = readyCandidates.take(MAX_RULE_SELECTORS).map {
+                    it.selector.toNodeSelector()
+                },
+                startupDelayMs = requireNotNull(minimumDelay),
+                cooldownMs = COOLDOWN_MS,
+                targetAppVersion = currentVersion,
+            )
+        } else {
+            null
+        }
+        return RuleCandidateAnalysis(
+            targetAppId = targetAppId,
+            appVersion = currentVersion,
+            status = status,
+            currentVersionSampleCount = currentSamples.size,
+            stableSampleCount = primarySamples.size,
+            uniqueEvidenceCount = primary?.uniqueEvidenceCount ?: 0,
+            primarySelector = primary?.selector,
+            probeSelectors = ranked.filter { it.strongEnough }.take(MAX_PROBE_SELECTORS).map {
+                it.selector
+            },
+            allowedActivities = activities,
+            minimumClickDelayMs = minimumDelay,
+            rule = rule,
+        )
+    }
+
+    fun selectorCandidates(nodes: List<CapturedNode>): List<CapturedSelector> = nodes
+        .filter { it.visibleToUser && it.hasUsableBounds }
+        .flatMap { node ->
+            buildList {
+                addIfUsable(CapturedSelector(node.resourceId, node.text, node.contentDescription))
+                addIfUsable(CapturedSelector(resourceId = node.resourceId, text = node.text))
+                addIfUsable(
+                    CapturedSelector(
+                        resourceId = node.resourceId,
+                        contentDescription = node.contentDescription,
+                    ),
+                )
+                addIfUsable(
+                    CapturedSelector(
+                        text = node.text,
+                        contentDescription = node.contentDescription,
+                    ),
+                )
+                addIfUsable(CapturedSelector(resourceId = node.resourceId))
+                addIfUsable(CapturedSelector(contentDescription = node.contentDescription))
+                addIfUsable(CapturedSelector(text = node.text))
+            }
+        }
+        .distinct()
+
+    private fun rankSelectors(samples: List<CaptureSample>): List<SelectorRank> {
+        val selectorsBySample = samples.associateWith { selectorCandidates(it.nodes).toSet() }
+        return selectorsBySample.values.flatten().distinct().map { selector ->
+            val supporting = samples.filter { selector in selectorsBySample.getValue(it) }
+            val uniqueCount = supporting.count { selector in it.preClickUniqueSelectors }
+            val strongEnough = selector.isStrongEnough()
+            SelectorRank(
+                selector = selector,
+                samples = supporting,
+                uniqueEvidenceCount = uniqueCount,
+                strongEnough = strongEnough,
+                ready = supporting.size >= REQUIRED_STABLE_SAMPLES &&
+                    supporting.size == samples.size &&
+                    uniqueCount >= REQUIRED_UNIQUE_PROBES &&
+                    strongEnough &&
+                    supporting.all { it.activityName.isNotBlank() },
+            )
+        }.sortedWith(
+            compareByDescending<SelectorRank> { it.ready }
+                .thenByDescending { it.samples.size }
+                .thenByDescending { it.uniqueEvidenceCount }
+                .thenByDescending { it.selector.conditionCount }
+                .thenByDescending { it.selector.resourceId != null }
+                .thenByDescending { it.selector.contentDescription != null },
+        )
+    }
+
+    private fun CapturedSelector.isStrongEnough(): Boolean {
+        if (conditionCount >= 2 || resourceId != null) return true
+        val semantic = text ?: contentDescription ?: return false
+        return semantic.trim().lowercase(Locale.ROOT) !in GENERIC_SINGLE_VALUES
+    }
+
+    private fun MutableList<CapturedSelector>.addIfUsable(selector: CapturedSelector) {
+        if (selector.conditionCount > 0) add(selector)
+    }
+
+    private fun localRuleId(
+        targetAppId: TargetAppId,
+        version: AppVersion,
+        selector: CapturedSelector,
+    ): String {
+        val versionFingerprint = "${version.versionCode}:${version.versionName.orEmpty()}"
+            .hashCode().toUInt().toString(16)
+        val fingerprint = selector.stableKey().hashCode().toUInt().toString(16)
+        return "local-${targetAppId.name.lowercase(Locale.ROOT)}-$versionFingerprint-$fingerprint"
+    }
+
+    private data class SelectorRank(
+        val selector: CapturedSelector,
+        val samples: List<CaptureSample>,
+        val uniqueEvidenceCount: Int,
+        val strongEnough: Boolean,
+        val ready: Boolean,
+    )
+
+    private val GENERIC_SINGLE_VALUES = setOf(
+        "关闭",
+        "关闭广告",
+        "跳过",
+        "跳过广告",
+        "close",
+        "skip",
+        "x",
+        "×",
+    )
+    private const val MAX_PROBE_SELECTORS = 4
+    private const val MAX_RULE_SELECTORS = 3
+}

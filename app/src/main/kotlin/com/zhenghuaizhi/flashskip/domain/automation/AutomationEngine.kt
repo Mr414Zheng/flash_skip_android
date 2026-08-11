@@ -6,7 +6,6 @@ import com.zhenghuaizhi.flashskip.domain.model.ActionReason
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
 import com.zhenghuaizhi.flashskip.domain.model.AdRule
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
-import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
 import com.zhenghuaizhi.flashskip.domain.model.TargetApp
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.ports.ClickResult
@@ -17,7 +16,8 @@ import com.zhenghuaizhi.flashskip.domain.ports.PageGateway
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.ports.QueryResult
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
-import com.zhenghuaizhi.flashskip.domain.rules.BuiltinRuleCatalog
+import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalog
+import com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -27,7 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class AutomationEngine(
-    private val catalog: BuiltinRuleCatalog,
+    private val catalog: RuleCatalog,
     private val store: FlashSkipStore,
     private val pageGateway: PageGateway,
     private val monotonicClock: MonotonicClock,
@@ -40,6 +40,7 @@ class AutomationEngine(
     private var nextSessionId = 0L
     private var session: Session? = null
     private var foregroundState: ForegroundState = ForegroundState.Unknown
+    private var capturePaused = false
     private val lastSuccessByRule = mutableMapOf<String, Long>()
 
     fun onForegroundSignal(signal: ForegroundSignal) {
@@ -54,6 +55,12 @@ class AutomationEngine(
         val barrier = CompletableDeferred<Unit>()
         mailbox.send(Command.Barrier(barrier))
         barrier.await()
+    }
+
+    suspend fun setCapturePaused(paused: Boolean) {
+        val completion = CompletableDeferred<Unit>()
+        mailbox.send(Command.CapturePause(paused, completion))
+        completion.await()
     }
 
     fun close() {
@@ -77,12 +84,14 @@ class AutomationEngine(
                 is Command.Foreground -> handleForeground(command.signal)
                 is Command.Content -> handleContent(command)
                 is Command.QueryDue -> handleQueryDue(command)
+                is Command.CapturePause -> handleCapturePause(command)
                 is Command.Barrier -> command.deferred.complete(Unit)
             }
         }
     }
 
     private suspend fun handleForeground(signal: ForegroundSignal) {
+        if (capturePaused) return
         when (signal) {
             is ForegroundSignal.TargetActive -> handleTargetActive(signal)
             is ForegroundSignal.OutsideTargets -> {
@@ -94,13 +103,18 @@ class AutomationEngine(
     }
 
     private suspend fun handleTargetActive(signal: ForegroundSignal.TargetActive) {
-        val target = catalog.targets.find { it.packageName == signal.identity.packageName } ?: return
+        val target = TargetAppRegistry.targetForPackage(signal.identity.packageName) ?: return
         val previous = foregroundState
         val isSameForegroundTarget = previous is ForegroundState.Target &&
             previous.targetId == target.id
         if (isSameForegroundTarget) {
             val active = session?.takeIf { it.target.id == target.id } ?: return
             if (active.terminal) return
+            if (signal.identity.appVersion != active.identity.appVersion) {
+                invalidate(active)
+                session = null
+                return
+            }
             if (signal.occurredAtElapsedMs >= active.deadlineElapsedMs) {
                 // 没有确认离开前台时，同包 Activity 或窗口变化不得重新武装。
                 invalidate(active)
@@ -118,12 +132,14 @@ class AutomationEngine(
         session?.let(::invalidate)
         session = null
         foregroundState = ForegroundState.Target(target.id)
-        if (target.ruleAvailability !is RuleAvailability.Available) return
         if (!store.isAppEnabled(target.id)) return
-        startSession(target, signal.identity, signal.occurredAtElapsedMs)
+        val rules = catalog.snapshot.value.rulesForTarget(target.id, signal.identity.appVersion)
+        if (rules.isEmpty()) return
+        startSession(target, rules, signal.identity, signal.occurredAtElapsedMs)
     }
 
     private suspend fun handleContent(command: Command.Content) {
+        if (capturePaused) return
         val active = session ?: return
         val foreground = foregroundState as? ForegroundState.Target ?: return
         if (foreground.targetId != active.target.id) return
@@ -132,6 +148,11 @@ class AutomationEngine(
             return
         }
         if (active.terminal || command.identity.packageName != active.identity.packageName) return
+        if (command.identity.appVersion != active.identity.appVersion) {
+            invalidate(active)
+            session = null
+            return
+        }
         if (command.occurredAtElapsedMs >= active.deadlineElapsedMs) {
             active.queryJob?.cancel()
             return
@@ -144,11 +165,17 @@ class AutomationEngine(
         scheduleQuery(active)
     }
 
-    private fun startSession(target: TargetApp, identity: PageIdentity, enteredAt: Long) {
+    private fun startSession(
+        target: TargetApp,
+        rules: List<AdRule>,
+        identity: PageIdentity,
+        enteredAt: Long,
+    ) {
         session?.queryJob?.cancel()
         session = Session(
             id = ++nextSessionId,
             target = target,
+            rules = rules,
             identity = identity,
             enteredAtElapsedMs = enteredAt,
             deadlineElapsedMs = enteredAt + SESSION_WINDOW_MS,
@@ -159,8 +186,9 @@ class AutomationEngine(
     private fun scheduleQuery(active: Session) {
         if (active.terminal) return
         active.queryJob?.cancel()
-        val rules = catalog.rulesForTarget(active.target.id)
-        val earliestRuleTime = rules.minOfOrNull { active.enteredAtElapsedMs + it.startupDelayMs }
+        val earliestRuleTime = active.rules.minOfOrNull {
+            active.enteredAtElapsedMs + it.startupDelayMs
+        }
             ?: return
         val dueAt = maxOf(
             monotonicClock.elapsedRealtimeMs() + DEBOUNCE_MS,
@@ -180,6 +208,7 @@ class AutomationEngine(
     }
 
     private suspend fun handleQueryDue(command: Command.QueryDue) {
+        if (capturePaused) return
         val active = session ?: return
         if (!active.isCurrent(command) || active.terminal) return
         if (command.overflowEpoch != overflowEpoch.get()) {
@@ -192,7 +221,7 @@ class AutomationEngine(
             return
         }
 
-        val readyRules = catalog.rulesForTarget(active.target.id).filter { rule ->
+        val readyRules = active.rules.filter { rule ->
             isRuleReady(rule, active, now)
         }
         readyRules.forEach { rule ->
@@ -201,7 +230,7 @@ class AutomationEngine(
                 Evaluation.TERMINAL -> return
             }
         }
-        val nextStartup = catalog.rulesForTarget(active.target.id)
+        val nextStartup = active.rules
             .map { active.enteredAtElapsedMs + it.startupDelayMs }
             .filter { it > now && it < active.deadlineElapsedMs }
             .minOrNull()
@@ -212,6 +241,9 @@ class AutomationEngine(
 
     private fun isRuleReady(rule: AdRule, active: Session, now: Long): Boolean {
         if (now < active.enteredAtElapsedMs + rule.startupDelayMs) return false
+        if (rule.targetAppVersion != null && rule.targetAppVersion != active.identity.appVersion) {
+            return false
+        }
         if (active.identity.activityName !in rule.allowedActivities) return false
         val lastSuccess = lastSuccessByRule[rule.id] ?: return true
         return now - lastSuccess >= rule.cooldownMs
@@ -274,7 +306,8 @@ class AutomationEngine(
     }
 
     private suspend fun canAct(active: Session, command: Command.QueryDue): Boolean =
-        active.isCurrent(command) &&
+        !capturePaused &&
+            active.isCurrent(command) &&
             command.overflowEpoch == overflowEpoch.get() &&
             monotonicClock.elapsedRealtimeMs() < active.deadlineElapsedMs &&
             store.isAppEnabled(active.target.id)
@@ -330,9 +363,20 @@ class AutomationEngine(
         active.generation++
     }
 
+    private fun handleCapturePause(command: Command.CapturePause) {
+        if (command.paused != capturePaused) {
+            session?.let(::invalidate)
+            session = null
+            foregroundState = ForegroundState.Unknown
+            capturePaused = command.paused
+        }
+        command.completion.complete(Unit)
+    }
+
     private data class Session(
         val id: Long,
         val target: TargetApp,
+        val rules: List<AdRule>,
         var identity: PageIdentity,
         val enteredAtElapsedMs: Long,
         val deadlineElapsedMs: Long,
@@ -352,6 +396,10 @@ class AutomationEngine(
             val sessionId: Long,
             val generation: Long,
             val overflowEpoch: Long,
+        ) : Command
+        data class CapturePause(
+            val paused: Boolean,
+            val completion: CompletableDeferred<Unit>,
         ) : Command
         data class Barrier(val deferred: CompletableDeferred<Unit>) : Command
     }

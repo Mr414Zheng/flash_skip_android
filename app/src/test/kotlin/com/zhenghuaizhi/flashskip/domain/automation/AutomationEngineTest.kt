@@ -2,6 +2,7 @@ package com.zhenghuaizhi.flashskip.domain.automation
 
 import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.AdRule
+import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.model.TextCondition
@@ -282,6 +283,68 @@ class AutomationEngineTest {
         assertEquals(0, fixture.gateway.queryCalls)
         assertTrue(fixture.store.current.records.isEmpty())
         fixture.engine.close()
+    }
+
+    @Test
+    fun capturePauseCancelsPendingWorkAndProducesZeroNodeActions() = runTest {
+        val fixture = fixture()
+        fixture.createEngine(this)
+        fixture.engine.onForegroundSignal(ForegroundSignal.TargetActive(IDENTITY, 0))
+        fixture.engine.awaitIdle()
+        fixture.engine.setCapturePaused(true)
+
+        fixture.gateway.queryResults.add(QueryResult.Unique)
+        fixture.gateway.clickResults.add(ClickResult.Clicked)
+        fixture.engine.onContentChanged(IDENTITY, 10)
+        fixture.clock.now = 500
+        advanceTimeBy(500)
+        runCurrent()
+        fixture.engine.awaitIdle()
+
+        assertEquals(0, fixture.gateway.queryCalls)
+        assertEquals(0, fixture.gateway.clickCalls)
+        assertEquals(0, fixture.gateway.gestureCalls)
+        fixture.engine.close()
+    }
+
+    @Test
+    fun localRuleOnlyArmsForItsExactApplicationVersion() = runTest {
+        val version = AppVersion("13.2.0", 42)
+        val localRule = testRule(
+            id = "local-versioned",
+            startupDelayMs = 0,
+            selectors = listOf(NodeSelector(resourceId = "close")),
+        ).copy(targetAppVersion = version)
+        val mismatch = fixture(rules = listOf(localRule))
+        mismatch.createEngine(this)
+        mismatch.engine.onForegroundSignal(
+            ForegroundSignal.TargetActive(
+                IDENTITY.copy(appVersion = version.copy(versionCode = 43)),
+                0,
+            ),
+        )
+        mismatch.engine.awaitIdle()
+        mismatch.clock.now = 500
+        advanceTimeBy(500)
+        runCurrent()
+        mismatch.engine.awaitIdle()
+        assertEquals(0, mismatch.gateway.queryCalls)
+        mismatch.engine.close()
+
+        val matching = fixture(rules = listOf(localRule))
+        matching.createEngine(this)
+        matching.gateway.queryResults.add(QueryResult.Unique)
+        matching.gateway.clickResults.add(ClickResult.Clicked)
+        matching.engine.onForegroundSignal(
+            ForegroundSignal.TargetActive(IDENTITY.copy(appVersion = version), 0),
+        )
+        matching.engine.awaitIdle()
+        matching.clock.now = 120
+        advanceTimeBy(120)
+        runCurrent()
+        matching.engine.awaitIdle()
+        assertEquals(1, matching.gateway.clickCalls)
+        matching.engine.close()
     }
 
     private fun fixture(

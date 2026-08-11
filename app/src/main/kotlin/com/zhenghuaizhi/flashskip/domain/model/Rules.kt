@@ -8,6 +8,7 @@ data class AdRule(
     val selectors: List<NodeSelector>,
     val startupDelayMs: Long,
     val cooldownMs: Long,
+    val targetAppVersion: AppVersion? = null,
 )
 
 data class NodeSelector(

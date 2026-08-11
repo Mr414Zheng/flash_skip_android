@@ -1,6 +1,7 @@
 package com.zhenghuaizhi.flashskip.domain.ports
 
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
+import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 
 interface MonotonicClock {
     fun elapsedRealtimeMs(): Long
@@ -14,6 +15,7 @@ data class PageIdentity(
     val packageName: String,
     val activityName: String?,
     val windowId: Int,
+    val appVersion: AppVersion? = null,
 )
 
 sealed interface QueryResult {

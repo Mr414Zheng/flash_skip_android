@@ -49,9 +49,6 @@ object RuleValidator {
         return issues
     }
 
-    private fun expectedPackage(targetAppId: TargetAppId): String = when (targetAppId) {
-        TargetAppId.QQ_MUSIC -> "com.tencent.qqmusic"
-        TargetAppId.TAOBAO -> "com.taobao.taobao"
-        TargetAppId.JD -> "com.jingdong.app.mall"
-    }
+    private fun expectedPackage(targetAppId: TargetAppId): String =
+        TargetAppRegistry.expectedPackage(targetAppId)
 }

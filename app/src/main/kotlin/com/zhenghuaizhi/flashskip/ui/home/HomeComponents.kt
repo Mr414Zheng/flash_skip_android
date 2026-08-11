@@ -1,7 +1,6 @@
 package com.zhenghuaizhi.flashskip.ui.home
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -23,8 +21,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -35,25 +31,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.disabled
-import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.semantics.toggleableState
-import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.zhenghuaizhi.flashskip.R
 import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
-import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
 import com.zhenghuaizhi.flashskip.domain.model.ServiceStatus
-import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.ui.theme.FlashSkipTokens
 import com.zhenghuaizhi.flashskip.ui.theme.SuccessIndicatorColor
 import com.zhenghuaizhi.flashskip.ui.theme.TimelineNeutralColor
@@ -191,113 +175,6 @@ private fun InlineAction(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-internal fun TargetAppRow(
-    state: TargetAppUiState,
-    compactIcon: Boolean,
-    onToggle: (Boolean) -> Unit,
-) {
-    val availability = state.target.ruleAvailability
-    val ruleCount = (availability as? RuleAvailability.Available)?.ruleCount
-    val available = ruleCount != null
-    val checked = state.enabled && available
-    val status = when {
-        state.status == TargetAppStatus.RULE_UNAVAILABLE -> "规则当前不可用"
-        state.status == TargetAppStatus.ENABLED_BUT_SERVICE_UNAVAILABLE ->
-            "已启用，服务开启后生效"
-        state.status == TargetAppStatus.ENABLED_AND_RUNNING -> "已启用，$ruleCount 条内置规则"
-        else -> "已停用"
-    }
-    val actionLabel = if (checked) "停用${state.target.displayName}" else "启用${state.target.displayName}"
-    val interaction = if (available) {
-        Modifier.toggleable(
-            value = checked,
-            role = Role.Switch,
-            onValueChange = onToggle,
-        )
-    } else {
-        Modifier
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 96.dp)
-            .then(interaction)
-            .clearAndSetSemantics {
-                contentDescription = "${state.target.displayName}，$status"
-                role = Role.Switch
-                toggleableState = ToggleableState(checked)
-                stateDescription = if (available) {
-                    when (state.status) {
-                        TargetAppStatus.ENABLED_BUT_SERVICE_UNAVAILABLE ->
-                            "已启用，服务开启后生效"
-                        TargetAppStatus.ENABLED_AND_RUNNING -> "已启用"
-                        else -> "已停用"
-                    }
-                } else {
-                    "规则不可用"
-                }
-                if (available) {
-                    onClick(actionLabel) {
-                        onToggle(!checked)
-                        true
-                    }
-                } else {
-                    disabled()
-                }
-            }
-            .padding(vertical = FlashSkipTokens.Space16),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Image(
-            painter = painterResource(appIcon(state.target.id)),
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .size(if (compactIcon) FlashSkipTokens.AppIconCompact else FlashSkipTokens.AppIcon)
-                .clip(RoundedCornerShape(12.dp)),
-        )
-        Spacer(Modifier.width(FlashSkipTokens.Space16))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = state.target.displayName,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(FlashSkipTokens.Space4))
-            Text(
-                text = when {
-                    state.status == TargetAppStatus.RULE_UNAVAILABLE -> "规则当前不可用"
-                    state.status == TargetAppStatus.ENABLED_BUT_SERVICE_UNAVAILABLE ->
-                        "已启用 · 服务开启后生效"
-                    state.status == TargetAppStatus.ENABLED_AND_RUNNING ->
-                        "已启用 · $ruleCount 条内置规则"
-                    else -> "已停用"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.width(FlashSkipTokens.Space12))
-        Switch(
-            checked = checked,
-            onCheckedChange = null,
-            enabled = available,
-            modifier = Modifier.clearAndSetSemantics { },
-            colors = SwitchDefaults.colors(
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                disabledCheckedTrackColor = MaterialTheme.colorScheme.outlineVariant,
-            ),
-        )
-    }
-}
-
-private fun appIcon(targetAppId: TargetAppId): Int = when (targetAppId) {
-    TargetAppId.QQ_MUSIC -> R.drawable.qqmusic
-    TargetAppId.TAOBAO -> R.drawable.taobao
-    TargetAppId.JD -> R.drawable.jd
-}
-
-@Composable
 internal fun ExecutionItem(
     record: ActionRecord,
     nowEpochMs: Long,
@@ -392,27 +269,40 @@ internal fun EmptyExecutionState() {
 }
 
 @Composable
-internal fun PrivacyFooter() {
+internal fun PrivacyFooter(
+    hasCapturedRules: Boolean = false,
+    onClearAllCapturedRules: () -> Unit = {},
+) {
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = FlashSkipTokens.Space24)
-            .clearAndSetSemantics {
-                contentDescription = "完全离线，不截图，不保存页面内容"
-            },
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = FlashSkipTokens.Space24),
+        verticalArrangement = Arrangement.spacedBy(FlashSkipTokens.Space8),
     ) {
-        ShieldGlyph(
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(24.dp),
-        )
-        Spacer(Modifier.width(FlashSkipTokens.Space12))
-        Text(
-            text = "完全离线 · 不截图 · 不保存页面内容",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(
+            modifier = Modifier.clearAndSetSemantics {
+                contentDescription = "完全离线，不截图，仅在本机私有存储保存限长规则字段"
+            },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ShieldGlyph(
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp),
+            )
+            Spacer(Modifier.width(FlashSkipTokens.Space12))
+            Text(
+                text = "完全离线 · 不截图 · 规则字段仅存本机",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (hasCapturedRules) {
+            androidx.compose.material3.TextButton(
+                onClick = onClearAllCapturedRules,
+                modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
+            ) {
+                Text("清除全部采集数据")
+            }
+        }
     }
 }
 
