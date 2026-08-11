@@ -36,6 +36,7 @@ private fun reasonLabel(reason: ActionReason?): String = when (reason) {
     ActionReason.PAGE_CHANGED -> "页面已切换"
     ActionReason.QUERY_STALE -> "查询已过期"
     ActionReason.TRAVERSAL_LIMIT -> "页面结构超出安全范围"
+    ActionReason.CLICK_UNCONFIRMED -> "点击后广告仍存在"
     ActionReason.GESTURE_REJECTED -> "手势未被接受"
     ActionReason.GESTURE_CANCELLED -> "手势已取消"
     null -> "未执行"

@@ -2,14 +2,19 @@ package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityNodeInfo
+import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
+import com.zhenghuaizhi.flashskip.domain.rulecapture.ClickSemanticHint
+import com.zhenghuaizhi.flashskip.domain.rulecapture.ClickSourceRecoveryMatcher
+import com.zhenghuaizhi.flashskip.domain.rulecapture.RuleCandidateAnalyzer
 import java.util.ArrayDeque
 
 internal class AccessibilityCaptureProbe(
     private val service: AccessibilityService,
     targetPackages: Set<String>,
     private val currentIdentity: () -> PageIdentity?,
+    private val semanticSnapshotter: AccessibilitySemanticSnapshotter,
 ) {
     private val targetPackages = targetPackages.toSet()
     private val selectorMatcher = AccessibilityNodeSelectorMatcher(service)
@@ -67,6 +72,66 @@ internal class AccessibilityCaptureProbe(
         }
     }
 
+    @Suppress("DEPRECATION")
+    fun recoverClickedSemanticChain(
+        expected: PageIdentity,
+        hint: ClickSemanticHint,
+    ): RecoveryResult {
+        // 恢复路径仍遵守与自动化 Gateway 相同的包和窗口边界，不能因 source 为空而放宽。
+        if (expected.packageName !in targetPackages) return RecoveryResult.PageChanged
+        if (currentIdentity() != expected) return RecoveryResult.PageChanged
+        val root = service.rootInActiveWindow ?: return RecoveryResult.NoRoot
+        if (root.packageName?.toString() != expected.packageName || root.windowId != expected.windowId) {
+            root.recycle()
+            return RecoveryResult.PageChanged
+        }
+
+        val queue = ArrayDeque<NodeAtDepth>().apply { add(NodeAtDepth(root, 0)) }
+        var recovered: List<CapturedNode>? = null
+        var ambiguous = false
+        var visited = 0
+        val startedAt = AndroidMonotonicClock.elapsedRealtimeMs()
+        try {
+            while (queue.isNotEmpty() && !ambiguous) {
+                val item = queue.removeFirst()
+                val node = item.node
+                visited++
+                if (visited > MAX_NODES ||
+                    item.depth > MAX_DEPTH ||
+                    AndroidMonotonicClock.elapsedRealtimeMs() - startedAt > MAX_TRAVERSAL_MS
+                ) {
+                    node.recycle()
+                    return RecoveryResult.TraversalLimit
+                }
+                val snapshot = semanticSnapshotter.snapshot(node, expected.packageName)
+                if (snapshot != null && ClickSourceRecoveryMatcher.matches(snapshot, hint)) {
+                    val chain = semanticSnapshotter.copySemanticChain(
+                        AccessibilityNodeInfo.obtain(node),
+                        expected.packageName,
+                    )
+                    if (RuleCandidateAnalyzer.selectorCandidates(chain).isNotEmpty()) {
+                        if (recovered == null) recovered = chain else ambiguous = true
+                    }
+                }
+                if (!ambiguous) {
+                    repeat(node.childCount) { index ->
+                        node.getChild(index)?.let { child ->
+                            queue.add(NodeAtDepth(child, item.depth + 1))
+                        }
+                    }
+                }
+                node.recycle()
+            }
+            return when {
+                ambiguous -> RecoveryResult.Ambiguous
+                recovered != null -> RecoveryResult.Success(requireNotNull(recovered))
+                else -> RecoveryResult.NoMatch
+            }
+        } finally {
+            while (queue.isNotEmpty()) queue.removeFirst().node.recycle()
+        }
+    }
+
     private data class NodeAtDepth(val node: AccessibilityNodeInfo, val depth: Int)
 
     sealed interface ProbeResult {
@@ -74,6 +139,18 @@ internal class AccessibilityCaptureProbe(
         data object NoRoot : ProbeResult
         data object PageChanged : ProbeResult
         data object TraversalLimit : ProbeResult
+    }
+
+    sealed interface RecoveryResult {
+        data class Success(
+            val nodes: List<CapturedNode>,
+        ) : RecoveryResult
+
+        data object NoRoot : RecoveryResult
+        data object PageChanged : RecoveryResult
+        data object TraversalLimit : RecoveryResult
+        data object NoMatch : RecoveryResult
+        data object Ambiguous : RecoveryResult
     }
 
     private companion object {

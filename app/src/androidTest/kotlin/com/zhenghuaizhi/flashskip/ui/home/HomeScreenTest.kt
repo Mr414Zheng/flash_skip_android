@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.Density
 import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
 import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
+import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
+import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.model.ServiceStatus
 import com.zhenghuaizhi.flashskip.domain.model.TargetApp
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
@@ -161,5 +163,40 @@ class HomeScreenTest {
         }
 
         composeRule.onNodeWithText("采集规则").assertIsDisplayed().assertIsEnabled()
+    }
+
+    @Test
+    fun candidateRuleCardShowsTwoSampleAndOneProbeThresholds() {
+        composeRule.setContent {
+            FlashSkipTheme {
+                TargetAppRow(
+                    state = targetAppUiState(
+                        target = TargetApp(
+                            id = TargetAppId.QQ_MUSIC,
+                            displayName = "QQ音乐",
+                            packageName = "com.tencent.qqmusic",
+                            ruleAvailability = RuleAvailability.Unavailable,
+                        ),
+                        enabled = false,
+                        serviceStatus = ServiceStatus.RUNNING,
+                        installedVersion = AppVersion("13.2", 42),
+                        capture = CaptureUiState(canStart = true),
+                        ruleCard = RuleCardUiState(
+                            status = RuleCardStatus.CANDIDATE,
+                            sampleCount = 1,
+                            stableSampleCount = 1,
+                            uniqueEvidenceCount = 0,
+                            version = AppVersion("13.2", 42),
+                            selector = CapturedSelector(resourceId = "com.tencent.qqmusic:id/close"),
+                        ),
+                    ),
+                    compactIcon = false,
+                    onToggle = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("候选规则 · 1/2").assertIsDisplayed()
+        composeRule.onNodeWithText("有效样本 1/2 · 唯一性证据 0/1").assertIsDisplayed()
     }
 }

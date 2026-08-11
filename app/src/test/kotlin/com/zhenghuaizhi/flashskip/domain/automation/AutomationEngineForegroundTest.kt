@@ -40,8 +40,9 @@ class AutomationEngineForegroundTest {
         fixture.gateway.queryResults.add(QueryResult.Unique)
         fixture.gateway.clickResults.add(ClickResult.Clicked)
         fixture.advance(this, 120, clockNow = 420)
+        fixture.advance(this, 150, clockNow = 570)
 
-        assertEquals(2, fixture.gateway.queryCalls)
+        assertEquals(3, fixture.gateway.queryCalls)
         assertEquals(1, fixture.gateway.clickCalls)
         assertEquals(1, fixture.store.current.records.size)
         fixture.engine.close()
@@ -56,8 +57,9 @@ class AutomationEngineForegroundTest {
         fixture.gateway.queryResults.add(QueryResult.Unique)
         fixture.gateway.clickResults.add(ClickResult.Clicked)
         fixture.advance(this, 120, clockNow = 170)
+        fixture.advance(this, 150, clockNow = 320)
 
-        assertEquals(listOf(TAOBAO_IDENTITY), fixture.gateway.queriedIdentities)
+        assertEquals(listOf(TAOBAO_IDENTITY, TAOBAO_IDENTITY), fixture.gateway.queriedIdentities)
         assertEquals(TargetAppId.TAOBAO, fixture.store.current.records.single().targetAppId)
         fixture.engine.close()
     }
@@ -104,10 +106,30 @@ class AutomationEngineForegroundTest {
         secondLifecycle.gateway.clickResults.add(ClickResult.Clicked)
         secondLifecycle.target(QQ_IDENTITY, 1)
         secondLifecycle.advance(this, 120, clockNow = 121)
+        secondLifecycle.advance(this, 150, clockNow = 271)
 
-        assertEquals(1, secondLifecycle.gateway.queryCalls)
+        assertEquals(2, secondLifecycle.gateway.queryCalls)
         assertEquals(1, secondLifecycle.store.current.records.size)
         secondLifecycle.engine.close()
+    }
+
+    @Test
+    fun contentChangeCannotRetargetPendingClickVerificationToAnotherWindow() = runTest {
+        val fixture = Fixture(this)
+        fixture.gateway.queryResults.add(QueryResult.Unique)
+        fixture.gateway.clickResults.add(ClickResult.Clicked)
+        fixture.target(QQ_IDENTITY, 0)
+        fixture.advance(this, 120)
+
+        fixture.clock.now = 130
+        fixture.engine.onContentChanged(QQ_IDENTITY.copy(windowId = 99), 130)
+        fixture.engine.awaitIdle()
+        fixture.advance(this, 150, clockNow = 280)
+
+        assertEquals(listOf(QQ_IDENTITY, QQ_IDENTITY), fixture.gateway.queriedIdentities)
+        assertEquals(1, fixture.gateway.clickCalls)
+        assertEquals(1, fixture.store.current.records.size)
+        fixture.engine.close()
     }
 
     private class Fixture(

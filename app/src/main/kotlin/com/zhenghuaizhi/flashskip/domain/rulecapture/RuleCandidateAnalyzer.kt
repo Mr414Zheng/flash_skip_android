@@ -13,8 +13,8 @@ import com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
 import java.util.Locale
 
 object RuleCandidateAnalyzer {
-    const val REQUIRED_STABLE_SAMPLES = 5
-    const val REQUIRED_UNIQUE_PROBES = 2
+    const val REQUIRED_STABLE_SAMPLES = 2
+    const val REQUIRED_UNIQUE_PROBES = 1
     const val COOLDOWN_MS = 10_000L
 
     fun analyze(
@@ -52,7 +52,8 @@ object RuleCandidateAnalyzer {
                 selectors = readyCandidates.take(MAX_RULE_SELECTORS).map {
                     it.selector.toNodeSelector()
                 },
-                startupDelayMs = requireNotNull(minimumDelay),
+                // 人工点击时序包含反应时间，仅作为证据；Ready 规则从首个页面事件开始精确匹配。
+                startupDelayMs = 0L,
                 cooldownMs = COOLDOWN_MS,
                 targetAppVersion = currentVersion,
             )
@@ -157,7 +158,7 @@ object RuleCandidateAnalyzer {
     private fun CapturedSelector.isStrongEnough(): Boolean {
         if (conditionCount >= 2 || resourceId != null) return true
         val semantic = text ?: contentDescription ?: return false
-        return semantic.trim().lowercase(Locale.ROOT) !in GENERIC_SINGLE_VALUES
+        return !DismissSemantics.isKnown(semantic)
     }
 
     private fun MutableList<CapturedSelector>.addIfUsable(selector: CapturedSelector) {
@@ -183,16 +184,6 @@ object RuleCandidateAnalyzer {
         val ready: Boolean,
     )
 
-    private val GENERIC_SINGLE_VALUES = setOf(
-        "关闭",
-        "关闭广告",
-        "跳过",
-        "跳过广告",
-        "close",
-        "skip",
-        "x",
-        "×",
-    )
     private const val MAX_PROBE_SELECTORS = 4
     private const val MAX_RULE_SELECTORS = 3
 }

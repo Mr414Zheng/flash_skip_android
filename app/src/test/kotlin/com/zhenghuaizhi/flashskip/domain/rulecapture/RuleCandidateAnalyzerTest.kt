@@ -14,7 +14,7 @@ import org.junit.Test
 
 class RuleCandidateAnalyzerTest {
     @Test
-    fun oneSampleCreatesCandidateAndFiveStableSamplesCreateReadyRule() {
+    fun oneSampleCreatesCandidateAndTwoStableSamplesCreateReadyRule() {
         val selector = CapturedSelector(
             resourceId = "com.tencent.qqmusic:id/close",
             contentDescription = "关闭启动广告",
@@ -28,23 +28,25 @@ class RuleCandidateAnalyzerTest {
         assertNull(one.rule)
 
         val ready = RuleCandidateAnalyzer.analyze(
-            (1L..5L).map { sample(it, selector, unique = it <= 2) },
+            (1L..2L).map { sample(it, selector, unique = it == 2L) },
             TargetAppId.QQ_MUSIC,
             VERSION,
         )
         assertEquals(RuleCardStatus.READY, ready.status)
-        assertEquals(5, ready.stableSampleCount)
-        assertEquals(2, ready.uniqueEvidenceCount)
+        assertEquals(2, ready.stableSampleCount)
+        assertEquals(1, ready.uniqueEvidenceCount)
         assertEquals(1_001L, ready.minimumClickDelayMs)
         assertNotNull(ready.rule)
-        assertEquals(VERSION, requireNotNull(ready.rule).targetAppVersion)
+        val rule = requireNotNull(ready.rule)
+        assertEquals(0L, rule.startupDelayMs)
+        assertEquals(VERSION, rule.targetAppVersion)
     }
 
     @Test
     fun genericSingleTextNeverBecomesReady() {
         val selector = CapturedSelector(text = "关闭")
         val analysis = RuleCandidateAnalyzer.analyze(
-            (1L..5L).map { sample(it, selector, unique = true) },
+            (1L..2L).map { sample(it, selector, unique = true) },
             TargetAppId.QQ_MUSIC,
             VERSION,
         )
@@ -57,8 +59,8 @@ class RuleCandidateAnalyzerTest {
     fun divergentLatestCaptureWithdrawsReadyRule() {
         val stable = CapturedSelector(resourceId = "com.tencent.qqmusic:id/close")
         val divergent = CapturedSelector(resourceId = "com.tencent.qqmusic:id/dismiss")
-        val samples = (1L..5L).map { sample(it, stable, unique = it <= 2) } +
-            sample(6, divergent, unique = true)
+        val samples = (1L..2L).map { sample(it, stable, unique = it == 2L) } +
+            sample(3, divergent, unique = true)
 
         val analysis = RuleCandidateAnalyzer.analyze(
             samples,
@@ -100,10 +102,10 @@ class RuleCandidateAnalyzerTest {
             ancestorResourceId = "com.tencent.qqmusic:id/jap",
             ancestorDistance = 1,
         )
-        val samples = (1L..5L).map { id ->
+        val samples = (1L..2L).map { id ->
             qqMusicSample(
                 id = id,
-                uniqueSelectors = if (id <= 2) listOf(structural) else emptyList(),
+                uniqueSelectors = if (id == 2L) listOf(structural) else emptyList(),
             )
         }
 
@@ -123,10 +125,10 @@ class RuleCandidateAnalyzerTest {
         val oldParentEvidence = CapturedSelector(
             resourceId = "com.tencent.qqmusic:id/jap",
         )
-        val samples = (1L..5L).map { id ->
+        val samples = (1L..2L).map { id ->
             qqMusicSample(
                 id = id,
-                uniqueSelectors = if (id <= 2) listOf(oldParentEvidence) else emptyList(),
+                uniqueSelectors = if (id == 2L) listOf(oldParentEvidence) else emptyList(),
             )
         }
 
@@ -143,6 +145,21 @@ class RuleCandidateAnalyzerTest {
             RuleCandidateAnalyzer.selectorCandidates(samples.first().nodes)
                 .contains(oldParentEvidence),
         )
+    }
+
+    @Test
+    fun twoStableSamplesWithoutUniqueProbeRemainCandidate() {
+        val selector = CapturedSelector(resourceId = "com.tencent.qqmusic:id/close")
+        val analysis = RuleCandidateAnalyzer.analyze(
+            (1L..2L).map { sample(it, selector, unique = false) },
+            TargetAppId.QQ_MUSIC,
+            VERSION,
+        )
+
+        assertEquals(RuleCardStatus.CANDIDATE, analysis.status)
+        assertEquals(2, analysis.stableSampleCount)
+        assertEquals(0, analysis.uniqueEvidenceCount)
+        assertNull(analysis.rule)
     }
 
     private fun sample(

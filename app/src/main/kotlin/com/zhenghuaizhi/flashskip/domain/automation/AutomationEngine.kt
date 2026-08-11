@@ -42,6 +42,7 @@ class AutomationEngine(
     private var foregroundState: ForegroundState = ForegroundState.Unknown
     private var capturePaused = false
     private val lastSuccessByRule = mutableMapOf<String, Long>()
+    private val nodeClickVerifier = NodeClickVerifier(pageGateway)
 
     fun onForegroundSignal(signal: ForegroundSignal) {
         offer(Command.Foreground(signal))
@@ -84,6 +85,7 @@ class AutomationEngine(
                 is Command.Foreground -> handleForeground(command.signal)
                 is Command.Content -> handleContent(command)
                 is Command.QueryDue -> handleQueryDue(command)
+                is Command.VerifyClick -> handleVerifyClick(command)
                 is Command.CapturePause -> handleCapturePause(command)
                 is Command.Barrier -> command.deferred.complete(Unit)
             }
@@ -124,6 +126,7 @@ class AutomationEngine(
                 invalidate(active)
                 return
             }
+            if (active.pendingClick != null) return
             active.identity = signal.identity
             scheduleQuery(active)
             return
@@ -154,14 +157,15 @@ class AutomationEngine(
             return
         }
         if (command.occurredAtElapsedMs >= active.deadlineElapsedMs) {
-            active.queryJob?.cancel()
+            invalidate(active)
             return
         }
-        active.identity = command.identity
         if (!store.isAppEnabled(active.target.id)) {
             invalidate(active)
             return
         }
+        if (active.pendingClick != null) return
+        active.identity = command.identity
         scheduleQuery(active)
     }
 
@@ -184,7 +188,7 @@ class AutomationEngine(
     }
 
     private fun scheduleQuery(active: Session) {
-        if (active.terminal) return
+        if (active.terminal || active.pendingClick != null) return
         active.queryJob?.cancel()
         val earliestRuleTime = active.rules.minOfOrNull {
             active.enteredAtElapsedMs + it.startupDelayMs
@@ -227,6 +231,7 @@ class AutomationEngine(
         readyRules.forEach { rule ->
             when (evaluateRule(active, rule, command)) {
                 Evaluation.NO_MATCH -> Unit
+                Evaluation.PENDING -> return
                 Evaluation.TERMINAL -> return
             }
         }
@@ -276,7 +281,7 @@ class AutomationEngine(
             return abandon(active, rule, ActionReason.QUERY_STALE)
         }
         return when (pageGateway.click(active.identity, selector)) {
-            ClickResult.Clicked -> succeed(active, rule, ActionMethod.NODE_CLICK)
+            ClickResult.Clicked -> beginClickVerification(active, rule, selector)
             ClickResult.NotSupported -> executeGesture(active, rule, selector, command)
             ClickResult.NodeDisappeared -> abandon(active, rule, ActionReason.NODE_DISAPPEARED)
             ClickResult.Ambiguous -> abandon(active, rule, ActionReason.AMBIGUOUS_MATCH)
@@ -284,6 +289,73 @@ class AutomationEngine(
             ClickResult.TraversalLimit -> abandon(active, rule, ActionReason.TRAVERSAL_LIMIT)
         }
     }
+
+    private fun beginClickVerification(
+        active: Session,
+        rule: AdRule,
+        selector: NodeSelector,
+    ): Evaluation {
+        active.queryJob?.cancel()
+        active.generation++
+        val pending = PendingNodeClick(
+            id = ++active.nextPendingClickId,
+            rule = rule,
+            selector = selector,
+            attempts = 1,
+        )
+        active.pendingClick = pending
+        scheduleClickVerification(active, pending)
+        return Evaluation.PENDING
+    }
+
+    private fun scheduleClickVerification(active: Session, pending: PendingNodeClick) {
+        active.clickVerificationJob?.cancel()
+        active.clickVerificationJob = scope.launch {
+            delay(NodeClickVerifier.VERIFY_DELAY_MS)
+            mailbox.send(
+                Command.VerifyClick(
+                    sessionId = active.id,
+                    pendingClickId = pending.id,
+                    overflowEpoch = active.overflowEpochAtStart,
+                ),
+            )
+        }
+    }
+
+    private suspend fun handleVerifyClick(command: Command.VerifyClick) {
+        val active = session ?: return
+        val pending = active.pendingClick?.takeIf {
+            active.id == command.sessionId && it.id == command.pendingClickId
+        } ?: return
+        if (!canContinueClickVerification(active, command)) {
+            invalidate(active)
+            return
+        }
+        when (val result = nodeClickVerifier.verify(active.identity, pending)) {
+            NodeClickVerification.Confirmed ->
+                succeed(active, pending.rule, ActionMethod.NODE_CLICK)
+
+            is NodeClickVerification.Retry -> {
+                active.pendingClick = result.pending
+                scheduleClickVerification(active, result.pending)
+            }
+
+            is NodeClickVerification.Abandoned ->
+                abandon(active, pending.rule, result.reason)
+
+            is NodeClickVerification.Failed -> fail(active, pending.rule, result.reason)
+        }
+    }
+
+    private suspend fun canContinueClickVerification(
+        active: Session,
+        command: Command.VerifyClick,
+    ): Boolean =
+        !capturePaused &&
+            !active.terminal &&
+            command.overflowEpoch == overflowEpoch.get() &&
+            monotonicClock.elapsedRealtimeMs() < active.deadlineElapsedMs &&
+            store.isAppEnabled(active.target.id)
 
     private suspend fun executeGesture(
         active: Session,
@@ -342,6 +414,8 @@ class AutomationEngine(
     ): Evaluation {
         active.terminal = true
         active.queryJob?.cancel()
+        active.clickVerificationJob?.cancel()
+        active.pendingClick = null
         runCatching {
             store.appendRecord(
                 ActionRecord(
@@ -359,6 +433,8 @@ class AutomationEngine(
 
     private fun invalidate(active: Session) {
         active.queryJob?.cancel()
+        active.clickVerificationJob?.cancel()
+        active.pendingClick = null
         active.terminal = true
         active.generation++
     }
@@ -384,6 +460,9 @@ class AutomationEngine(
         var terminal: Boolean = false,
         var generation: Long = 0,
         var queryJob: Job? = null,
+        var nextPendingClickId: Long = 0,
+        var pendingClick: PendingNodeClick? = null,
+        var clickVerificationJob: Job? = null,
     ) {
         fun isCurrent(command: Command.QueryDue): Boolean =
             id == command.sessionId && generation == command.generation
@@ -395,6 +474,11 @@ class AutomationEngine(
         data class QueryDue(
             val sessionId: Long,
             val generation: Long,
+            val overflowEpoch: Long,
+        ) : Command
+        data class VerifyClick(
+            val sessionId: Long,
+            val pendingClickId: Long,
             val overflowEpoch: Long,
         ) : Command
         data class CapturePause(
@@ -410,7 +494,7 @@ class AutomationEngine(
         data class Target(val targetId: TargetAppId) : ForegroundState
     }
 
-    private enum class Evaluation { NO_MATCH, TERMINAL }
+    private enum class Evaluation { NO_MATCH, PENDING, TERMINAL }
 
     private companion object {
         const val SESSION_WINDOW_MS = 10_000L

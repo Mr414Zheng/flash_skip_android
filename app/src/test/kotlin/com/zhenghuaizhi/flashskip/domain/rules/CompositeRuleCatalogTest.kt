@@ -22,7 +22,7 @@ class CompositeRuleCatalogTest {
     @Test
     fun readyLocalRulePublishesFirstAndCandidateWithdrawalLeavesBuiltin() = runTest {
         val store = FakeCaptureStore(
-            RuleCaptureState(samples = (1L..5L).map(::sample)),
+            RuleCaptureState(samples = (1L..2L).map(::sample)),
         )
         val builtin = builtinRule()
         val catalog = CompositeRuleCatalog(
@@ -38,7 +38,7 @@ class CompositeRuleCatalogTest {
         assertEquals(builtin.id, readyRules.last().id)
 
         store.update { state ->
-            state.copy(samples = state.samples + divergentSample(6))
+            state.copy(samples = state.samples + divergentSample(3))
         }
         runCurrent()
         assertEquals(
@@ -50,7 +50,7 @@ class CompositeRuleCatalogTest {
     @Test
     fun versionBoundRuleNeverAppearsForAnotherVersion() = runTest {
         val store = FakeCaptureStore(
-            RuleCaptureState(samples = (1L..5L).map(::sample)),
+            RuleCaptureState(samples = (1L..2L).map(::sample)),
         )
         val catalog = CompositeRuleCatalog(BuiltinRuleCatalog(), store, backgroundScope)
         runCurrent()
@@ -101,7 +101,7 @@ class CompositeRuleCatalogTest {
                     hasUsableBounds = true,
                 ),
             ),
-            preClickUniqueSelectors = if (id <= 2) listOf(selector) else emptyList(),
+            preClickUniqueSelectors = if (id == 2L) listOf(selector) else emptyList(),
         )
 
         fun builtinRule() = AdRule(

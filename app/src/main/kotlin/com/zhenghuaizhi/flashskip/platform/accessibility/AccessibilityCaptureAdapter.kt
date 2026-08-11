@@ -1,9 +1,7 @@
 package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.accessibilityservice.AccessibilityService
-import android.graphics.Rect
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCoordinator
 import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
@@ -13,6 +11,8 @@ import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
+import com.zhenghuaizhi.flashskip.domain.rulecapture.ClickSemanticHint
+import com.zhenghuaizhi.flashskip.domain.rulecapture.ClickSourceRecoveryMatcher
 import com.zhenghuaizhi.flashskip.domain.rulecapture.RuleCandidateAnalyzer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -30,7 +30,15 @@ internal class AccessibilityCaptureAdapter(
     private var lockedSessionId: Long? = null
     private var observedSessionId: Long? = null
     private var verifiedTargetEnteredAtElapsedMs: Long? = null
-    private val probe = AccessibilityCaptureProbe(service, targetPackages) { currentIdentity }
+    private var preClickRecoverySnapshot: PreClickRecoverySnapshot? = null
+    private var lastRecoveryProbeAtElapsedMs: Long? = null
+    private val semanticSnapshotter = AccessibilitySemanticSnapshotter(service)
+    private val probe = AccessibilityCaptureProbe(
+        service = service,
+        targetPackages = targetPackages,
+        currentIdentity = { currentIdentity },
+        semanticSnapshotter = semanticSnapshotter,
+    )
 
     fun onStateChanged(state: RuleCaptureState) {
         val session = state.activeSession
@@ -40,6 +48,7 @@ internal class AccessibilityCaptureAdapter(
             currentIdentity = null
             verifiedTargetEnteredAtElapsedMs = null
             latestUniqueSelectors = emptySet()
+            clearPreClickRecoverySnapshot()
         }
         if (session == null || session.phase in setOf(
                 CapturePhase.CONFIGURING,
@@ -50,6 +59,7 @@ internal class AccessibilityCaptureAdapter(
             currentIdentity = null
             verifiedTargetEnteredAtElapsedMs = null
             latestUniqueSelectors = emptySet()
+            clearPreClickRecoverySnapshot()
         }
     }
 
@@ -78,6 +88,7 @@ internal class AccessibilityCaptureAdapter(
         )
         currentIdentity = identity
         verifiedTargetEnteredAtElapsedMs = enteredAt
+        refreshPreClickRecoverySnapshot(identity)
         refreshUniqueEvidence(state, identity)
         scope.launch {
             coordinator.observeTarget(
@@ -101,6 +112,7 @@ internal class AccessibilityCaptureAdapter(
                 it.packageName == packageName &&
                 it.windowId == event.windowId
         } ?: return
+        refreshPreClickRecoverySnapshot(identity)
         refreshUniqueEvidence(state, identity)
     }
 
@@ -125,11 +137,26 @@ internal class AccessibilityCaptureAdapter(
 
         lockedSessionId = session.id
         val source = event.source
-        if (source == null) {
-            fail(session.id, CaptureFailure.CLICK_SOURCE_UNAVAILABLE)
-            return
+        val nodes = if (source != null) {
+            semanticSnapshotter.copySemanticChain(source, packageName)
+        } else {
+            val hint = ClickSemanticHint(
+                texts = event.text.mapNotNull { value ->
+                    semanticSnapshotter.sanitizeSemantic(value.toString())
+                }.toSet(),
+                contentDescription = semanticSnapshotter.sanitizeSemantic(
+                    event.contentDescription?.toString(),
+                ),
+            )
+            // 点击回调到达时按钮可能已经消失；即时恢复失败后仅使用同窗口的近期唯一快照。
+            val immediate = probe.recoverClickedSemanticChain(identity, hint)
+            (immediate as? AccessibilityCaptureProbe.RecoveryResult.Success)?.nodes
+                ?: recoverFromPreClickSnapshot(identity, hint)
+                ?: run {
+                    fail(session.id, CaptureFailure.CLICK_SOURCE_UNAVAILABLE)
+                    return
+                }
         }
-        val nodes = copySemanticChain(source, packageName)
         val candidates = RuleCandidateAnalyzer.selectorCandidates(nodes)
         if (candidates.isEmpty()) {
             fail(session.id, CaptureFailure.CLICK_SEMANTICS_UNAVAILABLE)
@@ -155,6 +182,56 @@ internal class AccessibilityCaptureAdapter(
         scope.launch { coordinator.recordCaptured(session.id, sample) }
     }
 
+    private fun refreshPreClickRecoverySnapshot(identity: PageIdentity) {
+        val now = coordinator.elapsedRealtimeMs()
+        val existing = preClickRecoverySnapshot
+        if (existing != null && existing.identity != identity) {
+            clearPreClickRecoverySnapshot()
+        } else if (existing != null && now - existing.capturedAtElapsedMs <= SNAPSHOT_MAX_AGE_MS) {
+            return
+        }
+        if (lastRecoveryProbeAtElapsedMs?.let { now - it < RECOVERY_PROBE_INTERVAL_MS } == true) {
+            return
+        }
+        lastRecoveryProbeAtElapsedMs = now
+        val recovery = probe.recoverClickedSemanticChain(identity, ClickSemanticHint())
+        if (recovery is AccessibilityCaptureProbe.RecoveryResult.Success) {
+            preClickRecoverySnapshot = PreClickRecoverySnapshot(
+                identity = identity,
+                capturedAtElapsedMs = now,
+                nodes = recovery.nodes,
+            )
+        }
+    }
+
+    private fun recoverFromPreClickSnapshot(
+        identity: PageIdentity,
+        hint: ClickSemanticHint,
+    ): List<CapturedNode>? {
+        val snapshot = preClickRecoverySnapshot?.takeIf {
+            it.identity == identity &&
+                coordinator.elapsedRealtimeMs() - it.capturedAtElapsedMs in 0..SNAPSHOT_MAX_AGE_MS
+        } ?: return null
+        val semanticNode = snapshot.nodes.firstOrNull() ?: return null
+        val matchesEvent = ClickSourceRecoveryMatcher.matches(semanticNode, hint)
+        val matchesKnownDismiss = ClickSourceRecoveryMatcher.matches(
+            semanticNode,
+            ClickSemanticHint(),
+        )
+        return snapshot.nodes.takeIf { matchesEvent || matchesKnownDismiss }
+    }
+
+    private fun clearPreClickRecoverySnapshot() {
+        preClickRecoverySnapshot = null
+        lastRecoveryProbeAtElapsedMs = null
+    }
+
+    private data class PreClickRecoverySnapshot(
+        val identity: PageIdentity,
+        val capturedAtElapsedMs: Long,
+        val nodes: List<CapturedNode>,
+    )
+
     private fun refreshUniqueEvidence(state: RuleCaptureState, identity: PageIdentity) {
         val session = state.activeSession ?: return
         val selectors = RuleCandidateAnalyzer.analyze(
@@ -171,46 +248,6 @@ internal class AccessibilityCaptureAdapter(
         }
     }
 
-    @Suppress("DEPRECATION")
-    private fun copySemanticChain(
-        initialNode: AccessibilityNodeInfo,
-        expectedPackage: String,
-    ): List<CapturedNode> {
-        val nodes = mutableListOf<CapturedNode>()
-        var current: AccessibilityNodeInfo? = initialNode
-        repeat(MAX_CAPTURE_DEPTH) {
-            val node = current ?: return@repeat
-            val parent = runCatching { node.parent }.getOrNull()
-            try {
-                if (node.packageName?.toString() == expectedPackage) {
-                    val bounds = Rect().also(node::getBoundsInScreen)
-                    val metrics = service.resources.displayMetrics
-                    nodes += CapturedNode(
-                        resourceId = sanitize(node.viewIdResourceName, MAX_RESOURCE_ID_LENGTH),
-                        text = sanitize(node.text?.toString(), MAX_SEMANTIC_LENGTH),
-                        contentDescription = sanitize(
-                            node.contentDescription?.toString(),
-                            MAX_SEMANTIC_LENGTH,
-                        ),
-                        clickable = node.isClickable,
-                        supportsActionClick = node.actionList.any {
-                            it.id == AccessibilityNodeInfo.ACTION_CLICK
-                        },
-                        visibleToUser = node.isVisibleToUser,
-                        hasUsableBounds = bounds.width() > 0 && bounds.height() > 0 &&
-                            bounds.centerX() in 0 until metrics.widthPixels &&
-                            bounds.centerY() in 0 until metrics.heightPixels,
-                    )
-                }
-            } finally {
-                node.recycle()
-            }
-            current = parent
-        }
-        current?.recycle()
-        return nodes
-    }
-
     private fun lockAndFail(sessionId: Long, failure: CaptureFailure) {
         if (lockedSessionId == sessionId) return
         lockedSessionId = sessionId
@@ -221,17 +258,9 @@ internal class AccessibilityCaptureAdapter(
         scope.launch { coordinator.fail(sessionId, failure) }
     }
 
-    private fun sanitize(value: String?, maxLength: Int): String? = value
-        ?.map { if (it.isISOControl()) ' ' else it }
-        ?.joinToString("")
-        ?.trim()
-        ?.takeIf(String::isNotEmpty)
-        ?.take(maxLength)
-
     private companion object {
-        const val MAX_CAPTURE_DEPTH = 5
         const val MAX_ACTIVITY_LENGTH = 240
-        const val MAX_RESOURCE_ID_LENGTH = 180
-        const val MAX_SEMANTIC_LENGTH = 80
+        const val RECOVERY_PROBE_INTERVAL_MS = 200L
+        const val SNAPSHOT_MAX_AGE_MS = 10_000L
     }
 }

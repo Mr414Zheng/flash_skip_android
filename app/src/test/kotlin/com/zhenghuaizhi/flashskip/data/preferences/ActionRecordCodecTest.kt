@@ -2,6 +2,7 @@ package com.zhenghuaizhi.flashskip.data.preferences
 
 import com.zhenghuaizhi.flashskip.domain.model.ActionMethod
 import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
+import com.zhenghuaizhi.flashskip.domain.model.ActionReason
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import org.junit.Assert.assertEquals
@@ -21,6 +22,20 @@ class ActionRecordCodecTest {
         assertTrue(ActionRecordCodec.decodeOrEmpty("not-json").isEmpty())
         assertTrue(
             ActionRecordCodec.decodeOrEmpty("{\"version\":999,\"records\":[]}").isEmpty(),
+        )
+    }
+
+    @Test
+    fun roundTripPreservesUnconfirmedClickFailure() {
+        val record = record(1).copy(
+            method = null,
+            outcome = ActionOutcome.FAILED,
+            reason = ActionReason.CLICK_UNCONFIRMED,
+        )
+
+        assertEquals(
+            listOf(record),
+            ActionRecordCodec.decodeOrEmpty(ActionRecordCodec.encode(listOf(record))),
         )
     }
 

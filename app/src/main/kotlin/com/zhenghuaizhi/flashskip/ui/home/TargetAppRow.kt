@@ -37,6 +37,7 @@ import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
 import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.rulecapture.RuleCandidateAnalyzer
 import com.zhenghuaizhi.flashskip.ui.theme.FlashSkipTokens
 
 @Composable
@@ -134,7 +135,8 @@ private fun CaptureControls(
             state.installedVersion == null -> "未检测到目标应用，安装后才能采集。"
             state.capture.blockedByOtherApp -> "另一应用正在采集，请先完成或取消。"
             !state.capture.canStart -> "开启并保持 FlashSkip 无障碍服务运行后可采集。"
-            else -> "采集 5 次一致点击后生成本机规则；采集期间只点击一次。"
+            else -> "采集 ${RuleCandidateAnalyzer.REQUIRED_STABLE_SAMPLES} 次一致点击后生成本机规则；" +
+                "采集期间只点击一次。"
         }
     }
     Text(
@@ -222,7 +224,8 @@ private fun RuleCard(
             ) {
                 Text(
                     text = when (card.status) {
-                        RuleCardStatus.CANDIDATE -> "候选规则 · ${card.stableSampleCount}/5"
+                        RuleCardStatus.CANDIDATE ->
+                            "候选规则 · ${card.stableSampleCount}/${RuleCandidateAnalyzer.REQUIRED_STABLE_SAMPLES}"
                         RuleCardStatus.READY -> "本机规则可用"
                         RuleCardStatus.STALE -> "本机规则已失效"
                     },
@@ -237,7 +240,8 @@ private fun RuleCard(
                 TextButton(onClick = onClear) { Text("清除") }
             }
             Text(
-                text = "有效样本 ${card.sampleCount}/5 · 唯一性证据 ${card.uniqueEvidenceCount}/2",
+                text = "有效样本 ${card.sampleCount}/${RuleCandidateAnalyzer.REQUIRED_STABLE_SAMPLES} · " +
+                    "唯一性证据 ${card.uniqueEvidenceCount}/${RuleCandidateAnalyzer.REQUIRED_UNIQUE_PROBES}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -288,7 +292,7 @@ private fun failureMessage(failure: CaptureFailure?): String = when (failure) {
     CaptureFailure.COMPLETION_TIMEOUT -> "采集失败：10 分钟内未确认采集完成。"
     CaptureFailure.APP_VERSION_CHANGED -> "采集失败：目标应用版本已变化，请重新采集。"
     CaptureFailure.ACTIVITY_UNAVAILABLE -> "采集失败：无法验证当前 Activity。"
-    CaptureFailure.CLICK_SOURCE_UNAVAILABLE -> "采集失败：系统没有提供本次点击的节点来源。"
+    CaptureFailure.CLICK_SOURCE_UNAVAILABLE -> "采集失败：系统未提供点击节点，且未找到唯一关闭节点。"
     CaptureFailure.CLICK_SEMANTICS_UNAVAILABLE -> "该广告暂不支持：关闭节点没有可用语义。"
     null -> "采集失败，请重试。"
 }

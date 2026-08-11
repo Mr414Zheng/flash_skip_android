@@ -30,7 +30,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class AutomationEngineTest {
     @Test
-    fun clickSuccessIsTerminalAndNeverFallsBackToGesture() = runTest {
+    fun clickIsConfirmedAfterSelectorDisappearsAndNeverFallsBackToGesture() = runTest {
         val fixture = fixture()
         fixture.gateway.queryResults.add(QueryResult.Unique)
         fixture.gateway.clickResults.add(ClickResult.Clicked)
@@ -40,6 +40,11 @@ class AutomationEngineTest {
         assertEquals(1, fixture.gateway.queryCalls)
         assertEquals(1, fixture.gateway.clickCalls)
         assertEquals(0, fixture.gateway.gestureCalls)
+        assertTrue(fixture.store.current.records.isEmpty())
+
+        fixture.advance(this, 150)
+
+        assertEquals(2, fixture.gateway.queryCalls)
         assertEquals(ActionOutcome.CLOSED, fixture.store.current.records.single().outcome)
 
         fixture.clock.now = 500
@@ -49,6 +54,84 @@ class AutomationEngineTest {
         runCurrent()
         fixture.engine.awaitIdle()
         assertEquals(1, fixture.gateway.clickCalls)
+        fixture.engine.close()
+    }
+
+    @Test
+    fun visibleSelectorIsRetriedTwiceBeforeCloseIsConfirmed() = runTest {
+        val fixture = fixture()
+        repeat(3) { fixture.gateway.queryResults.add(QueryResult.Unique) }
+        repeat(3) { fixture.gateway.clickResults.add(ClickResult.Clicked) }
+
+        fixture.startAndAdvance(this, 120)
+        fixture.advance(this, 150)
+        fixture.advance(this, 150)
+        fixture.advance(this, 150)
+
+        assertEquals(4, fixture.gateway.queryCalls)
+        assertEquals(3, fixture.gateway.clickCalls)
+        val record = fixture.store.current.records.single()
+        assertEquals(ActionOutcome.CLOSED, record.outcome)
+        assertEquals(
+            com.zhenghuaizhi.flashskip.domain.model.ActionMethod.NODE_CLICK,
+            record.method,
+        )
+        fixture.engine.close()
+    }
+
+    @Test
+    fun persistentSelectorFailsAfterThreeBoundedNodeClicks() = runTest {
+        val fixture = fixture()
+        repeat(4) { fixture.gateway.queryResults.add(QueryResult.Unique) }
+        repeat(3) { fixture.gateway.clickResults.add(ClickResult.Clicked) }
+
+        fixture.startAndAdvance(this, 120)
+        repeat(3) { fixture.advance(this, 150) }
+
+        assertEquals(4, fixture.gateway.queryCalls)
+        assertEquals(3, fixture.gateway.clickCalls)
+        val record = fixture.store.current.records.single()
+        assertEquals(ActionOutcome.FAILED, record.outcome)
+        assertEquals(
+            com.zhenghuaizhi.flashskip.domain.model.ActionReason.CLICK_UNCONFIRMED,
+            record.reason,
+        )
+        fixture.engine.close()
+    }
+
+    @Test
+    fun pageChangeAfterNodeClickConfirmsCloseWithoutRetry() = runTest {
+        val fixture = fixture()
+        fixture.gateway.queryResults.add(QueryResult.Unique)
+        fixture.gateway.queryResults.add(QueryResult.PageChanged)
+        fixture.gateway.clickResults.add(ClickResult.Clicked)
+
+        fixture.startAndAdvance(this, 120)
+        fixture.advance(this, 150)
+
+        assertEquals(1, fixture.gateway.clickCalls)
+        assertEquals(ActionOutcome.CLOSED, fixture.store.current.records.single().outcome)
+        fixture.engine.close()
+    }
+
+    @Test
+    fun traversalLimitAfterNodeClickConfirmsCloseWithoutRetry() = runTest {
+        val fixture = fixture()
+        fixture.gateway.queryResults.add(QueryResult.Unique)
+        fixture.gateway.queryResults.add(QueryResult.TraversalLimit)
+        fixture.gateway.clickResults.add(ClickResult.Clicked)
+
+        fixture.startAndAdvance(this, 120)
+        fixture.advance(this, 150)
+
+        assertEquals(2, fixture.gateway.queryCalls)
+        assertEquals(1, fixture.gateway.clickCalls)
+        val record = fixture.store.current.records.single()
+        assertEquals(ActionOutcome.CLOSED, record.outcome)
+        assertEquals(
+            com.zhenghuaizhi.flashskip.domain.model.ActionMethod.NODE_CLICK,
+            record.method,
+        )
         fixture.engine.close()
     }
 
@@ -223,6 +306,7 @@ class AutomationEngineTest {
         advanceTimeBy(380)
         runCurrent()
         fixture.engine.awaitIdle()
+        fixture.advance(this, 150)
 
         assertTrue(secondSelector in fixture.gateway.queriedSelectors)
         assertEquals("second-rule", fixture.store.current.records.single().ruleId)
@@ -304,6 +388,23 @@ class AutomationEngineTest {
         assertEquals(0, fixture.gateway.queryCalls)
         assertEquals(0, fixture.gateway.clickCalls)
         assertEquals(0, fixture.gateway.gestureCalls)
+        fixture.engine.close()
+    }
+
+    @Test
+    fun capturePauseCancelsPendingClickVerificationAndPreventsRetries() = runTest {
+        val fixture = fixture()
+        fixture.gateway.queryResults.add(QueryResult.Unique)
+        fixture.gateway.clickResults.add(ClickResult.Clicked)
+        fixture.startAndAdvance(this, 120)
+
+        fixture.engine.setCapturePaused(true)
+        fixture.advance(this, 500)
+
+        assertEquals(1, fixture.gateway.queryCalls)
+        assertEquals(1, fixture.gateway.clickCalls)
+        assertEquals(0, fixture.gateway.gestureCalls)
+        assertTrue(fixture.store.current.records.isEmpty())
         fixture.engine.close()
     }
 
@@ -405,6 +506,13 @@ class AutomationEngineTest {
             engine.onForegroundSignal(ForegroundSignal.TargetActive(IDENTITY, 0))
             engine.awaitIdle()
             clock.now = elapsedMs
+            scope.advanceTimeBy(elapsedMs)
+            scope.runCurrent()
+            engine.awaitIdle()
+        }
+
+        suspend fun advance(scope: TestScope, elapsedMs: Long) {
+            clock.now += elapsedMs
             scope.advanceTimeBy(elapsedMs)
             scope.runCurrent()
             engine.awaitIdle()
