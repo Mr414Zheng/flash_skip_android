@@ -1,0 +1,33 @@
+package com.zhenghuaizhi.flashskip.domain.model
+
+data class AdRule(
+    val id: String,
+    val targetAppId: TargetAppId,
+    val packageName: String,
+    val allowedActivities: Set<String>,
+    val selectors: List<NodeSelector>,
+    val startupDelayMs: Long,
+    val cooldownMs: Long,
+)
+
+data class NodeSelector(
+    val resourceId: String? = null,
+    val text: TextCondition? = null,
+    val contentDescription: String? = null,
+) {
+    val hasConditions: Boolean
+        get() = resourceId != null || text != null || contentDescription != null
+}
+
+sealed interface TextCondition {
+    data class Exact(val value: String) : TextCondition
+    data class Prefix(val value: String) : TextCondition
+}
+
+data class NodeSnapshot(
+    val resourceId: String?,
+    val text: String?,
+    val contentDescription: String?,
+    val visibleToUser: Boolean,
+    val hasUsableBounds: Boolean,
+)
