@@ -29,6 +29,7 @@ internal class AccessibilityCaptureAdapter(
     private var latestUniqueSelectors: Set<CapturedSelector> = emptySet()
     private var lockedSessionId: Long? = null
     private var observedSessionId: Long? = null
+    private var verifiedTargetEnteredAtElapsedMs: Long? = null
     private val probe = AccessibilityCaptureProbe(service, targetPackages) { currentIdentity }
 
     fun onStateChanged(state: RuleCaptureState) {
@@ -37,6 +38,7 @@ internal class AccessibilityCaptureAdapter(
             observedSessionId = session?.id
             lockedSessionId = null
             currentIdentity = null
+            verifiedTargetEnteredAtElapsedMs = null
             latestUniqueSelectors = emptySet()
         }
         if (session == null || session.phase in setOf(
@@ -46,6 +48,7 @@ internal class AccessibilityCaptureAdapter(
             )
         ) {
             currentIdentity = null
+            verifiedTargetEnteredAtElapsedMs = null
             latestUniqueSelectors = emptySet()
         }
     }
@@ -74,6 +77,7 @@ internal class AccessibilityCaptureAdapter(
             appVersion = appVersion,
         )
         currentIdentity = identity
+        verifiedTargetEnteredAtElapsedMs = enteredAt
         refreshUniqueEvidence(state, identity)
         scope.launch {
             coordinator.observeTarget(
@@ -103,7 +107,13 @@ internal class AccessibilityCaptureAdapter(
     fun onClicked(event: AccessibilityEvent) {
         val state = stateProvider()
         val session = state.activeSession ?: return
-        if (session.phase != CapturePhase.OBSERVING_CLICK || lockedSessionId == session.id) return
+        if (session.phase !in setOf(
+                CapturePhase.WAITING_FOR_TARGET,
+                CapturePhase.OBSERVING_CLICK,
+            ) || lockedSessionId == session.id
+        ) {
+            return
+        }
         val packageName = event.packageName?.toString() ?: return
         // 包和窗口检查必须先于 event.source，确保非目标点击零节点读取。
         if (packageName !in targetPackages || packageName != session.packageName) return
@@ -125,7 +135,8 @@ internal class AccessibilityCaptureAdapter(
             fail(session.id, CaptureFailure.CLICK_SEMANTICS_UNAVAILABLE)
             return
         }
-        val enteredAt = session.targetEnteredAtElapsedMs
+        // 窗口已同步验证但状态仍在异步落盘时，也必须接住用户的首次快速点击。
+        val enteredAt = session.targetEnteredAtElapsedMs ?: verifiedTargetEnteredAtElapsedMs
         val activityName = identity.activityName
         if (enteredAt == null || activityName.isNullOrBlank()) {
             fail(session.id, CaptureFailure.ACTIVITY_UNAVAILABLE)

@@ -115,12 +115,30 @@ class RuleCaptureCoordinator(
     }
 
     suspend fun recordCaptured(sessionId: Long, sample: CaptureSample) {
-        transition(sessionId, CapturePhase.OBSERVING_CLICK) { session, now ->
-            session.copy(
-                phase = CapturePhase.CAPTURED,
-                phaseStartedAtEpochMs = now,
-                deadlineAtEpochMs = now + COMPLETION_TIMEOUT_MS,
-                pendingSample = sample,
+        captureStore.update { state ->
+            val session = state.activeSession?.takeIf {
+                it.id == sessionId && it.phase in setOf(
+                    CapturePhase.WAITING_FOR_TARGET,
+                    CapturePhase.OBSERVING_CLICK,
+                )
+            } ?: return@update state
+            if (sample.targetAppId != session.targetAppId || sample.appVersion != session.appVersion) {
+                return@update state.copy(
+                    activeSession = failed(session, CaptureFailure.APP_VERSION_CHANGED),
+                )
+            }
+            val now = wallClock.currentTimeMillis()
+            state.copy(
+                activeSession = session.copy(
+                    phase = CapturePhase.CAPTURED,
+                    phaseStartedAtEpochMs = now,
+                    deadlineAtEpochMs = now + COMPLETION_TIMEOUT_MS,
+                    activityName = sample.activityName,
+                    targetEnteredAtElapsedMs = session.targetEnteredAtElapsedMs
+                        ?: (monotonicClock.elapsedRealtimeMs() - sample.clickedAfterTargetMs)
+                            .coerceAtLeast(0),
+                    pendingSample = sample,
+                ),
             )
         }
     }

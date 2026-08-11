@@ -48,6 +48,39 @@ class RuleCaptureCoordinatorTest {
     }
 
     @Test
+    fun firstClickCanBeCapturedBeforeObservingStateIsPublished() = runTest {
+        val fixture = Fixture(this)
+        fixture.clock.elapsed = 1_500
+        val sessionId = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
+        fixture.coordinator.markConfigured(sessionId)
+
+        fixture.coordinator.recordCaptured(sessionId, sample(sessionId))
+
+        val captured = fixture.captureStore.state.value.activeSession
+        assertEquals(CapturePhase.CAPTURED, captured?.phase)
+        assertEquals(ACTIVITY, captured?.activityName)
+        assertEquals(500L, captured?.targetEnteredAtElapsedMs)
+        assertEquals(sample(sessionId), captured?.pendingSample)
+    }
+
+    @Test
+    fun firstClickWithMismatchedVersionFailsInsteadOfPublishingSample() = runTest {
+        val fixture = Fixture(this)
+        val sessionId = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
+        fixture.coordinator.markConfigured(sessionId)
+
+        fixture.coordinator.recordCaptured(
+            sessionId,
+            sample(sessionId).copy(appVersion = VERSION.copy(versionCode = 99)),
+        )
+
+        val failed = fixture.captureStore.state.value.activeSession
+        assertEquals(CapturePhase.FAILED, failed?.phase)
+        assertEquals(CaptureFailure.APP_VERSION_CHANGED, failed?.failure)
+        assertNull(failed?.pendingSample)
+    }
+
+    @Test
     fun timeoutsAndVersionChangesBecomeExplicitFailures() = runTest {
         val fixture = Fixture(this)
         val timeoutId = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
