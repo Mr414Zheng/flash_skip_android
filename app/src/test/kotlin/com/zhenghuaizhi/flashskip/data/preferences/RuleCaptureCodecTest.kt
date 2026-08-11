@@ -59,7 +59,11 @@ class RuleCaptureCodecTest {
             ),
         ),
         preClickUniqueSelectors = listOf(
-            CapturedSelector(resourceId = "com.tencent.qqmusic:id/close"),
+            CapturedSelector(
+                text = "跳过",
+                ancestorResourceId = "com.tencent.qqmusic:id/jap",
+                ancestorDistance = 1,
+            ),
         ),
     )
 

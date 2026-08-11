@@ -103,7 +103,7 @@
 
 - `TargetApp`：应用 ID、名称、包名、图标、规则列表。
 - `AdRule`：规则 ID、包名、允许 Activity、候选选择器、启动延迟、冷却时间和可选目标应用版本约束。
-- `NodeSelector`：可选资源 ID、文本精确/前缀、内容描述精确；同一选择器条件为 AND。
+- `NodeSelector`：可选目标资源 ID、文本精确/前缀、内容描述精确，以及最多 4 层的祖先资源 ID 约束；同一选择器条件为 AND，动作目标不能退化为不可点击父容器。
 - `ActionRecord`：时间、应用 ID、规则 ID、执行方式、结果、可选原因。
 - `ActionMethod`：`NODE_CLICK`、`CENTER_GESTURE`。
 - `ActionOutcome`：`CLOSED`、`ABANDONED`、`FAILED`。

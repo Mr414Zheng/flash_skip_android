@@ -65,4 +65,28 @@ class SelectorMatcherTest {
             ),
         )
     }
+
+    @Test
+    fun ancestorConstraintScopesGenericTargetTextWithoutChangingActionTarget() {
+        val selector = NodeSelector(
+            text = TextCondition.Exact("跳过广告"),
+            ancestorResourceId = "com.example:id/ad_container",
+            ancestorDistance = 1,
+        )
+        val matchingAncestor = node.copy(
+            resourceId = "com.example:id/ad_container",
+            text = null,
+            contentDescription = null,
+        )
+
+        assertTrue(SelectorMatcher.matches(selector, node, listOf(matchingAncestor)))
+        assertFalse(
+            SelectorMatcher.matches(
+                selector,
+                node,
+                listOf(matchingAncestor.copy(resourceId = "android:id/content")),
+            ),
+        )
+        assertFalse(SelectorMatcher.matches(selector, node))
+    }
 }

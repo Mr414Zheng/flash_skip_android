@@ -77,6 +77,8 @@ object RuleCaptureCodec {
         .putNullable("resourceId", resourceId)
         .putNullable("text", text)
         .putNullable("contentDescription", contentDescription)
+        .putNullable("ancestorResourceId", ancestorResourceId)
+        .putNullable("ancestorDistance", ancestorDistance)
 
     private fun JSONObject.toSession() = CaptureSession(
         id = getLong("id"),
@@ -124,6 +126,8 @@ object RuleCaptureCodec {
         resourceId = nullableString("resourceId"),
         text = nullableString("text"),
         contentDescription = nullableString("contentDescription"),
+        ancestorResourceId = nullableString("ancestorResourceId"),
+        ancestorDistance = nullableInt("ancestorDistance"),
     )
 
     private fun JSONObject.putNullable(key: String, value: Any?): JSONObject =

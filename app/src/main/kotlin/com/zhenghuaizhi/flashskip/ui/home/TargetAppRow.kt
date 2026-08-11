@@ -297,6 +297,9 @@ private fun selectorSummary(selector: CapturedSelector): String = buildList {
     selector.resourceId?.let { add("ID $it") }
     selector.text?.let { add("文本 $it") }
     selector.contentDescription?.let { add("描述 $it") }
+    selector.ancestorResourceId?.let {
+        add("祖先ID $it（${selector.ancestorDistance}层）")
+    }
 }.joinToString(" · ")
 
 private fun appIcon(targetAppId: TargetAppId): Int = when (targetAppId) {

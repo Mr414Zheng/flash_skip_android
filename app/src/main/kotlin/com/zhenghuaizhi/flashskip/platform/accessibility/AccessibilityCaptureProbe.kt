@@ -1,11 +1,8 @@
 package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.accessibilityservice.AccessibilityService
-import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
-import com.zhenghuaizhi.flashskip.domain.automation.SelectorMatcher
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
-import com.zhenghuaizhi.flashskip.domain.model.NodeSnapshot
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import java.util.ArrayDeque
 
@@ -15,6 +12,7 @@ internal class AccessibilityCaptureProbe(
     private val currentIdentity: () -> PageIdentity?,
 ) {
     private val targetPackages = targetPackages.toSet()
+    private val selectorMatcher = AccessibilityNodeSelectorMatcher(service)
 
     @Suppress("DEPRECATION")
     fun uniqueSelectors(
@@ -47,10 +45,9 @@ internal class AccessibilityCaptureProbe(
                     node.recycle()
                     return ProbeResult.TraversalLimit
                 }
-                val snapshot = node.toSnapshot()
                 selectors.forEach { selector ->
                     if (counts.getValue(selector) < 2 &&
-                        SelectorMatcher.matches(selector.toNodeSelector(), snapshot)
+                        selectorMatcher.matches(node, selector.toNodeSelector())
                     ) {
                         counts[selector] = counts.getValue(selector) + 1
                     }
@@ -68,20 +65,6 @@ internal class AccessibilityCaptureProbe(
         } finally {
             while (queue.isNotEmpty()) queue.removeFirst().node.recycle()
         }
-    }
-
-    private fun AccessibilityNodeInfo.toSnapshot(): NodeSnapshot {
-        val bounds = Rect().also(::getBoundsInScreen)
-        val displayMetrics = service.resources.displayMetrics
-        return NodeSnapshot(
-            resourceId = viewIdResourceName,
-            text = text?.toString(),
-            contentDescription = contentDescription?.toString(),
-            visibleToUser = isVisibleToUser,
-            hasUsableBounds = bounds.width() > 0 && bounds.height() > 0 &&
-                bounds.centerX() in 0 until displayMetrics.widthPixels &&
-                bounds.centerY() in 0 until displayMetrics.heightPixels,
-        )
     }
 
     private data class NodeAtDepth(val node: AccessibilityNodeInfo, val depth: Int)

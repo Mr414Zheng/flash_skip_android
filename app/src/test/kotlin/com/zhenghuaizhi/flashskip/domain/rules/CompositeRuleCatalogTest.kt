@@ -95,6 +95,8 @@ class CompositeRuleCatalogTest {
             nodes = listOf(
                 CapturedNode(
                     resourceId = selector.resourceId,
+                    clickable = true,
+                    supportsActionClick = true,
                     visibleToUser = true,
                     hasUsableBounds = true,
                 ),

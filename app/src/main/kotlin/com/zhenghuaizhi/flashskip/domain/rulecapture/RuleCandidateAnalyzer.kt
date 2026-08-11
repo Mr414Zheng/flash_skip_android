@@ -5,6 +5,7 @@ import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
+import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleCandidateAnalysis
 import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
@@ -75,30 +76,56 @@ object RuleCandidateAnalyzer {
         )
     }
 
-    fun selectorCandidates(nodes: List<CapturedNode>): List<CapturedSelector> = nodes
-        .filter { it.visibleToUser && it.hasUsableBounds }
-        .flatMap { node ->
-            buildList {
-                addIfUsable(CapturedSelector(node.resourceId, node.text, node.contentDescription))
-                addIfUsable(CapturedSelector(resourceId = node.resourceId, text = node.text))
-                addIfUsable(
-                    CapturedSelector(
-                        resourceId = node.resourceId,
-                        contentDescription = node.contentDescription,
-                    ),
-                )
-                addIfUsable(
-                    CapturedSelector(
-                        text = node.text,
-                        contentDescription = node.contentDescription,
-                    ),
-                )
-                addIfUsable(CapturedSelector(resourceId = node.resourceId))
-                addIfUsable(CapturedSelector(contentDescription = node.contentDescription))
-                addIfUsable(CapturedSelector(text = node.text))
-            }
+    fun selectorCandidates(nodes: List<CapturedNode>): List<CapturedSelector> {
+        val actionTargetIndex = nodes.indexOfFirst { node ->
+            node.visibleToUser &&
+                node.hasUsableBounds &&
+                (node.clickable || node.supportsActionClick)
         }
-        .distinct()
+        if (actionTargetIndex < 0) return emptyList()
+        val targetSelectors = selectorsForTarget(nodes[actionTargetIndex])
+        val ancestorSelectors = nodes
+            .drop(actionTargetIndex + 1)
+            .take(NodeSelector.MAX_ANCESTOR_DISTANCE)
+            .mapIndexedNotNull { index, ancestor ->
+                ancestor.resourceId?.takeIf { resourceId ->
+                    resourceId.isNotBlank() && ancestor.visibleToUser && ancestor.hasUsableBounds
+                }?.let { resourceId -> resourceId to index + 1 }
+            }
+        return buildList {
+            targetSelectors.forEach { target ->
+                ancestorSelectors.forEach { (resourceId, distance) ->
+                    add(
+                        target.copy(
+                            ancestorResourceId = resourceId,
+                            ancestorDistance = distance,
+                        ),
+                    )
+                }
+                add(target)
+            }
+        }.distinct()
+    }
+
+    private fun selectorsForTarget(node: CapturedNode): List<CapturedSelector> = buildList {
+        addIfUsable(CapturedSelector(node.resourceId, node.text, node.contentDescription))
+        addIfUsable(CapturedSelector(resourceId = node.resourceId, text = node.text))
+        addIfUsable(
+            CapturedSelector(
+                resourceId = node.resourceId,
+                contentDescription = node.contentDescription,
+            ),
+        )
+        addIfUsable(
+            CapturedSelector(
+                text = node.text,
+                contentDescription = node.contentDescription,
+            ),
+        )
+        addIfUsable(CapturedSelector(resourceId = node.resourceId))
+        addIfUsable(CapturedSelector(contentDescription = node.contentDescription))
+        addIfUsable(CapturedSelector(text = node.text))
+    }.distinct()
 
     private fun rankSelectors(samples: List<CaptureSample>): List<SelectorRank> {
         val selectorsBySample = samples.associateWith { selectorCandidates(it.nodes).toSet() }

@@ -5,9 +5,7 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
-import com.zhenghuaizhi.flashskip.domain.automation.SelectorMatcher
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
-import com.zhenghuaizhi.flashskip.domain.model.NodeSnapshot
 import com.zhenghuaizhi.flashskip.domain.ports.ClickResult
 import com.zhenghuaizhi.flashskip.domain.ports.GestureResult
 import com.zhenghuaizhi.flashskip.domain.ports.PageGateway
@@ -22,6 +20,7 @@ class AccessibilityPageGateway(
     private val currentIdentity: () -> PageIdentity?,
 ) : PageGateway {
     private val targetPackages = targetPackages.toSet()
+    private val selectorMatcher = AccessibilityNodeSelectorMatcher(service)
 
     override suspend fun query(identity: PageIdentity, selector: NodeSelector): QueryResult =
         when (scan(identity, selector) { Unit }) {
@@ -109,7 +108,7 @@ class AccessibilityPageGateway(
                     node.recycle()
                     return ScanResult.TraversalLimit
                 }
-                if (SelectorMatcher.matches(selector, node.toSnapshot())) {
+                if (selectorMatcher.matches(node, selector)) {
                     if (firstMatch != null) {
                         node.recycle()
                         return ScanResult.Ambiguous
@@ -128,20 +127,6 @@ class AccessibilityPageGateway(
             firstMatch?.recycle()
             while (queue.isNotEmpty()) queue.removeFirst().node.recycle()
         }
-    }
-
-    private fun AccessibilityNodeInfo.toSnapshot(): NodeSnapshot {
-        val bounds = Rect().also(::getBoundsInScreen)
-        val displayMetrics = service.resources.displayMetrics
-        return NodeSnapshot(
-            resourceId = viewIdResourceName,
-            text = text?.toString(),
-            contentDescription = contentDescription?.toString(),
-            visibleToUser = isVisibleToUser,
-            hasUsableBounds = bounds.width() > 0 && bounds.height() > 0 &&
-                bounds.centerX() in 0 until displayMetrics.widthPixels &&
-                bounds.centerY() in 0 until displayMetrics.heightPixels,
-        )
     }
 
     private data class NodeAtDepth(val node: AccessibilityNodeInfo, val depth: Int)

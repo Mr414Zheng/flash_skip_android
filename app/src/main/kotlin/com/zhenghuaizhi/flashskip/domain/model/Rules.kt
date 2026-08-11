@@ -15,9 +15,18 @@ data class NodeSelector(
     val resourceId: String? = null,
     val text: TextCondition? = null,
     val contentDescription: String? = null,
+    val ancestorResourceId: String? = null,
+    val ancestorDistance: Int? = null,
 ) {
     val hasConditions: Boolean
         get() = resourceId != null || text != null || contentDescription != null
+
+    val hasAncestorConstraint: Boolean
+        get() = ancestorResourceId != null || ancestorDistance != null
+
+    companion object {
+        const val MAX_ANCESTOR_DISTANCE = 4
+    }
 }
 
 sealed interface TextCondition {

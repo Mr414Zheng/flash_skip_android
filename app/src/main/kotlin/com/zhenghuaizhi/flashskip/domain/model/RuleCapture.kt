@@ -34,20 +34,26 @@ data class CapturedSelector(
     val resourceId: String? = null,
     val text: String? = null,
     val contentDescription: String? = null,
+    val ancestorResourceId: String? = null,
+    val ancestorDistance: Int? = null,
 ) {
     val conditionCount: Int
-        get() = listOf(resourceId, text, contentDescription).count { it != null }
+        get() = listOf(resourceId, text, contentDescription, ancestorResourceId).count { it != null }
 
     fun toNodeSelector(): NodeSelector = NodeSelector(
         resourceId = resourceId,
         text = text?.let(TextCondition::Exact),
         contentDescription = contentDescription,
+        ancestorResourceId = ancestorResourceId,
+        ancestorDistance = ancestorDistance,
     )
 
     fun stableKey(): String = listOf(
         resourceId.orEmpty(),
         text.orEmpty(),
         contentDescription.orEmpty(),
+        ancestorResourceId.orEmpty(),
+        ancestorDistance?.toString().orEmpty(),
     ).joinToString("\u001f")
 }
 

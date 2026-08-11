@@ -67,6 +67,34 @@ class RuleValidatorTest {
         assertTrue(RuleValidationIssue.EMPTY_SELECTOR in RuleValidator.validate(listOf(rule)))
     }
 
+    @Test
+    fun ancestorConstraintRequiresIdAndBoundedDistance() {
+        val missingDistance = validRule().copy(
+            selectors = listOf(
+                NodeSelector(
+                    text = TextCondition.Exact("跳过"),
+                    ancestorResourceId = "com.tencent.qqmusic:id/jap",
+                ),
+            ),
+        )
+        val excessiveDistance = validRule().copy(
+            selectors = listOf(
+                NodeSelector(
+                    text = TextCondition.Exact("跳过"),
+                    ancestorResourceId = "com.tencent.qqmusic:id/jap",
+                    ancestorDistance = 5,
+                ),
+            ),
+        )
+
+        assertTrue(
+            RuleValidationIssue.INVALID_ANCESTOR in RuleValidator.validate(listOf(missingDistance)),
+        )
+        assertTrue(
+            RuleValidationIssue.INVALID_ANCESTOR in RuleValidator.validate(listOf(excessiveDistance)),
+        )
+    }
+
     private fun validRule() = AdRule(
         id = "test-rule",
         targetAppId = TargetAppId.QQ_MUSIC,

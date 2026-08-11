@@ -7,6 +7,7 @@ import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -92,6 +93,58 @@ class RuleCandidateAnalyzerTest {
         assertEquals(emptyList<CapturedSelector>(), RuleCandidateAnalyzer.selectorCandidates(nodes))
     }
 
+    @Test
+    fun genericClickedTextBecomesReadyOnlyWhenScopedByStableAncestor() {
+        val structural = CapturedSelector(
+            text = "跳过",
+            ancestorResourceId = "com.tencent.qqmusic:id/jap",
+            ancestorDistance = 1,
+        )
+        val samples = (1L..5L).map { id ->
+            qqMusicSample(
+                id = id,
+                uniqueSelectors = if (id <= 2) listOf(structural) else emptyList(),
+            )
+        }
+
+        val analysis = RuleCandidateAnalyzer.analyze(
+            samples,
+            TargetAppId.QQ_MUSIC,
+            VERSION,
+        )
+
+        assertEquals(RuleCardStatus.READY, analysis.status)
+        assertEquals(structural, analysis.primarySelector)
+        assertEquals(structural.toNodeSelector(), requireNotNull(analysis.rule).selectors.first())
+    }
+
+    @Test
+    fun nonClickableParentIdCannotBecomeFlatActionSelector() {
+        val oldParentEvidence = CapturedSelector(
+            resourceId = "com.tencent.qqmusic:id/jap",
+        )
+        val samples = (1L..5L).map { id ->
+            qqMusicSample(
+                id = id,
+                uniqueSelectors = if (id <= 2) listOf(oldParentEvidence) else emptyList(),
+            )
+        }
+
+        val analysis = RuleCandidateAnalyzer.analyze(
+            samples,
+            TargetAppId.QQ_MUSIC,
+            VERSION,
+        )
+
+        assertEquals(RuleCardStatus.CANDIDATE, analysis.status)
+        assertEquals(0, analysis.uniqueEvidenceCount)
+        assertNull(analysis.rule)
+        assertFalse(
+            RuleCandidateAnalyzer.selectorCandidates(samples.first().nodes)
+                .contains(oldParentEvidence),
+        )
+    }
+
     private fun sample(
         id: Long,
         selector: CapturedSelector,
@@ -115,6 +168,33 @@ class RuleCandidateAnalyzerTest {
             ),
         ),
         preClickUniqueSelectors = if (unique) listOf(selector) else emptyList(),
+    )
+
+    private fun qqMusicSample(
+        id: Long,
+        uniqueSelectors: List<CapturedSelector>,
+    ) = CaptureSample(
+        id = id,
+        targetAppId = TargetAppId.QQ_MUSIC,
+        appVersion = VERSION,
+        activityName = "com.tencent.qqmusic.activity.AppStarterActivity",
+        clickedAfterTargetMs = 200L + id,
+        capturedAtEpochMs = 20_000L + id,
+        nodes = listOf(
+            CapturedNode(
+                text = "跳过",
+                clickable = true,
+                supportsActionClick = true,
+                visibleToUser = true,
+                hasUsableBounds = true,
+            ),
+            CapturedNode(
+                resourceId = "com.tencent.qqmusic:id/jap",
+                visibleToUser = true,
+                hasUsableBounds = true,
+            ),
+        ),
+        preClickUniqueSelectors = uniqueSelectors,
     )
 
     private companion object {

@@ -1,6 +1,7 @@
 package com.zhenghuaizhi.flashskip.domain.rules
 
 import com.zhenghuaizhi.flashskip.domain.model.AdRule
+import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.model.TextCondition
 
@@ -11,6 +12,7 @@ enum class RuleValidationIssue {
     NO_ACTIVITY,
     NO_SELECTOR,
     EMPTY_SELECTOR,
+    INVALID_ANCESTOR,
     NEGATIVE_DELAY,
     NEGATIVE_COOLDOWN,
 }
@@ -42,6 +44,17 @@ object RuleValidator {
                 }
             ) {
                 issues += RuleValidationIssue.EMPTY_SELECTOR
+            }
+            if (rule.selectors.any { selector ->
+                    selector.ancestorResourceId?.isBlank() == true ||
+                        (selector.ancestorResourceId == null) !=
+                        (selector.ancestorDistance == null) ||
+                        selector.ancestorDistance?.let {
+                            it !in 1..NodeSelector.MAX_ANCESTOR_DISTANCE
+                        } == true
+                }
+            ) {
+                issues += RuleValidationIssue.INVALID_ANCESTOR
             }
             if (rule.startupDelayMs < 0) issues += RuleValidationIssue.NEGATIVE_DELAY
             if (rule.cooldownMs < 0) issues += RuleValidationIssue.NEGATIVE_COOLDOWN
