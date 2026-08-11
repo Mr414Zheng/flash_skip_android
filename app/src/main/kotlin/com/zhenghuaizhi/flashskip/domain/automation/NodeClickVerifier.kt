@@ -49,7 +49,9 @@ internal class NodeClickVerifier(
             ClickResult.TraversalLimit ->
                 NodeClickVerification.Abandoned(ActionReason.TRAVERSAL_LIMIT)
 
-            ClickResult.NotSupported ->
+            ClickResult.NotActionable,
+            ClickResult.NotSupported,
+            ->
                 NodeClickVerification.Failed(ActionReason.CLICK_UNCONFIRMED)
         }
     }

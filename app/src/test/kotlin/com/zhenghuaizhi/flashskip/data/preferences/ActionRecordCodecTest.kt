@@ -4,6 +4,7 @@ import com.zhenghuaizhi.flashskip.domain.model.ActionMethod
 import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.ActionReason
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
+import com.zhenghuaizhi.flashskip.domain.model.ExecutionTiming
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -12,7 +13,15 @@ import org.junit.Test
 class ActionRecordCodecTest {
     @Test
     fun roundTripPreservesOnlyRecordFields() {
-        val record = record(1)
+        val record = record(1).copy(
+            timing = ExecutionTiming(
+                targetToFirstQueryMs = 120,
+                targetToFirstMatchMs = 1_640,
+                targetToActionMs = 1_644,
+                targetToCompletedMs = 1_794,
+                selectorQueryCount = 3,
+            ),
+        )
 
         assertEquals(listOf(record), ActionRecordCodec.decodeOrEmpty(ActionRecordCodec.encode(listOf(record))))
     }
@@ -22,6 +31,22 @@ class ActionRecordCodecTest {
         assertTrue(ActionRecordCodec.decodeOrEmpty("not-json").isEmpty())
         assertTrue(
             ActionRecordCodec.decodeOrEmpty("{\"version\":999,\"records\":[]}").isEmpty(),
+        )
+    }
+
+    @Test
+    fun legacyVersionOneRecordWithoutTimingRemainsReadable() {
+        val raw = """{"version":1,"records":[{"timestamp":7,"app":"TAOBAO","rule":"legacy","method":"NODE_CLICK","outcome":"CLOSED","reason":null}]}"""
+
+        assertEquals(
+            ActionRecord(
+                timestampEpochMs = 7,
+                targetAppId = TargetAppId.TAOBAO,
+                ruleId = "legacy",
+                method = ActionMethod.NODE_CLICK,
+                outcome = ActionOutcome.CLOSED,
+            ),
+            ActionRecordCodec.decodeOrEmpty(raw).single(),
         )
     }
 

@@ -8,6 +8,7 @@ import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 internal fun ActionRecord.title(): String = when (outcome) {
     ActionOutcome.CLOSED -> "已关闭"
@@ -21,7 +22,17 @@ internal fun ActionRecord.detail(nowEpochMs: Long): String {
         ActionMethod.CENTER_GESTURE -> "中心手势"
         null -> reasonLabel(reason)
     }
-    return "$action · ${formatTime(timestampEpochMs, nowEpochMs)} · $ruleId"
+    return buildList {
+        add(action)
+        timing?.let { timing ->
+            timing.targetToFirstQueryMs?.let { add("查询 ${formatDuration(it)}") }
+            timing.targetToFirstMatchMs?.let { add("匹配 ${formatDuration(it)}") }
+            timing.targetToActionMs?.let { add("点击 ${formatDuration(it)}") }
+            add("确认 ${formatDuration(timing.targetToCompletedMs)}")
+        }
+        add(formatTime(timestampEpochMs, nowEpochMs))
+        add(ruleId)
+    }.joinToString(" · ")
 }
 
 internal fun TargetAppId.displayName(): String = when (this) {
@@ -52,4 +63,9 @@ internal fun formatTime(timestampEpochMs: Long, nowEpochMs: Long): String {
         else -> timestamp.format(DateTimeFormatter.ofPattern("MM-dd"))
     }
     return "$prefix ${timestamp.format(DateTimeFormatter.ofPattern("HH:mm"))}"
+}
+
+private fun formatDuration(durationMs: Long): String = when {
+    durationMs < 1_000 -> "${durationMs}毫秒"
+    else -> String.format(Locale.ROOT, "%.3f秒", durationMs / 1_000.0)
 }

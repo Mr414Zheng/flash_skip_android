@@ -4,6 +4,7 @@ import com.zhenghuaizhi.flashskip.domain.model.ActionMethod
 import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.ActionReason
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
+import com.zhenghuaizhi.flashskip.domain.model.ExecutionTiming
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import org.json.JSONArray
 import org.json.JSONObject
@@ -21,7 +22,8 @@ object ActionRecordCodec {
                     .put("rule", record.ruleId)
                     .put("method", record.method?.name ?: JSONObject.NULL)
                     .put("outcome", record.outcome.name)
-                    .put("reason", record.reason?.name ?: JSONObject.NULL),
+                    .put("reason", record.reason?.name ?: JSONObject.NULL)
+                    .put("timing", record.timing?.toJson() ?: JSONObject.NULL),
             )
         }
         return JSONObject()
@@ -49,7 +51,26 @@ object ActionRecordCodec {
         method = optionalEnum("method", ActionMethod::valueOf),
         outcome = ActionOutcome.valueOf(getString("outcome")),
         reason = optionalEnum("reason", ActionReason::valueOf),
+        timing = optJSONObject("timing")?.toExecutionTiming(),
     )
+
+    private fun ExecutionTiming.toJson(): JSONObject = JSONObject()
+        .put("firstQueryMs", targetToFirstQueryMs ?: JSONObject.NULL)
+        .put("firstMatchMs", targetToFirstMatchMs ?: JSONObject.NULL)
+        .put("actionMs", targetToActionMs ?: JSONObject.NULL)
+        .put("completedMs", targetToCompletedMs)
+        .put("queryCount", selectorQueryCount)
+
+    private fun JSONObject.toExecutionTiming(): ExecutionTiming = ExecutionTiming(
+        targetToFirstQueryMs = optionalLong("firstQueryMs"),
+        targetToFirstMatchMs = optionalLong("firstMatchMs"),
+        targetToActionMs = optionalLong("actionMs"),
+        targetToCompletedMs = getLong("completedMs"),
+        selectorQueryCount = getInt("queryCount"),
+    )
+
+    private fun JSONObject.optionalLong(key: String): Long? =
+        if (!has(key) || isNull(key)) null else getLong(key)
 
     private fun <T> JSONObject.optionalEnum(key: String, parse: (String) -> T): T? =
         if (isNull(key)) null else parse(getString(key))

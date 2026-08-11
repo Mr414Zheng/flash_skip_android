@@ -50,9 +50,9 @@ object RuleCandidateAnalyzer {
                 packageName = TargetAppRegistry.expectedPackage(targetAppId),
                 allowedActivities = activities,
                 selectors = readyCandidates.take(MAX_RULE_SELECTORS).map {
-                    it.selector.toNodeSelector()
+                    it.selector.toRuntimeSelector()
                 },
-                // 人工点击时序包含反应时间，仅作为证据；Ready 规则从首个页面事件开始精确匹配。
+                // 人工点击时序包含反应时间，仅作为证据；Ready 规则从首个页面事件开始安全匹配。
                 startupDelayMs = 0L,
                 cooldownMs = COOLDOWN_MS,
                 targetAppVersion = currentVersion,

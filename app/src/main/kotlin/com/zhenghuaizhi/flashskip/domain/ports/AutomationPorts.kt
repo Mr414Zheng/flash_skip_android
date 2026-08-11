@@ -28,6 +28,7 @@ sealed interface QueryResult {
 
 sealed interface ClickResult {
     data object Clicked : ClickResult
+    data object NotActionable : ClickResult
     data object NotSupported : ClickResult
     data object NodeDisappeared : ClickResult
     data object Ambiguous : ClickResult

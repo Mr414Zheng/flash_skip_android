@@ -5,6 +5,7 @@ import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.ActionReason
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
 import com.zhenghuaizhi.flashskip.domain.model.AdRule
+import com.zhenghuaizhi.flashskip.domain.model.ExecutionTiming
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
 import com.zhenghuaizhi.flashskip.domain.model.TargetApp
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
@@ -189,7 +190,8 @@ class AutomationEngine(
 
     private fun scheduleQuery(active: Session) {
         if (active.terminal || active.pendingClick != null) return
-        active.queryJob?.cancel()
+        // 连续内容事件只能补充最新页面身份，不能把已计划的最早查询不断向后推迟。
+        if (active.queryJob?.isActive == true) return
         val earliestRuleTime = active.rules.minOfOrNull {
             active.enteredAtElapsedMs + it.startupDelayMs
         }
@@ -215,6 +217,8 @@ class AutomationEngine(
         if (capturePaused) return
         val active = session ?: return
         if (!active.isCurrent(command) || active.terminal) return
+        // QueryDue 已接管该计划；清空引用，避免紧随其后的内容事件误判仍有查询在等待。
+        active.queryJob = null
         if (command.overflowEpoch != overflowEpoch.get()) {
             invalidate(active)
             return
@@ -260,9 +264,17 @@ class AutomationEngine(
         command: Command.QueryDue,
     ): Evaluation {
         for (selector in rule.selectors) {
+            val queriedAt = monotonicClock.elapsedRealtimeMs()
+            if (active.firstQueryAtElapsedMs == null) active.firstQueryAtElapsedMs = queriedAt
+            active.selectorQueryCount++
             when (pageGateway.query(active.identity, selector)) {
                 QueryResult.None -> Unit
-                QueryResult.Unique -> return executeUnique(active, rule, selector, command)
+                QueryResult.Unique -> {
+                    if (active.firstMatchAtElapsedMs == null) {
+                        active.firstMatchAtElapsedMs = monotonicClock.elapsedRealtimeMs()
+                    }
+                    return executeUnique(active, rule, selector, command)
+                }
                 QueryResult.Ambiguous -> return abandon(active, rule, ActionReason.AMBIGUOUS_MATCH)
                 QueryResult.PageChanged -> return abandon(active, rule, ActionReason.PAGE_CHANGED)
                 QueryResult.TraversalLimit -> return abandon(active, rule, ActionReason.TRAVERSAL_LIMIT)
@@ -281,7 +293,12 @@ class AutomationEngine(
             return abandon(active, rule, ActionReason.QUERY_STALE)
         }
         return when (pageGateway.click(active.identity, selector)) {
-            ClickResult.Clicked -> beginClickVerification(active, rule, selector)
+            ClickResult.Clicked -> {
+                markActionTime(active)
+                beginClickVerification(active, rule, selector)
+            }
+            // 倒计时节点可能先出现、稍后才可点击；保持会话等待后续内容事件，不做坐标手势。
+            ClickResult.NotActionable -> Evaluation.NO_MATCH
             ClickResult.NotSupported -> executeGesture(active, rule, selector, command)
             ClickResult.NodeDisappeared -> abandon(active, rule, ActionReason.NODE_DISAPPEARED)
             ClickResult.Ambiguous -> abandon(active, rule, ActionReason.AMBIGUOUS_MATCH)
@@ -331,6 +348,7 @@ class AutomationEngine(
             invalidate(active)
             return
         }
+        active.selectorQueryCount++
         when (val result = nodeClickVerifier.verify(active.identity, pending)) {
             NodeClickVerification.Confirmed ->
                 succeed(active, pending.rule, ActionMethod.NODE_CLICK)
@@ -367,7 +385,10 @@ class AutomationEngine(
             return abandon(active, rule, ActionReason.QUERY_STALE)
         }
         return when (pageGateway.gestureAtCenter(active.identity, selector)) {
-            GestureResult.Completed -> succeed(active, rule, ActionMethod.CENTER_GESTURE)
+            GestureResult.Completed -> {
+                markActionTime(active)
+                succeed(active, rule, ActionMethod.CENTER_GESTURE)
+            }
             GestureResult.Rejected -> fail(active, rule, ActionReason.GESTURE_REJECTED)
             GestureResult.Cancelled -> fail(active, rule, ActionReason.GESTURE_CANCELLED)
             GestureResult.NodeDisappeared -> abandon(active, rule, ActionReason.NODE_DISAPPEARED)
@@ -412,6 +433,7 @@ class AutomationEngine(
         method: ActionMethod?,
         reason: ActionReason?,
     ): Evaluation {
+        val completedAt = monotonicClock.elapsedRealtimeMs()
         active.terminal = true
         active.queryJob?.cancel()
         active.clickVerificationJob?.cancel()
@@ -425,6 +447,7 @@ class AutomationEngine(
                     method = method,
                     outcome = outcome,
                     reason = reason,
+                    timing = active.toExecutionTiming(completedAt),
                 ),
             )
         }
@@ -463,9 +486,30 @@ class AutomationEngine(
         var nextPendingClickId: Long = 0,
         var pendingClick: PendingNodeClick? = null,
         var clickVerificationJob: Job? = null,
+        var firstQueryAtElapsedMs: Long? = null,
+        var firstMatchAtElapsedMs: Long? = null,
+        var actionAtElapsedMs: Long? = null,
+        var selectorQueryCount: Int = 0,
     ) {
         fun isCurrent(command: Command.QueryDue): Boolean =
             id == command.sessionId && generation == command.generation
+
+        fun toExecutionTiming(completedAtElapsedMs: Long): ExecutionTiming = ExecutionTiming(
+            targetToFirstQueryMs = elapsedSinceTarget(firstQueryAtElapsedMs),
+            targetToFirstMatchMs = elapsedSinceTarget(firstMatchAtElapsedMs),
+            targetToActionMs = elapsedSinceTarget(actionAtElapsedMs),
+            targetToCompletedMs = (completedAtElapsedMs - enteredAtElapsedMs).coerceAtLeast(0),
+            selectorQueryCount = selectorQueryCount,
+        )
+
+        private fun elapsedSinceTarget(timestamp: Long?): Long? =
+            timestamp?.let { (it - enteredAtElapsedMs).coerceAtLeast(0) }
+    }
+
+    private fun markActionTime(active: Session) {
+        if (active.actionAtElapsedMs == null) {
+            active.actionAtElapsedMs = monotonicClock.elapsedRealtimeMs()
+        }
     }
 
     private sealed interface Command {

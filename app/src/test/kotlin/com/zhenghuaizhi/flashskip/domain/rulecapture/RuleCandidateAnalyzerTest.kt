@@ -6,6 +6,7 @@ import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.model.TextCondition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -117,7 +118,34 @@ class RuleCandidateAnalyzerTest {
 
         assertEquals(RuleCardStatus.READY, analysis.status)
         assertEquals(structural, analysis.primarySelector)
-        assertEquals(structural.toNodeSelector(), requireNotNull(analysis.rule).selectors.first())
+        assertEquals(
+            TextCondition.Prefix("跳过"),
+            requireNotNull(analysis.rule).selectors.first().text,
+        )
+    }
+
+    @Test
+    fun countdownPrefixRequiresStableAncestorAndDoesNotBroadenCloseText() {
+        assertEquals(
+            TextCondition.Exact("跳过"),
+            CapturedSelector(text = "跳过").toRuntimeSelector().text,
+        )
+        assertEquals(
+            TextCondition.Exact("关闭"),
+            CapturedSelector(
+                text = "关闭",
+                ancestorResourceId = "com.tencent.qqmusic:id/jap",
+                ancestorDistance = 1,
+            ).toRuntimeSelector().text,
+        )
+        assertEquals(
+            TextCondition.Exact("跳过"),
+            CapturedSelector(
+                text = "跳过",
+                ancestorResourceId = "android:id/content",
+                ancestorDistance = 1,
+            ).toRuntimeSelector().text,
+        )
     }
 
     @Test

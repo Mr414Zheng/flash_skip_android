@@ -45,7 +45,13 @@ class AutomationEngineTest {
         fixture.advance(this, 150)
 
         assertEquals(2, fixture.gateway.queryCalls)
-        assertEquals(ActionOutcome.CLOSED, fixture.store.current.records.single().outcome)
+        val record = fixture.store.current.records.single()
+        assertEquals(ActionOutcome.CLOSED, record.outcome)
+        assertEquals(120L, record.timing?.targetToFirstQueryMs)
+        assertEquals(120L, record.timing?.targetToFirstMatchMs)
+        assertEquals(120L, record.timing?.targetToActionMs)
+        assertEquals(270L, record.timing?.targetToCompletedMs)
+        assertEquals(2, record.timing?.selectorQueryCount)
 
         fixture.clock.now = 500
         fixture.engine.onForegroundSignal(ForegroundSignal.TargetActive(IDENTITY, 500))
@@ -150,6 +156,32 @@ class AutomationEngineTest {
             com.zhenghuaizhi.flashskip.domain.model.ActionMethod.CENTER_GESTURE,
             fixture.store.current.records.single().method,
         )
+        fixture.engine.close()
+    }
+
+    @Test
+    fun visibleButNotActionableCountdownWaitsForNextContentEventWithoutGesture() = runTest {
+        val fixture = fixture()
+        fixture.gateway.queryResults.add(QueryResult.Unique)
+        fixture.gateway.clickResults.add(ClickResult.NotActionable)
+
+        fixture.startAndAdvance(this, 120)
+
+        assertEquals(1, fixture.gateway.clickCalls)
+        assertEquals(0, fixture.gateway.gestureCalls)
+        assertTrue(fixture.store.current.records.isEmpty())
+
+        fixture.gateway.queryResults.add(QueryResult.Unique)
+        fixture.gateway.clickResults.add(ClickResult.Clicked)
+        fixture.clock.now = 130
+        advanceTimeBy(10)
+        runCurrent()
+        fixture.engine.onContentChanged(IDENTITY, 130)
+        fixture.engine.awaitIdle()
+        fixture.advance(this, 120)
+
+        assertEquals(2, fixture.gateway.clickCalls)
+        assertEquals(0, fixture.gateway.gestureCalls)
         fixture.engine.close()
     }
 
@@ -314,16 +346,20 @@ class AutomationEngineTest {
     }
 
     @Test
-    fun denseContentEventsCollapseToOneQuery() = runTest {
+    fun denseContentEventsDoNotPostponeEarliestQuery() = runTest {
         val fixture = fixture()
         fixture.createEngine(this)
         fixture.engine.onForegroundSignal(ForegroundSignal.TargetActive(IDENTITY, 0))
         fixture.engine.awaitIdle()
-        repeat(20) { fixture.engine.onContentChanged(IDENTITY, it.toLong()) }
+
+        fixture.clock.now = 100
+        advanceTimeBy(100)
+        runCurrent()
+        repeat(20) { fixture.engine.onContentChanged(IDENTITY, 100) }
         fixture.engine.awaitIdle()
 
         fixture.clock.now = 120
-        advanceTimeBy(120)
+        advanceTimeBy(20)
         runCurrent()
         fixture.engine.awaitIdle()
 
