@@ -117,7 +117,7 @@ fun FlashSkipScreen(
             }
 
             state.targetApps.forEachIndexed { index, app ->
-                item(key = app.target.id) {
+                item(key = app.target.id.packageName) {
                     TargetAppRow(
                         state = app,
                         compactIcon = maxWidth < 360.dp,
