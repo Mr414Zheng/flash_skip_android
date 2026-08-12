@@ -2,6 +2,7 @@ package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.zhenghuaizhi.flashskip.FlashSkipApplication
@@ -26,8 +27,8 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     private var windowClassifier: ForegroundWindowClassifier? = null
     private var captureAdapter: AccessibilityCaptureAdapter? = null
     private var captureExpiryJob: Job? = null
-    private var targetPackages: Set<String> = emptySet()
     private var captureConfigurationPackage: String? = null
+    private var captureConfigured = false
     private var automationPaused = false
 
     @Volatile
@@ -45,12 +46,11 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         serviceScope?.cancel()
         latestIdentity = null
         latestCaptureState = RuleCaptureState()
-        targetPackages = container.targetPackages
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        val gateway = AccessibilityPageGateway(this, targetPackages) { latestIdentity }
+        val gateway = AccessibilityPageGateway(this, ::currentTargetPackages) { latestIdentity }
         serviceScope = scope
         windowClassifier = ForegroundWindowClassifier(
-            targetPackages = targetPackages,
+            targetPackages = ::currentTargetPackages,
             applicationWindowType = AccessibilityWindowInfo.TYPE_APPLICATION,
         )
         engine = container.createAutomationEngine(
@@ -63,7 +63,6 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             service = this,
             coordinator = container.ruleCaptureCoordinator,
             scope = scope,
-            targetPackages = targetPackages,
             stateProvider = { latestCaptureState },
         )
         restoreDefaultEventConfiguration()
@@ -87,25 +86,22 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     private fun handleCaptureEvent(event: AccessibilityEvent) {
         val session = latestCaptureState.activeSession ?: return
         val packageName = event.packageName?.toString() ?: return
-        if (packageName != session.packageName || packageName !in targetPackages) return
+        if (session.packageName != null && packageName != session.packageName) return
+        if (session.packageName == null && packageName in captureIgnoredPackages()) return
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 val metadata = snapshotWindowMetadata() ?: return
-                if (windowClassifier?.classify(packageName, event.windowId, metadata) !=
-                    BoundaryClassification.Target
-                ) {
-                    return
-                }
-                val version = container.targetAppVersionReader.versionFor(session.targetAppId)
-                if (version == null) {
-                    failCapture(session.id, CaptureFailure.APP_VERSION_CHANGED)
-                    return
-                }
+                val activeWindow = metadata.singleOrNull { it.id == event.windowId }
+                if (activeWindow?.isActive != true ||
+                    activeWindow.type != AccessibilityWindowInfo.TYPE_APPLICATION
+                ) return
                 val activityName = container.targetAppVersionReader.verifiedActivity(
                     packageName = packageName,
                     className = event.className?.toString(),
                 ) ?: return
-                captureAdapter?.onVerifiedTargetWindow(event, activityName, version)
+                val appName = container.targetAppVersionReader.displayNameFor(packageName)
+                    ?: packageName
+                captureAdapter?.onVerifiedTargetWindow(event, appName, activityName)
             }
 
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> captureAdapter?.onContentChanged(event)
@@ -116,7 +112,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
 
     private fun handleContentChanged(event: AccessibilityEvent) {
         val packageName = event.packageName?.toString() ?: return
-        if (packageName !in targetPackages) return
+        if (packageName !in currentTargetPackages()) return
         val identity = latestIdentity?.takeIf {
             it.packageName == packageName && it.windowId == event.windowId
         } ?: return
@@ -130,8 +126,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         val metadata = snapshotWindowMetadata() ?: return
         when (windowClassifier?.classify(packageName, windowId, metadata)) {
             BoundaryClassification.Target -> {
-                val target = com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
-                    .targetForPackage(packageName) ?: return
+                if (container.ruleCatalog.snapshot.value.rulesForPackage(packageName).isEmpty()) return
                 val activityName = container.targetAppVersionReader.verifiedActivity(
                     packageName = packageName,
                     className = event.className?.toString(),
@@ -140,7 +135,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     packageName = packageName,
                     activityName = activityName,
                     windowId = windowId,
-                    appVersion = container.targetAppVersionReader.versionFor(target.id),
+                    appVersion = container.targetAppVersionReader.versionFor(packageName),
                 )
                 latestIdentity = identity
                 engine?.onForegroundSignal(ForegroundSignal.TargetActive(identity, occurredAt))
@@ -224,14 +219,15 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         if (paused) latestIdentity = null
     }
 
-    private fun configureForCapture(packageName: String): Boolean {
-        if (captureConfigurationPackage == packageName) return true
+    private fun configureForCapture(packageName: String?): Boolean {
+        if (captureConfigured && captureConfigurationPackage == packageName) return true
         return runCatching {
             val info = serviceInfo
             info.eventTypes = DEFAULT_EVENT_TYPES or AccessibilityEvent.TYPE_VIEW_CLICKED
-            info.packageNames = arrayOf(packageName)
+            info.packageNames = packageName?.let { arrayOf(it) }
             setServiceInfo(info)
             captureConfigurationPackage = packageName
+            captureConfigured = true
         }.isSuccess
     }
 
@@ -243,6 +239,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             info.packageNames = null
             setServiceInfo(info)
             captureConfigurationPackage = null
+            captureConfigured = false
         }
     }
 
@@ -288,10 +285,10 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         engine = null
         windowClassifier = null
         captureAdapter = null
-        targetPackages = emptySet()
         latestIdentity = null
         latestCaptureState = RuleCaptureState()
         captureConfigurationPackage = null
+        captureConfigured = false
         automationPaused = false
         super.onDestroy()
     }
@@ -299,5 +296,14 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     private companion object {
         const val DEFAULT_EVENT_TYPES = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+    }
+
+    private fun currentTargetPackages(): Set<String> =
+        container.ruleCatalog.snapshot.value.rules.mapTo(mutableSetOf()) { it.packageName }
+
+    private fun captureIgnoredPackages(): Set<String> = buildSet {
+        add(packageName)
+        val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        packageManager.resolveActivity(homeIntent, 0)?.activityInfo?.packageName?.let(::add)
     }
 }

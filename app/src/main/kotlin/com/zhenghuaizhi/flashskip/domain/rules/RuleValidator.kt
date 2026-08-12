@@ -2,7 +2,6 @@ package com.zhenghuaizhi.flashskip.domain.rules
 
 import com.zhenghuaizhi.flashskip.domain.model.AdRule
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
-import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.model.TextCondition
 
 enum class RuleValidationIssue {
@@ -25,7 +24,7 @@ object RuleValidator {
         }
         rules.forEach { rule ->
             if (rule.id.isBlank()) issues += RuleValidationIssue.EMPTY_ID
-            if (rule.packageName != expectedPackage(rule.targetAppId)) {
+            if (rule.packageName != rule.targetAppId.packageName) {
                 issues += RuleValidationIssue.PACKAGE_MISMATCH
             }
             if (rule.allowedActivities.isEmpty() || rule.allowedActivities.any(String::isBlank)) {
@@ -61,7 +60,4 @@ object RuleValidator {
         }
         return issues
     }
-
-    private fun expectedPackage(targetAppId: TargetAppId): String =
-        TargetAppRegistry.expectedPackage(targetAppId)
 }

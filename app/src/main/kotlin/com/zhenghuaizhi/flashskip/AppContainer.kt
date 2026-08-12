@@ -12,11 +12,9 @@ import com.zhenghuaizhi.flashskip.domain.ports.PageGateway
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
 import com.zhenghuaizhi.flashskip.domain.rules.BuiltinRuleCatalog
 import com.zhenghuaizhi.flashskip.domain.rules.CompositeRuleCatalog
-import com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
 import com.zhenghuaizhi.flashskip.platform.accessibility.AndroidMonotonicClock
 import com.zhenghuaizhi.flashskip.platform.accessibility.AndroidWallClock
 import com.zhenghuaizhi.flashskip.platform.packages.AndroidTargetAppVersionReader
-import com.zhenghuaizhi.flashskip.platform.packages.TargetPackageChangeMonitor
 import com.zhenghuaizhi.flashskip.platform.settings.AndroidSystemServiceStatusReader
 import com.zhenghuaizhi.flashskip.ui.home.HomeViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -26,8 +24,8 @@ import kotlinx.coroutines.SupervisorJob
 class AppContainer(context: Context) {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    val store = PreferencesFlashSkipStore(context.applicationContext)
-    val ruleCaptureStore = PreferencesRuleCaptureStore(context.applicationContext)
+    val store = PreferencesFlashSkipStore(context.applicationContext, applicationScope)
+    val ruleCaptureStore = PreferencesRuleCaptureStore(context.applicationContext, applicationScope)
     private val builtinRuleCatalog = BuiltinRuleCatalog()
     val ruleCatalog = CompositeRuleCatalog(
         builtinCatalog = builtinRuleCatalog,
@@ -42,12 +40,7 @@ class AppContainer(context: Context) {
         wallClock = AndroidWallClock,
         applicationScope = applicationScope,
     )
-    private val targetPackageChangeMonitor = TargetPackageChangeMonitor(
-        context = context.applicationContext,
-        onChanged = ruleCaptureCoordinator::targetPackageChanged,
-    ).also(TargetPackageChangeMonitor::start)
     val serviceConnections = ServiceConnectionRegistry()
-    val targetPackages: Set<String> = TargetAppRegistry.targets.map { it.packageName }.toSet()
 
     fun createAutomationEngine(
         pageGateway: PageGateway,
@@ -74,6 +67,5 @@ class AppContainer(context: Context) {
         ruleCatalog = ruleCatalog,
         serviceStatusCoordinator = serviceStatusCoordinator,
         captureCoordinator = ruleCaptureCoordinator,
-        targetAppVersionReader = targetAppVersionReader,
     )
 }

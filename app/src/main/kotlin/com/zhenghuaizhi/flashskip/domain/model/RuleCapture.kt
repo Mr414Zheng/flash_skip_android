@@ -14,7 +14,6 @@ enum class CaptureFailure {
     TARGET_TIMEOUT,
     CLICK_TIMEOUT,
     COMPLETION_TIMEOUT,
-    APP_VERSION_CHANGED,
     ACTIVITY_UNAVAILABLE,
     CLICK_SOURCE_UNAVAILABLE,
     CLICK_SEMANTICS_UNAVAILABLE,
@@ -60,7 +59,7 @@ data class CapturedSelector(
 data class CaptureSample(
     val id: Long,
     val targetAppId: TargetAppId,
-    val appVersion: AppVersion,
+    val targetAppName: String = targetAppId.packageName,
     val activityName: String,
     val clickedAfterTargetMs: Long,
     val capturedAtEpochMs: Long,
@@ -70,9 +69,9 @@ data class CaptureSample(
 
 data class CaptureSession(
     val id: Long,
-    val targetAppId: TargetAppId,
-    val packageName: String,
-    val appVersion: AppVersion,
+    val targetAppId: TargetAppId? = null,
+    val targetAppName: String? = null,
+    val packageName: String? = null,
     val phase: CapturePhase,
     val phaseStartedAtEpochMs: Long,
     val deadlineAtEpochMs: Long,
@@ -94,19 +93,20 @@ data class RuleCaptureState(
 enum class RuleCardStatus {
     CANDIDATE,
     READY,
-    STALE,
 }
 
 data class RuleCandidateAnalysis(
     val targetAppId: TargetAppId,
-    val appVersion: AppVersion?,
     val status: RuleCardStatus,
-    val currentVersionSampleCount: Int,
+    val sampleCount: Int,
     val stableSampleCount: Int,
     val uniqueEvidenceCount: Int,
     val primarySelector: CapturedSelector?,
     val probeSelectors: List<CapturedSelector>,
     val allowedActivities: Set<String>,
     val minimumClickDelayMs: Long?,
-    val rule: AdRule?,
-)
+    val rules: List<AdRule>,
+) {
+    val rule: AdRule?
+        get() = rules.firstOrNull()
+}

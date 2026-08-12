@@ -7,6 +7,7 @@ import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
 import com.zhenghuaizhi.flashskip.domain.model.AdRule
 import com.zhenghuaizhi.flashskip.domain.model.ExecutionTiming
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
+import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
 import com.zhenghuaizhi.flashskip.domain.model.TargetApp
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.ports.ClickResult
@@ -18,7 +19,6 @@ import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.ports.QueryResult
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalog
-import com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -106,10 +106,21 @@ class AutomationEngine(
     }
 
     private suspend fun handleTargetActive(signal: ForegroundSignal.TargetActive) {
-        val target = TargetAppRegistry.targetForPackage(signal.identity.packageName) ?: return
+        val targetId = TargetAppId(signal.identity.packageName)
+        val rules = catalog.snapshot.value.rulesForPackage(
+            signal.identity.packageName,
+            signal.identity.appVersion,
+        )
+        val firstRule = rules.firstOrNull() ?: return
+        val target = TargetApp(
+            id = targetId,
+            displayName = firstRule.targetAppName,
+            packageName = signal.identity.packageName,
+            ruleAvailability = RuleAvailability.Available(rules.size),
+        )
         val previous = foregroundState
         val isSameForegroundTarget = previous is ForegroundState.Target &&
-            previous.targetId == target.id
+            previous.packageName == signal.identity.packageName
         if (isSameForegroundTarget) {
             val active = session?.takeIf { it.target.id == target.id } ?: return
             if (active.terminal) return
@@ -135,10 +146,8 @@ class AutomationEngine(
 
         session?.let(::invalidate)
         session = null
-        foregroundState = ForegroundState.Target(target.id)
+        foregroundState = ForegroundState.Target(signal.identity.packageName)
         if (!store.isAppEnabled(target.id)) return
-        val rules = catalog.snapshot.value.rulesForTarget(target.id, signal.identity.appVersion)
-        if (rules.isEmpty()) return
         startSession(target, rules, signal.identity, signal.occurredAtElapsedMs)
     }
 
@@ -146,7 +155,7 @@ class AutomationEngine(
         if (capturePaused) return
         val active = session ?: return
         val foreground = foregroundState as? ForegroundState.Target ?: return
-        if (foreground.targetId != active.target.id) return
+        if (foreground.packageName != active.target.packageName) return
         if (active.overflowEpochAtStart != overflowEpoch.get()) {
             invalidate(active)
             return
@@ -443,6 +452,7 @@ class AutomationEngine(
                 ActionRecord(
                     timestampEpochMs = wallClock.currentTimeMillis(),
                     targetAppId = active.target.id,
+                    targetAppName = active.target.displayName,
                     ruleId = rule.id,
                     method = method,
                     outcome = outcome,
@@ -535,7 +545,7 @@ class AutomationEngine(
     private sealed interface ForegroundState {
         data object Unknown : ForegroundState
         data object OutsideTargets : ForegroundState
-        data class Target(val targetId: TargetAppId) : ForegroundState
+        data class Target(val packageName: String) : ForegroundState
     }
 
     private enum class Evaluation { NO_MATCH, PENDING, TERMINAL }

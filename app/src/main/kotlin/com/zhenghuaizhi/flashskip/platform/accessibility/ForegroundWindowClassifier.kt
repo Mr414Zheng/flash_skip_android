@@ -13,10 +13,9 @@ internal sealed interface BoundaryClassification {
 }
 
 internal class ForegroundWindowClassifier(
-    targetPackages: Set<String>,
+    private val targetPackages: () -> Set<String>,
     private val applicationWindowType: Int,
 ) {
-    private val targetPackages = targetPackages.toSet()
 
     fun classify(
         eventPackageName: String?,
@@ -29,7 +28,7 @@ internal class ForegroundWindowClassifier(
         if (!eventWindow.isActive || eventWindow.type != applicationWindowType) {
             return BoundaryClassification.Ignore
         }
-        return if (eventPackageName in targetPackages) {
+        return if (eventPackageName in targetPackages()) {
             BoundaryClassification.Target
         } else {
             BoundaryClassification.OutsideTargets

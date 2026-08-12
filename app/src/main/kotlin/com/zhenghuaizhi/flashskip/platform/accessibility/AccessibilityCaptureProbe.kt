@@ -12,11 +12,10 @@ import java.util.ArrayDeque
 
 internal class AccessibilityCaptureProbe(
     private val service: AccessibilityService,
-    targetPackages: Set<String>,
+    private val targetPackages: () -> Set<String>,
     private val currentIdentity: () -> PageIdentity?,
     private val semanticSnapshotter: AccessibilitySemanticSnapshotter,
 ) {
-    private val targetPackages = targetPackages.toSet()
     private val selectorMatcher = AccessibilityNodeSelectorMatcher(service)
 
     @Suppress("DEPRECATION")
@@ -26,7 +25,7 @@ internal class AccessibilityCaptureProbe(
     ): ProbeResult {
         if (selectors.isEmpty()) return ProbeResult.Success(emptySet())
         // 与自动化 Gateway 一致：白名单在身份、根节点和任何节点读取之前执行。
-        if (expected.packageName !in targetPackages) return ProbeResult.PageChanged
+        if (expected.packageName !in targetPackages()) return ProbeResult.PageChanged
         if (currentIdentity() != expected) return ProbeResult.PageChanged
         val root = service.rootInActiveWindow ?: return ProbeResult.NoRoot
         if (root.packageName?.toString() != expected.packageName || root.windowId != expected.windowId) {
@@ -78,7 +77,7 @@ internal class AccessibilityCaptureProbe(
         hint: ClickSemanticHint,
     ): RecoveryResult {
         // 恢复路径仍遵守与自动化 Gateway 相同的包和窗口边界，不能因 source 为空而放宽。
-        if (expected.packageName !in targetPackages) return RecoveryResult.PageChanged
+        if (expected.packageName !in targetPackages()) return RecoveryResult.PageChanged
         if (currentIdentity() != expected) return RecoveryResult.PageChanged
         val root = service.rootInActiveWindow ?: return RecoveryResult.NoRoot
         if (root.packageName?.toString() != expected.packageName || root.windowId != expected.windowId) {

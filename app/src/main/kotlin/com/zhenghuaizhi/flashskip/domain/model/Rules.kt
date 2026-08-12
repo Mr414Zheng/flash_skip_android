@@ -4,6 +4,7 @@ data class AdRule(
     val id: String,
     val targetAppId: TargetAppId,
     val packageName: String,
+    val targetAppName: String = packageName,
     val allowedActivities: Set<String>,
     val selectors: List<NodeSelector>,
     val startupDelayMs: Long,

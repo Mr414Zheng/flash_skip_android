@@ -13,7 +13,7 @@ class RecordFormatterTest {
     fun detailShowsActionAndConfirmationDurationsWhenTimingIsAvailable() {
         val record = ActionRecord(
             timestampEpochMs = 1_000,
-            targetAppId = TargetAppId.QQ_MUSIC,
+            targetAppId = TargetAppId("com.example.music"),
             ruleId = "local-rule",
             method = ActionMethod.NODE_CLICK,
             outcome = ActionOutcome.CLOSED,

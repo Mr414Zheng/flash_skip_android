@@ -6,18 +6,15 @@ import androidx.lifecycle.viewModelScope
 import com.zhenghuaizhi.flashskip.application.ServiceStatusCoordinator
 import com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCoordinator
 import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
-import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
 import com.zhenghuaizhi.flashskip.domain.model.ServiceStatus
+import com.zhenghuaizhi.flashskip.domain.model.TargetApp
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
-import com.zhenghuaizhi.flashskip.domain.ports.TargetAppVersionReader
 import com.zhenghuaizhi.flashskip.domain.rulecapture.RuleCandidateAnalyzer
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalog
-import com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
@@ -30,9 +27,7 @@ class HomeViewModel(
     private val ruleCatalog: RuleCatalog,
     private val serviceStatusCoordinator: ServiceStatusCoordinator,
     private val captureCoordinator: RuleCaptureCoordinator,
-    private val targetAppVersionReader: TargetAppVersionReader,
 ) : ViewModel() {
-    private val installedVersions = MutableStateFlow(targetAppVersionReader.installedVersions())
     private val mutableEffects = MutableSharedFlow<HomeEffect>(extraBufferCapacity = 1)
     val effects = mutableEffects.asSharedFlow()
 
@@ -41,110 +36,97 @@ class HomeViewModel(
         serviceStatusCoordinator.status,
         captureCoordinator.state,
         ruleCatalog.snapshot,
-        installedVersions,
-    ) { preferences, serviceStatus, captureState, catalogSnapshot, versions ->
-        val activeSession = captureState.activeSession
-        val targets = TargetAppRegistry.targets.map { baseTarget ->
-            val version = versions[baseTarget.id]
-            val ruleCount = catalogSnapshot.rulesForTarget(baseTarget.id, version).size
-            val target = baseTarget.copy(
-                ruleAvailability = if (ruleCount > 0) {
-                    RuleAvailability.Available(ruleCount)
-                } else {
-                    RuleAvailability.Unavailable
-                },
-            )
-            val analysis = RuleCandidateAnalyzer.analyze(
-                samples = captureState.samples,
-                targetAppId = target.id,
-                currentVersion = version,
-            )
-            val hasAnySamples = captureState.samples.any { it.targetAppId == target.id }
-            val targetSession = activeSession?.takeIf { it.targetAppId == target.id }
-            targetAppUiState(
-                target = target,
-                enabled = preferences.enabledApps[target.id] == true,
-                serviceStatus = serviceStatus,
-                installedVersion = version,
-                capture = CaptureUiState(
-                    phase = targetSession?.phase,
-                    failure = targetSession?.failure,
-                    canStart = serviceStatus == ServiceStatus.RUNNING &&
-                        version != null &&
-                        (activeSession == null || targetSession?.phase == CapturePhase.FAILED),
-                    blockedByOtherApp = activeSession != null && targetSession == null,
-                ),
-                ruleCard = if (hasAnySamples) {
-                    RuleCardUiState(
+    ) { preferences, serviceStatus, captureState, catalogSnapshot ->
+        val targets = captureState.samples
+            .groupBy { it.targetAppId }
+            .map { (targetAppId, samples) ->
+                val latest = samples.maxBy { it.capturedAtEpochMs }
+                val rules = catalogSnapshot.rulesForTarget(targetAppId)
+                val analysis = RuleCandidateAnalyzer.analyze(
+                    samples = captureState.samples,
+                    targetAppId = targetAppId,
+                )
+                val target = TargetApp(
+                    id = targetAppId,
+                    displayName = latest.targetAppName,
+                    packageName = targetAppId.packageName,
+                    ruleAvailability = if (rules.isNotEmpty()) {
+                        RuleAvailability.Available(rules.size)
+                    } else {
+                        RuleAvailability.Unavailable
+                    },
+                )
+                targetAppUiState(
+                    target = target,
+                    enabled = preferences.enabledApps[targetAppId] == true,
+                    serviceStatus = serviceStatus,
+                    ruleCard = RuleCardUiState(
                         status = analysis.status,
-                        sampleCount = analysis.currentVersionSampleCount,
+                        sampleCount = analysis.sampleCount,
+                        ruleCount = analysis.rules.size,
                         stableSampleCount = analysis.stableSampleCount,
                         uniqueEvidenceCount = analysis.uniqueEvidenceCount,
-                        version = analysis.appVersion,
                         selector = analysis.primarySelector,
                         activities = analysis.allowedActivities,
-                    )
-                } else {
-                    null
-                },
-            )
-        }
+                    ),
+                )
+            }
+            .sortedByDescending { target ->
+                captureState.samples.filter { it.targetAppId == target.target.id }
+                    .maxOf { it.capturedAtEpochMs }
+            }
+        val activeSession = captureState.activeSession
         HomeUiState(
             serviceStatus = serviceStatus,
             enabledAppCount = targets.count {
                 it.enabled && it.target.ruleAvailability is RuleAvailability.Available
             },
             targetApps = targets,
+            capture = CaptureUiState(
+                phase = activeSession?.phase,
+                failure = activeSession?.failure,
+                canStart = serviceStatus == ServiceStatus.RUNNING &&
+                    (activeSession == null || activeSession.phase == CapturePhase.FAILED),
+            ),
+            capturingAppName = activeSession?.targetAppName,
             records = preferences.records,
-            latestSuccess = preferences.records.firstOrNull {
-                it.outcome == ActionOutcome.CLOSED
-            },
+            latestSuccess = preferences.records.firstOrNull { it.outcome == ActionOutcome.CLOSED },
             hasCapturedRules = captureState.samples.isNotEmpty(),
             currentTimeEpochMs = System.currentTimeMillis(),
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = HomeUiState(
-            targetApps = TargetAppRegistry.targets.map {
-                targetAppUiState(it, enabled = false, serviceStatus = ServiceStatus.NOT_ENABLED)
-            },
-        ),
+        initialValue = HomeUiState(),
     )
 
     fun setAppEnabled(targetAppId: TargetAppId, enabled: Boolean) {
-        val version = installedVersions.value[targetAppId]
-        if (ruleCatalog.snapshot.value.rulesForTarget(targetAppId, version).isEmpty()) return
+        if (ruleCatalog.snapshot.value.rulesForTarget(targetAppId).isEmpty()) return
         viewModelScope.launch { store.setAppEnabled(targetAppId, enabled) }
     }
 
-    fun startCapture(targetAppId: TargetAppId) {
+    fun startCapture() {
         if (serviceStatusCoordinator.status.value != ServiceStatus.RUNNING) return
-        val version = targetAppVersionReader.versionFor(targetAppId) ?: return
-        installedVersions.value = installedVersions.value + (targetAppId to version)
         viewModelScope.launch {
-            val sessionId = captureCoordinator.requestStart(targetAppId, version)
+            val sessionId = captureCoordinator.requestStart()
             if (captureCoordinator.awaitConfigured(sessionId)) {
                 mutableEffects.emit(HomeEffect.GoHome)
             }
         }
     }
 
-    fun finishCapture(targetAppId: TargetAppId) {
+    fun finishCapture() {
         viewModelScope.launch {
             val session = captureCoordinator.state.first().activeSession?.takeIf {
-                it.targetAppId == targetAppId && it.phase == CapturePhase.CAPTURED
+                it.phase == CapturePhase.CAPTURED
             } ?: return@launch
             captureCoordinator.finish(session.id)
-            refreshInstalledVersions()
         }
     }
 
-    fun cancelCapture(targetAppId: TargetAppId) {
+    fun cancelCapture() {
         viewModelScope.launch {
-            val session = captureCoordinator.state.first().activeSession?.takeIf {
-                it.targetAppId == targetAppId
-            } ?: return@launch
+            val session = captureCoordinator.state.first().activeSession ?: return@launch
             captureCoordinator.cancel(session.id)
         }
     }
@@ -159,26 +141,7 @@ class HomeViewModel(
 
     fun refresh() {
         serviceStatusCoordinator.refresh()
-        refreshInstalledVersions()
         viewModelScope.launch { captureCoordinator.expireActive() }
-    }
-
-    private fun refreshInstalledVersions() {
-        val versions = targetAppVersionReader.installedVersions()
-        installedVersions.value = versions
-        viewModelScope.launch {
-            val preferences = store.preferences.first()
-            TargetAppId.entries.forEach { targetAppId ->
-                if (preferences.enabledApps[targetAppId] == true &&
-                    ruleCatalog.snapshot.value.rulesForTarget(
-                        targetAppId,
-                        versions[targetAppId],
-                    ).isEmpty()
-                ) {
-                    store.setAppEnabled(targetAppId, false)
-                }
-            }
-        }
     }
 
     sealed interface HomeEffect {
@@ -190,7 +153,6 @@ class HomeViewModel(
         private val ruleCatalog: RuleCatalog,
         private val serviceStatusCoordinator: ServiceStatusCoordinator,
         private val captureCoordinator: RuleCaptureCoordinator,
-        private val targetAppVersionReader: TargetAppVersionReader,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -200,7 +162,6 @@ class HomeViewModel(
                 ruleCatalog,
                 serviceStatusCoordinator,
                 captureCoordinator,
-                targetAppVersionReader,
             ) as T
         }
     }

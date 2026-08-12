@@ -1,6 +1,5 @@
 package com.zhenghuaizhi.flashskip.data.preferences
 
-import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
@@ -9,6 +8,7 @@ import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class RuleCaptureCodecTest {
@@ -19,9 +19,8 @@ class RuleCaptureCodecTest {
             samples = listOf(sample),
             activeSession = CaptureSession(
                 id = 8,
-                targetAppId = TargetAppId.QQ_MUSIC,
-                packageName = "com.tencent.qqmusic",
-                appVersion = VERSION,
+                targetAppId = TargetAppId("com.example.music"),
+                packageName = "com.example.music",
                 phase = CapturePhase.CAPTURED,
                 phaseStartedAtEpochMs = 200,
                 deadlineAtEpochMs = 800,
@@ -40,20 +39,30 @@ class RuleCaptureCodecTest {
         assertEquals(RuleCaptureState(), RuleCaptureCodec.decodeOrEmpty("not-json"))
         assertEquals(
             RuleCaptureState(),
+            RuleCaptureCodec.decodeOrEmpty("{\"version\":1,\"samples\":[]}"),
+        )
+        assertEquals(
+            RuleCaptureState(),
             RuleCaptureCodec.decodeOrEmpty("{\"version\":99,\"samples\":[]}"),
         )
     }
 
+    @Test
+    fun completedSamplesDoNotPersistTargetAppVersion() {
+        val encoded = RuleCaptureCodec.encode(RuleCaptureState(samples = listOf(sample(7))))
+
+        assertFalse(encoded.contains("\"appVersion\""))
+    }
+
     private fun sample(id: Long) = CaptureSample(
         id = id,
-        targetAppId = TargetAppId.QQ_MUSIC,
-        appVersion = VERSION,
-        activityName = "com.tencent.qqmusic.activity.AppStarterActivity",
+        targetAppId = TargetAppId("com.example.music"),
+        activityName = "com.example.music.activity.AppStarterActivity",
         clickedAfterTargetMs = 1_500,
         capturedAtEpochMs = 20_000,
         nodes = listOf(
             CapturedNode(
-                resourceId = "com.tencent.qqmusic:id/close",
+                resourceId = "com.example.music:id/close",
                 visibleToUser = true,
                 hasUsableBounds = true,
             ),
@@ -61,13 +70,9 @@ class RuleCaptureCodecTest {
         preClickUniqueSelectors = listOf(
             CapturedSelector(
                 text = "跳过",
-                ancestorResourceId = "com.tencent.qqmusic:id/jap",
+                ancestorResourceId = "com.example.music:id/jap",
                 ancestorDistance = 1,
             ),
         ),
     )
-
-    private companion object {
-        val VERSION = AppVersion("13.2.0", 42)
-    }
 }

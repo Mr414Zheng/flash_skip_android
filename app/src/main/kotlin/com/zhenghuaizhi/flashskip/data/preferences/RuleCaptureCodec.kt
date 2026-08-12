@@ -1,6 +1,5 @@
 package com.zhenghuaizhi.flashskip.data.preferences
 
-import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
@@ -13,7 +12,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 object RuleCaptureCodec {
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     fun encode(state: RuleCaptureState): String = JSONObject()
         .put("version", VERSION)
@@ -35,9 +34,9 @@ object RuleCaptureCodec {
 
     private fun CaptureSession.toJson() = JSONObject()
         .put("id", id)
-        .put("targetAppId", targetAppId.name)
-        .put("packageName", packageName)
-        .put("appVersion", appVersion.toJson())
+        .putNullable("targetPackageName", targetAppId?.packageName)
+        .putNullable("targetAppName", targetAppName)
+        .putNullable("packageName", packageName)
         .put("phase", phase.name)
         .put("phaseStartedAtEpochMs", phaseStartedAtEpochMs)
         .put("deadlineAtEpochMs", deadlineAtEpochMs)
@@ -49,8 +48,8 @@ object RuleCaptureCodec {
 
     private fun CaptureSample.toJson() = JSONObject()
         .put("id", id)
-        .put("targetAppId", targetAppId.name)
-        .put("appVersion", appVersion.toJson())
+        .put("targetPackageName", targetAppId.packageName)
+        .put("targetAppName", targetAppName)
         .put("activityName", activityName)
         .put("clickedAfterTargetMs", clickedAfterTargetMs)
         .put("capturedAtEpochMs", capturedAtEpochMs)
@@ -59,10 +58,6 @@ object RuleCaptureCodec {
             "preClickUniqueSelectors",
             JSONArray().apply { preClickUniqueSelectors.forEach { put(it.toJson()) } },
         )
-
-    private fun AppVersion.toJson() = JSONObject()
-        .putNullable("versionName", versionName)
-        .put("versionCode", versionCode)
 
     private fun CapturedNode.toJson() = JSONObject()
         .putNullable("resourceId", resourceId)
@@ -82,9 +77,9 @@ object RuleCaptureCodec {
 
     private fun JSONObject.toSession() = CaptureSession(
         id = getLong("id"),
-        targetAppId = TargetAppId.valueOf(getString("targetAppId")),
-        packageName = getString("packageName"),
-        appVersion = getJSONObject("appVersion").toAppVersion(),
+        targetAppId = nullableString("targetPackageName")?.let(::TargetAppId),
+        targetAppName = nullableString("targetAppName"),
+        packageName = nullableString("packageName"),
         phase = CapturePhase.valueOf(getString("phase")),
         phaseStartedAtEpochMs = getLong("phaseStartedAtEpochMs"),
         deadlineAtEpochMs = getLong("deadlineAtEpochMs"),
@@ -97,19 +92,14 @@ object RuleCaptureCodec {
 
     private fun JSONObject.toSample() = CaptureSample(
         id = getLong("id"),
-        targetAppId = TargetAppId.valueOf(getString("targetAppId")),
-        appVersion = getJSONObject("appVersion").toAppVersion(),
+        targetAppId = TargetAppId(getString("targetPackageName")),
+        targetAppName = getString("targetAppName"),
         activityName = getString("activityName"),
         clickedAfterTargetMs = getLong("clickedAfterTargetMs"),
         capturedAtEpochMs = getLong("capturedAtEpochMs"),
         nodes = getJSONArray("nodes").mapObjects { it.toCapturedNode() },
         preClickUniqueSelectors = getJSONArray("preClickUniqueSelectors")
             .mapObjects { it.toCapturedSelector() },
-    )
-
-    private fun JSONObject.toAppVersion() = AppVersion(
-        versionName = nullableString("versionName"),
-        versionCode = getLong("versionCode"),
     )
 
     private fun JSONObject.toCapturedNode() = CapturedNode(

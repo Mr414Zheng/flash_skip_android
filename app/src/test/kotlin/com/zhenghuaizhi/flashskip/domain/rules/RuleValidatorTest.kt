@@ -10,15 +10,10 @@ import org.junit.Test
 
 class RuleValidatorTest {
     @Test
-    fun productionCatalogKeepsAllTargetsUnavailableWithoutEvidence() {
+    fun productionCatalogHasNoPreRegisteredTargetsWithoutEvidence() {
         val catalog = BuiltinRuleCatalog()
 
-        assertTrue(catalog.rulesForPackage("com.tencent.qqmusic").isEmpty())
-        assertTrue(catalog.rulesForPackage("com.taobao.taobao").isEmpty())
-        assertTrue(catalog.rulesForPackage("com.jingdong.app.mall").isEmpty())
-        assertTrue(catalog.targets.all {
-            it.ruleAvailability is com.zhenghuaizhi.flashskip.domain.model.RuleAvailability.Unavailable
-        })
+        assertTrue(catalog.snapshot.value.rules.isEmpty())
     }
 
     @Test
@@ -55,7 +50,7 @@ class RuleValidatorTest {
         )
 
         assertTrue(catalog.validationIssues.isNotEmpty())
-        assertTrue(catalog.rulesForTarget(TargetAppId.QQ_MUSIC).isEmpty())
+        assertTrue(catalog.rulesForTarget(TargetAppId("com.example.music")).isEmpty())
     }
 
     @Test
@@ -73,7 +68,7 @@ class RuleValidatorTest {
             selectors = listOf(
                 NodeSelector(
                     text = TextCondition.Exact("跳过"),
-                    ancestorResourceId = "com.tencent.qqmusic:id/jap",
+                    ancestorResourceId = "com.example.music:id/jap",
                 ),
             ),
         )
@@ -81,7 +76,7 @@ class RuleValidatorTest {
             selectors = listOf(
                 NodeSelector(
                     text = TextCondition.Exact("跳过"),
-                    ancestorResourceId = "com.tencent.qqmusic:id/jap",
+                    ancestorResourceId = "com.example.music:id/jap",
                     ancestorDistance = 5,
                 ),
             ),
@@ -97,8 +92,8 @@ class RuleValidatorTest {
 
     private fun validRule() = AdRule(
         id = "test-rule",
-        targetAppId = TargetAppId.QQ_MUSIC,
-        packageName = "com.tencent.qqmusic",
+        targetAppId = TargetAppId("com.example.music"),
+        packageName = "com.example.music",
         allowedActivities = setOf("com.example.TestSplashActivity"),
         selectors = listOf(NodeSelector(text = TextCondition.Exact("test-close"))),
         startupDelayMs = 0,

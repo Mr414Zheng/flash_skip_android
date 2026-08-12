@@ -1,6 +1,5 @@
 package com.zhenghuaizhi.flashskip.ui.home
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,19 +23,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
-import com.zhenghuaizhi.flashskip.R
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
 import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
-import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.rulecapture.RuleCandidateAnalyzer
 import com.zhenghuaizhi.flashskip.ui.theme.FlashSkipTokens
 
@@ -45,9 +40,6 @@ internal fun TargetAppRow(
     state: TargetAppUiState,
     compactIcon: Boolean,
     onToggle: (Boolean) -> Unit,
-    onStartCapture: () -> Unit = {},
-    onFinishCapture: () -> Unit = {},
-    onCancelCapture: () -> Unit = {},
     onClearCapturedRules: () -> Unit = {},
 ) {
     val ruleCount = (state.target.ruleAvailability as? RuleAvailability.Available)?.ruleCount
@@ -63,14 +55,20 @@ internal fun TargetAppRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Image(
-                painter = painterResource(appIcon(state.target.id)),
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
+            Surface(
                 modifier = Modifier
                     .size(if (compactIcon) FlashSkipTokens.AppIconCompact else FlashSkipTokens.AppIcon)
                     .clip(RoundedCornerShape(12.dp)),
-            )
+                color = MaterialTheme.colorScheme.primaryContainer,
+            ) {
+                androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = state.target.displayName.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+            }
             Spacer(Modifier.width(FlashSkipTokens.Space16))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -101,12 +99,6 @@ internal fun TargetAppRow(
             )
         }
 
-        CaptureControls(
-            state = state,
-            onStartCapture = onStartCapture,
-            onFinishCapture = onFinishCapture,
-            onCancelCapture = onCancelCapture,
-        )
         state.ruleCard?.let { card ->
             RuleCard(
                 appName = state.target.displayName,
@@ -118,24 +110,23 @@ internal fun TargetAppRow(
 }
 
 @Composable
-private fun CaptureControls(
-    state: TargetAppUiState,
+internal fun CaptureControls(
+    state: CaptureUiState,
+    targetAppName: String?,
     onStartCapture: () -> Unit,
     onFinishCapture: () -> Unit,
     onCancelCapture: () -> Unit,
 ) {
-    val phase = state.capture.phase
+    val phase = state.phase
     val explanation = when (phase) {
         CapturePhase.CONFIGURING -> "正在暂停自动关闭并准备点击监听…"
-        CapturePhase.WAITING_FOR_TARGET -> "请从 Home 手动启动${state.target.displayName}，广告出现后只点击一次关闭按钮。"
+        CapturePhase.WAITING_FOR_TARGET -> "请从 Home 手动启动任意应用，广告出现后只点击一次关闭按钮。"
         CapturePhase.OBSERVING_CLICK -> "正在等待首次点击；请只点击广告关闭按钮。"
-        CapturePhase.CAPTURED -> "点击信息已安全保存在本机，请确认完成本次采集。"
-        CapturePhase.FAILED -> failureMessage(state.capture.failure)
+        CapturePhase.CAPTURED -> "已采集${targetAppName ?: "目标应用"}的点击信息，请确认完成。"
+        CapturePhase.FAILED -> failureMessage(state.failure)
         null -> when {
-            state.installedVersion == null -> "未检测到目标应用，安装后才能采集。"
-            state.capture.blockedByOtherApp -> "另一应用正在采集，请先完成或取消。"
-            !state.capture.canStart -> "开启并保持 FlashSkip 无障碍服务运行后可采集。"
-            else -> "完成 1 次有效采集后生成本机规则；采集期间只点击一次。"
+            !state.canStart -> "开启并保持 FlashSkip 无障碍服务运行后可采集。"
+            else -> "无需预先添加应用；从 Home 启动任意应用并采集一次关闭按钮。"
         }
     }
     Text(
@@ -182,10 +173,10 @@ private fun CaptureControls(
             CapturePhase.FAILED, null -> {
                 OutlinedButton(
                     onClick = onStartCapture,
-                    enabled = state.capture.canStart,
+                    enabled = state.canStart,
                     modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
                 ) {
-                    Text(if (state.ruleCard == null) "采集规则" else "继续采集")
+                    Text("采集规则")
                 }
                 if (phase == CapturePhase.FAILED) {
                     TextButton(
@@ -226,31 +217,22 @@ private fun RuleCard(
                         RuleCardStatus.CANDIDATE ->
                             "候选规则 · ${card.stableSampleCount}/${RuleCandidateAnalyzer.REQUIRED_STABLE_SAMPLES}"
                         RuleCardStatus.READY -> "本机规则可用"
-                        RuleCardStatus.STALE -> "本机规则已失效"
                     },
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleSmall,
                     color = when (card.status) {
                         RuleCardStatus.READY -> MaterialTheme.colorScheme.primary
-                        RuleCardStatus.STALE -> MaterialTheme.colorScheme.error
                         RuleCardStatus.CANDIDATE -> MaterialTheme.colorScheme.onSurface
                     },
                 )
                 TextButton(onClick = onClear) { Text("清除") }
             }
             Text(
-                text = "有效样本 ${card.sampleCount}/${RuleCandidateAnalyzer.REQUIRED_STABLE_SAMPLES} · " +
-                    "唯一性记录 ${card.uniqueEvidenceCount}（非门槛）",
+                text = "成功采集 ${card.sampleCount} 次 · 累计规则 ${card.ruleCount} 条 · " +
+                    "唯一性记录 ${card.uniqueEvidenceCount}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            card.version?.let { version ->
-                Text(
-                    text = "应用版本 ${version.versionName ?: version.versionCode}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
             if (card.activities.isNotEmpty()) {
                 Text(
                     text = "Activity ${card.activities.sorted().joinToString()}",
@@ -289,7 +271,6 @@ private fun failureMessage(failure: CaptureFailure?): String = when (failure) {
     CaptureFailure.TARGET_TIMEOUT -> "采集失败：90 秒内未进入目标应用。"
     CaptureFailure.CLICK_TIMEOUT -> "采集失败：进入目标应用后 15 秒内没有点击。"
     CaptureFailure.COMPLETION_TIMEOUT -> "采集失败：10 分钟内未确认采集完成。"
-    CaptureFailure.APP_VERSION_CHANGED -> "采集失败：目标应用版本已变化，请重新采集。"
     CaptureFailure.ACTIVITY_UNAVAILABLE -> "采集失败：无法验证当前 Activity。"
     CaptureFailure.CLICK_SOURCE_UNAVAILABLE -> "采集失败：系统未提供点击节点，且未找到唯一关闭节点。"
     CaptureFailure.CLICK_SEMANTICS_UNAVAILABLE -> "该广告暂不支持：关闭节点没有可用语义。"
@@ -304,9 +285,3 @@ private fun selectorSummary(selector: CapturedSelector): String = buildList {
         add("祖先ID $it（${selector.ancestorDistance}层）")
     }
 }.joinToString(" · ")
-
-private fun appIcon(targetAppId: TargetAppId): Int = when (targetAppId) {
-    TargetAppId.QQ_MUSIC -> R.drawable.qqmusic
-    TargetAppId.TAOBAO -> R.drawable.taobao
-    TargetAppId.JD -> R.drawable.jd
-}

@@ -4,7 +4,6 @@ import com.zhenghuaizhi.flashskip.domain.model.ActionMethod
 import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.ActionReason
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
-import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -33,12 +32,6 @@ internal fun ActionRecord.detail(nowEpochMs: Long): String {
         add(formatTime(timestampEpochMs, nowEpochMs))
         add(ruleId)
     }.joinToString(" · ")
-}
-
-internal fun TargetAppId.displayName(): String = when (this) {
-    TargetAppId.QQ_MUSIC -> "QQ音乐"
-    TargetAppId.TAOBAO -> "淘宝"
-    TargetAppId.JD -> "京东"
 }
 
 private fun reasonLabel(reason: ActionReason?): String = when (reason) {

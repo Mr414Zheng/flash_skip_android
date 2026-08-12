@@ -2,7 +2,6 @@ package com.zhenghuaizhi.flashskip.domain.ports
 
 import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
-import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import kotlinx.coroutines.flow.Flow
 
 interface RuleCaptureStore {
@@ -12,8 +11,9 @@ interface RuleCaptureStore {
 }
 
 interface TargetAppVersionReader {
-    fun versionFor(targetAppId: TargetAppId): AppVersion?
+    fun versionFor(packageName: String): AppVersion?
 
-    fun installedVersions(): Map<TargetAppId, AppVersion?> =
-        TargetAppId.entries.associateWith(::versionFor)
+    fun displayNameFor(packageName: String): String?
+
+    fun verifiedActivity(packageName: String, className: String?): String?
 }

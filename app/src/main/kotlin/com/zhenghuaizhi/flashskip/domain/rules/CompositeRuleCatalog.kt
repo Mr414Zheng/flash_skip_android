@@ -1,7 +1,7 @@
 package com.zhenghuaizhi.flashskip.domain.rules
 
 import com.zhenghuaizhi.flashskip.domain.model.AdRule
-import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.ports.RuleCaptureStore
 import com.zhenghuaizhi.flashskip.domain.rulecapture.RuleCandidateAnalyzer
 import kotlinx.coroutines.CoroutineScope
@@ -19,21 +19,15 @@ class CompositeRuleCatalog(
         builtinCatalog.snapshot,
         captureStore.state,
     ) { builtin, captureState ->
-        val localRules = TargetAppId.entries.flatMap { targetAppId ->
-            captureState.samples
-                .asSequence()
-                .filter { it.targetAppId == targetAppId }
-                .map { it.appVersion }
-                .distinct()
-                .mapNotNull { appVersion ->
-                    RuleCandidateAnalyzer.analyze(
-                        samples = captureState.samples,
-                        targetAppId = targetAppId,
-                        currentVersion = appVersion,
-                    ).rule
-                }
-                .toList()
-        }
+        val localRules = captureState.samples
+            .map(CaptureSample::targetAppId)
+            .distinct()
+            .flatMap { targetAppId ->
+                RuleCandidateAnalyzer.readyRules(
+                    samples = captureState.samples,
+                    targetAppId = targetAppId,
+                )
+            }
         val validatedLocalRules = localRules.filter(::isValidRule)
         val combinedRules = validatedLocalRules + builtin.rules
         RuleCatalogSnapshot(

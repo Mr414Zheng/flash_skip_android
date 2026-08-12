@@ -1,8 +1,6 @@
 package com.zhenghuaizhi.flashskip.application.rulecapture
 
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
-import com.zhenghuaizhi.flashskip.domain.model.AppVersion
-import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
@@ -13,10 +11,9 @@ import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
 import com.zhenghuaizhi.flashskip.domain.ports.MonotonicClock
 import com.zhenghuaizhi.flashskip.domain.ports.RuleCaptureStore
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.runCurrent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -25,139 +22,54 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class RuleCaptureCoordinatorTest {
     @Test
-    fun completeFlowDisablesSwitchAndCommitsPendingSample() = runTest {
+    fun genericSessionBindsFirstObservedAppAndCommitsSample() = runTest {
         val fixture = Fixture(this)
-        val sessionId = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
-        assertFalse(fixture.flashStore.state.value.enabledApps.getValue(TargetAppId.QQ_MUSIC))
+        val sessionId = fixture.coordinator.requestStart()
         fixture.coordinator.markConfigured(sessionId)
-        assertEquals(CapturePhase.WAITING_FOR_TARGET, fixture.captureStore.state.value.activeSession?.phase)
-
         fixture.coordinator.observeTarget(
-            sessionId,
-            VERSION,
-            ACTIVITY,
+            sessionId = sessionId,
+            targetAppId = TARGET,
+            targetAppName = "示例音乐",
+            packageName = TARGET.packageName,
+            activityName = ACTIVITY,
             windowId = 5,
             enteredAtElapsedMs = 100,
         )
         fixture.coordinator.recordCaptured(sessionId, sample(sessionId))
-        assertEquals(CapturePhase.CAPTURED, fixture.captureStore.state.value.activeSession?.phase)
         fixture.coordinator.finish(sessionId)
 
         assertNull(fixture.captureStore.state.value.activeSession)
         assertEquals(listOf(sample(sessionId)), fixture.captureStore.state.value.samples)
+        assertFalse(fixture.flashStore.state.value.enabledApps[TARGET] == true)
     }
 
     @Test
-    fun firstClickCanBeCapturedBeforeObservingStateIsPublished() = runTest {
-        val fixture = Fixture(this)
-        fixture.clock.elapsed = 1_500
-        val sessionId = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
-        fixture.coordinator.markConfigured(sessionId)
-
-        fixture.coordinator.recordCaptured(sessionId, sample(sessionId))
-
-        val captured = fixture.captureStore.state.value.activeSession
-        assertEquals(CapturePhase.CAPTURED, captured?.phase)
-        assertEquals(ACTIVITY, captured?.activityName)
-        assertEquals(500L, captured?.targetEnteredAtElapsedMs)
-        assertEquals(sample(sessionId), captured?.pendingSample)
-    }
-
-    @Test
-    fun firstClickWithMismatchedVersionFailsInsteadOfPublishingSample() = runTest {
-        val fixture = Fixture(this)
-        val sessionId = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
-        fixture.coordinator.markConfigured(sessionId)
-
-        fixture.coordinator.recordCaptured(
-            sessionId,
-            sample(sessionId).copy(appVersion = VERSION.copy(versionCode = 99)),
-        )
-
-        val failed = fixture.captureStore.state.value.activeSession
-        assertEquals(CapturePhase.FAILED, failed?.phase)
-        assertEquals(CaptureFailure.APP_VERSION_CHANGED, failed?.failure)
-        assertNull(failed?.pendingSample)
-    }
-
-    @Test
-    fun timeoutsAndVersionChangesBecomeExplicitFailures() = runTest {
-        val fixture = Fixture(this)
-        val timeoutId = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
-        fixture.coordinator.markConfigured(timeoutId)
-        fixture.clock.wall = 100_000
-        fixture.coordinator.expireActive()
-        assertEquals(CaptureFailure.TARGET_TIMEOUT, fixture.captureStore.state.value.activeSession?.failure)
-
-        val changedId = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
-        fixture.coordinator.markConfigured(changedId)
-        fixture.coordinator.observeTarget(
-            changedId,
-            VERSION.copy(versionCode = 99),
-            ACTIVITY,
-            5,
-            100,
-        )
-        assertEquals(
-            CaptureFailure.APP_VERSION_CHANGED,
-            fixture.captureStore.state.value.activeSession?.failure,
-        )
-    }
-
-    @Test
-    fun eachAppVersionKeepsOnlyMostRecentTenSamples() = runTest {
+    fun everySuccessfulCaptureIsRetained() = runTest {
         val fixture = Fixture(this)
         repeat(11) { index ->
-            fixture.clock.wall = 1_000L + index
-            val id = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
+            val id = fixture.coordinator.requestStart()
             fixture.coordinator.markConfigured(id)
-            fixture.coordinator.observeTarget(id, VERSION, ACTIVITY, 5, 100)
+            fixture.coordinator.observeTarget(
+                id,
+                TARGET,
+                "示例音乐",
+                TARGET.packageName,
+                ACTIVITY,
+                5,
+                100,
+            )
             fixture.coordinator.recordCaptured(id, sample(id))
             fixture.coordinator.finish(id)
         }
 
-        val samples = fixture.captureStore.state.value.samples
-        assertEquals(10, samples.size)
-        assertEquals(samples.map { it.id }.distinct().size, samples.size)
-    }
-
-    @Test
-    fun sessionsStartedWithinSameMillisecondStillReceiveUniqueIds() = runTest {
-        val fixture = Fixture(this)
-        fixture.clock.wall = 5_000
-
-        val first = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
-        val second = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
-
-        assertEquals(first + 1, second)
-    }
-
-    @Test
-    fun targetPackageChangeDisablesSwitchAndInvalidatesActiveCapture() = runTest {
-        val fixture = Fixture(this)
-        val sessionId = fixture.coordinator.requestStart(TargetAppId.QQ_MUSIC, VERSION)
-        fixture.coordinator.markConfigured(sessionId)
-        fixture.coordinator.targetPackageChanged(TargetAppId.QQ_MUSIC)
-        runCurrent()
-
-        assertFalse(fixture.flashStore.state.value.enabledApps.getValue(TargetAppId.QQ_MUSIC))
-        assertEquals(
-            CaptureFailure.APP_VERSION_CHANGED,
-            fixture.captureStore.state.value.activeSession?.failure,
-        )
+        assertEquals(11, fixture.captureStore.state.value.samples.size)
     }
 
     private class Fixture(scope: kotlinx.coroutines.CoroutineScope) {
         val captureStore = FakeCaptureStore()
         val flashStore = FakeFlashStore()
         val clock = FakeClock()
-        val coordinator = RuleCaptureCoordinator(
-            captureStore,
-            flashStore,
-            clock,
-            clock,
-            scope,
-        )
+        val coordinator = RuleCaptureCoordinator(captureStore, flashStore, clock, clock, scope)
     }
 
     private class FakeCaptureStore : RuleCaptureStore {
@@ -168,11 +80,7 @@ class RuleCaptureCoordinatorTest {
     }
 
     private class FakeFlashStore : FlashSkipStore {
-        val state = MutableStateFlow(
-            FlashSkipPreferences(
-                enabledApps = TargetAppId.entries.associateWith { true },
-            ),
-        )
+        val state = MutableStateFlow(FlashSkipPreferences())
         override val preferences = state
         override suspend fun setAppEnabled(targetAppId: TargetAppId, enabled: Boolean) {
             state.value = state.value.copy(enabledApps = state.value.enabledApps + (targetAppId to enabled))
@@ -183,26 +91,25 @@ class RuleCaptureCoordinatorTest {
     }
 
     private class FakeClock : MonotonicClock, WallClock {
-        var elapsed = 0L
-        var wall = 1_000L
-        override fun elapsedRealtimeMs(): Long = elapsed
-        override fun currentTimeMillis(): Long = wall
+        override fun elapsedRealtimeMs(): Long = 1_500
+        override fun currentTimeMillis(): Long = 1_000
     }
 
     private companion object {
-        val VERSION = AppVersion("13.2.0", 42)
-        const val ACTIVITY = "com.tencent.qqmusic.activity.AppStarterActivity"
+        val TARGET = TargetAppId("com.example.music")
+        const val ACTIVITY = "com.example.music.activity.AppStarterActivity"
 
         fun sample(id: Long) = CaptureSample(
             id = id,
-            targetAppId = TargetAppId.QQ_MUSIC,
-            appVersion = VERSION,
+            targetAppId = TARGET,
+            targetAppName = "示例音乐",
             activityName = ACTIVITY,
             clickedAfterTargetMs = 1_000,
-            capturedAtEpochMs = 2_000,
+            capturedAtEpochMs = 2_000 + id,
             nodes = listOf(
                 CapturedNode(
-                    resourceId = "com.tencent.qqmusic:id/close",
+                    resourceId = "com.example.music:id/close",
+                    clickable = true,
                     visibleToUser = true,
                     hasUsableBounds = true,
                 ),

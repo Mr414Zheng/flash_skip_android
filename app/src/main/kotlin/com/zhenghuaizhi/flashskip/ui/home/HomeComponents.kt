@@ -87,7 +87,7 @@ internal fun ServiceStatusBlock(
             ServiceStatus.RUNNING -> Text(
                 text = state.latestSuccess?.let { record ->
                     "最近成功：${formatTime(record.timestampEpochMs, state.currentTimeEpochMs)} · " +
-                        record.targetAppId.displayName()
+                        record.targetAppName
                 } ?: "尚无成功记录",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -193,7 +193,7 @@ internal fun ExecutionItem(
                 .padding(vertical = FlashSkipTokens.Space12),
         ) {
             Text(
-                text = "${record.targetAppId.displayName()} · ${record.title()}",
+                text = "${record.targetAppName} · ${record.title()}",
                 style = MaterialTheme.typography.titleMedium,
                 color = when (record.outcome) {
                     ActionOutcome.FAILED -> MaterialTheme.colorScheme.error

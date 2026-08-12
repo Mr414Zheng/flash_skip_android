@@ -3,6 +3,7 @@ package com.zhenghuaizhi.flashskip.domain.model
 data class ActionRecord(
     val timestampEpochMs: Long,
     val targetAppId: TargetAppId,
+    val targetAppName: String = targetAppId.packageName,
     val ruleId: String,
     val method: ActionMethod?,
     val outcome: ActionOutcome,

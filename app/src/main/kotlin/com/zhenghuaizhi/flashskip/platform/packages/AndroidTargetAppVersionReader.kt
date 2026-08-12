@@ -5,24 +5,22 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import com.zhenghuaizhi.flashskip.domain.model.AppVersion
-import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.ports.TargetAppVersionReader
-import com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
 
 class AndroidTargetAppVersionReader(
     context: Context,
 ) : TargetAppVersionReader {
     private val packageManager = context.applicationContext.packageManager
 
-    override fun versionFor(targetAppId: TargetAppId): AppVersion? = runCatching {
+    override fun versionFor(packageName: String): AppVersion? = runCatching {
         val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             packageManager.getPackageInfo(
-                TargetAppRegistry.expectedPackage(targetAppId),
+                packageName,
                 PackageManager.PackageInfoFlags.of(0),
             )
         } else {
             @Suppress("DEPRECATION")
-            packageManager.getPackageInfo(TargetAppRegistry.expectedPackage(targetAppId), 0)
+            packageManager.getPackageInfo(packageName, 0)
         }
         AppVersion(
             versionName = packageInfo.versionName?.take(MAX_VERSION_NAME_LENGTH),
@@ -35,7 +33,23 @@ class AndroidTargetAppVersionReader(
         )
     }.getOrNull()
 
-    fun verifiedActivity(packageName: String, className: String?): String? {
+    override fun displayNameFor(packageName: String): String? = runCatching {
+        val applicationInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getApplicationInfo(
+                packageName,
+                PackageManager.ApplicationInfoFlags.of(0),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getApplicationInfo(packageName, 0)
+        }
+        packageManager.getApplicationLabel(applicationInfo).toString()
+            .trim()
+            .take(MAX_APP_NAME_LENGTH)
+            .takeIf(String::isNotEmpty)
+    }.getOrNull()
+
+    override fun verifiedActivity(packageName: String, className: String?): String? {
         val rawClassName = className?.trim()?.takeIf(String::isNotEmpty) ?: return null
         val activityName = when {
             rawClassName.startsWith('.') -> packageName + rawClassName
@@ -59,6 +73,7 @@ class AndroidTargetAppVersionReader(
 
     private companion object {
         const val MAX_VERSION_NAME_LENGTH = 80
+        const val MAX_APP_NAME_LENGTH = 80
         const val MAX_ACTIVITY_LENGTH = 240
     }
 }

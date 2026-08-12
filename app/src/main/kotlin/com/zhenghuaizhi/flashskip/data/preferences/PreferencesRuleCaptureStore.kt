@@ -8,15 +8,24 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.ports.RuleCaptureStore
 import java.io.IOException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 private val Context.ruleCaptureDataStore by preferencesDataStore(name = "flashskip_rule_capture")
 
 class PreferencesRuleCaptureStore(
     private val context: Context,
+    cleanupScope: CoroutineScope,
 ) : RuleCaptureStore {
+    init {
+        cleanupScope.launch {
+            context.ruleCaptureDataStore.edit { values -> values.remove(LEGACY_STATE) }
+        }
+    }
+
     override val state: Flow<RuleCaptureState> = context.ruleCaptureDataStore.data
         .catch { error ->
             if (error is IOException) emit(emptyPreferences()) else throw error
@@ -31,6 +40,7 @@ class PreferencesRuleCaptureStore(
     }
 
     private companion object {
-        val STATE = stringPreferencesKey("rule_capture_state_v1")
+        val LEGACY_STATE = stringPreferencesKey("rule_capture_state_v1")
+        val STATE = stringPreferencesKey("rule_capture_state_v2")
     }
 }

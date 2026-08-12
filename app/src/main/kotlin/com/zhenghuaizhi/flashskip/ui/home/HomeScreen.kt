@@ -58,9 +58,9 @@ fun FlashSkipScreen(
     onToggleApp: (com.zhenghuaizhi.flashskip.domain.model.TargetAppId, Boolean) -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
     modifier: Modifier = Modifier,
-    onStartCapture: (com.zhenghuaizhi.flashskip.domain.model.TargetAppId) -> Unit = {},
-    onFinishCapture: (com.zhenghuaizhi.flashskip.domain.model.TargetAppId) -> Unit = {},
-    onCancelCapture: (com.zhenghuaizhi.flashskip.domain.model.TargetAppId) -> Unit = {},
+    onStartCapture: () -> Unit = {},
+    onFinishCapture: () -> Unit = {},
+    onCancelCapture: () -> Unit = {},
     onClearCapturedRules: (com.zhenghuaizhi.flashskip.domain.model.TargetAppId) -> Unit = {},
     onClearAllCapturedRules: () -> Unit = {},
 ) {
@@ -99,6 +99,21 @@ fun FlashSkipScreen(
                 Spacer(Modifier.height(FlashSkipTokens.Space40))
                 SectionHeader("目标应用")
                 Spacer(Modifier.height(FlashSkipTokens.Space20))
+                CaptureControls(
+                    state = state.capture,
+                    targetAppName = state.capturingAppName,
+                    onStartCapture = onStartCapture,
+                    onFinishCapture = onFinishCapture,
+                    onCancelCapture = onCancelCapture,
+                )
+                Spacer(Modifier.height(FlashSkipTokens.Space20))
+                if (state.targetApps.isEmpty()) {
+                    Text(
+                        text = "尚无采集规则。成功采集后，应用会自动出现在这里。",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             state.targetApps.forEachIndexed { index, app ->
@@ -107,9 +122,6 @@ fun FlashSkipScreen(
                         state = app,
                         compactIcon = maxWidth < 360.dp,
                         onToggle = { onToggleApp(app.target.id, it) },
-                        onStartCapture = { onStartCapture(app.target.id) },
-                        onFinishCapture = { onFinishCapture(app.target.id) },
-                        onCancelCapture = { onCancelCapture(app.target.id) },
                         onClearCapturedRules = { onClearCapturedRules(app.target.id) },
                     )
                     if (index < state.targetApps.lastIndex) {

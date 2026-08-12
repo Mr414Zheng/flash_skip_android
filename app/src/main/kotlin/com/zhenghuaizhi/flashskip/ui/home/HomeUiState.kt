@@ -1,7 +1,6 @@
 package com.zhenghuaizhi.flashskip.ui.home
 
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
-import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
@@ -14,6 +13,8 @@ data class HomeUiState(
     val serviceStatus: ServiceStatus = ServiceStatus.NOT_ENABLED,
     val enabledAppCount: Int = 0,
     val targetApps: List<TargetAppUiState> = emptyList(),
+    val capture: CaptureUiState = CaptureUiState(),
+    val capturingAppName: String? = null,
     val records: List<ActionRecord> = emptyList(),
     val latestSuccess: ActionRecord? = null,
     val hasCapturedRules: Boolean = false,
@@ -24,8 +25,6 @@ data class TargetAppUiState(
     val target: TargetApp,
     val enabled: Boolean,
     val status: TargetAppStatus,
-    val installedVersion: AppVersion? = null,
-    val capture: CaptureUiState = CaptureUiState(),
     val ruleCard: RuleCardUiState? = null,
 )
 
@@ -33,15 +32,14 @@ data class CaptureUiState(
     val phase: CapturePhase? = null,
     val failure: CaptureFailure? = null,
     val canStart: Boolean = false,
-    val blockedByOtherApp: Boolean = false,
 )
 
 data class RuleCardUiState(
     val status: RuleCardStatus,
     val sampleCount: Int,
+    val ruleCount: Int,
     val stableSampleCount: Int,
     val uniqueEvidenceCount: Int,
-    val version: AppVersion?,
     val selector: CapturedSelector?,
     val activities: Set<String> = emptySet(),
 )
@@ -57,8 +55,6 @@ fun targetAppUiState(
     target: TargetApp,
     enabled: Boolean,
     serviceStatus: ServiceStatus,
-    installedVersion: AppVersion? = null,
-    capture: CaptureUiState = CaptureUiState(),
     ruleCard: RuleCardUiState? = null,
 ): TargetAppUiState {
     val status = when {
@@ -71,8 +67,6 @@ fun targetAppUiState(
         target = target,
         enabled = enabled,
         status = status,
-        installedVersion = installedVersion,
-        capture = capture,
         ruleCard = ruleCard,
     )
 }

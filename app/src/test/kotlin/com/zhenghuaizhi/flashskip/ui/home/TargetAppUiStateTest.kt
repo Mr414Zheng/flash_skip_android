@@ -37,9 +37,9 @@ class TargetAppUiStateTest {
     }
 
     private fun target() = TargetApp(
-        id = TargetAppId.QQ_MUSIC,
-        displayName = "QQ音乐",
-        packageName = "com.tencent.qqmusic",
+        id = TargetAppId("com.example.music"),
+        displayName = "示例音乐",
+        packageName = "com.example.music",
         ruleAvailability = RuleAvailability.Available(1),
     )
 }

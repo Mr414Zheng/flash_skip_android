@@ -373,7 +373,7 @@ class AutomationEngineTest {
         fixture.createEngine(this)
         fixture.engine.onForegroundSignal(ForegroundSignal.TargetActive(IDENTITY, 0))
         fixture.engine.awaitIdle()
-        fixture.store.setAppEnabled(TargetAppId.QQ_MUSIC, false)
+        fixture.store.setAppEnabled(TargetAppId("com.example.music"), false)
 
         fixture.clock.now = 120
         advanceTimeBy(120)
@@ -510,8 +510,8 @@ class AutomationEngineTest {
         selectors: List<NodeSelector>,
     ) = AdRule(
         id = id,
-        targetAppId = TargetAppId.QQ_MUSIC,
-        packageName = "com.tencent.qqmusic",
+        targetAppId = TargetAppId("com.example.music"),
+        packageName = "com.example.music",
         allowedActivities = setOf("com.example.TestSplashActivity"),
         selectors = selectors,
         startupDelayMs = startupDelayMs,
@@ -565,7 +565,7 @@ class AutomationEngineTest {
     private class FakeStore : FlashSkipStore {
         private val state = MutableStateFlow(
             FlashSkipPreferences(
-                enabledApps = TargetAppId.entries.associateWith { it == TargetAppId.QQ_MUSIC },
+                enabledApps = mapOf(TargetAppId("com.example.music") to true),
             ),
         )
         val current: FlashSkipPreferences
@@ -617,7 +617,7 @@ class AutomationEngineTest {
 
     private companion object {
         val IDENTITY = PageIdentity(
-            packageName = "com.tencent.qqmusic",
+            packageName = "com.example.music",
             activityName = "com.example.TestSplashActivity",
             windowId = 7,
         )

@@ -1,7 +1,6 @@
 package com.zhenghuaizhi.flashskip.domain.rulecapture
 
 import com.zhenghuaizhi.flashskip.domain.model.AdRule
-import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
@@ -9,7 +8,6 @@ import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleCandidateAnalysis
 import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
-import com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
 import java.util.Locale
 
 object RuleCandidateAnalyzer {
@@ -20,61 +18,40 @@ object RuleCandidateAnalyzer {
     fun analyze(
         samples: List<CaptureSample>,
         targetAppId: TargetAppId,
-        currentVersion: AppVersion?,
     ): RuleCandidateAnalysis {
-        val targetSamples = samples.filter { it.targetAppId == targetAppId }
-        val currentSamples = currentVersion?.let { version ->
-            targetSamples.filter {
-                it.appVersion == version &&
-                    it.clickedAfterTargetMs >= 0 &&
-                    it.activityName.isNotBlank()
-            }
-        }.orEmpty()
-        val ranked = rankSelectors(currentSamples)
-        val primary = ranked.firstOrNull { it.ready } ?: ranked.firstOrNull()
-        val readyCandidates = ranked.filter(SelectorRank::ready)
+        val targetSamples = validSamples(samples, targetAppId)
+        val groups = ruleGroups(targetSamples)
+        val localRules = groups.map { it.toRule(targetAppId) }
+        val primary = groups.firstOrNull()
+        val ranked = rankSelectors(targetSamples)
         val status = when {
-            currentVersion == null && targetSamples.isNotEmpty() -> RuleCardStatus.STALE
-            currentVersion != null && currentSamples.isEmpty() && targetSamples.isNotEmpty() ->
-                RuleCardStatus.STALE
-            readyCandidates.isNotEmpty() -> RuleCardStatus.READY
+            localRules.isNotEmpty() -> RuleCardStatus.READY
             else -> RuleCardStatus.CANDIDATE
         }
         val primarySamples = primary?.samples.orEmpty()
         val activities = primarySamples.map(CaptureSample::activityName).toSet()
         val minimumDelay = primarySamples.minOfOrNull(CaptureSample::clickedAfterTargetMs)
-        val rule = if (status == RuleCardStatus.READY && currentVersion != null) {
-            AdRule(
-                id = localRuleId(targetAppId, currentVersion, requireNotNull(primary).selector),
-                targetAppId = targetAppId,
-                packageName = TargetAppRegistry.expectedPackage(targetAppId),
-                allowedActivities = activities,
-                selectors = readyCandidates.take(MAX_RULE_SELECTORS).map {
-                    it.selector.toRuntimeSelector()
-                },
-                // 人工点击时序包含反应时间，仅作为证据；Ready 规则从首个页面事件开始安全匹配。
-                startupDelayMs = 0L,
-                cooldownMs = COOLDOWN_MS,
-                targetAppVersion = currentVersion,
-            )
-        } else {
-            null
-        }
         return RuleCandidateAnalysis(
             targetAppId = targetAppId,
-            appVersion = currentVersion,
             status = status,
-            currentVersionSampleCount = currentSamples.size,
+            sampleCount = targetSamples.size,
             stableSampleCount = primarySamples.size,
             uniqueEvidenceCount = primary?.uniqueEvidenceCount ?: 0,
-            primarySelector = primary?.selector,
+            primarySelector = primary?.primarySelector,
             probeSelectors = ranked.filter { it.strongEnough }.take(MAX_PROBE_SELECTORS).map {
                 it.selector
             },
             allowedActivities = activities,
             minimumClickDelayMs = minimumDelay,
-            rule = rule,
+            rules = localRules,
         )
+    }
+
+    fun readyRules(
+        samples: List<CaptureSample>,
+        targetAppId: TargetAppId,
+    ): List<AdRule> = ruleGroups(validSamples(samples, targetAppId)).map {
+        it.toRule(targetAppId)
     }
 
     fun selectorCandidates(nodes: List<CapturedNode>): List<CapturedSelector> {
@@ -140,7 +117,6 @@ object RuleCandidateAnalyzer {
                 uniqueEvidenceCount = uniqueCount,
                 strongEnough = strongEnough,
                 ready = supporting.size >= REQUIRED_STABLE_SAMPLES &&
-                    supporting.size == samples.size &&
                     uniqueCount >= REQUIRED_UNIQUE_PROBES &&
                     strongEnough &&
                     supporting.all { it.activityName.isNotBlank() },
@@ -155,6 +131,52 @@ object RuleCandidateAnalyzer {
         )
     }
 
+    private fun validSamples(
+        samples: List<CaptureSample>,
+        targetAppId: TargetAppId,
+    ): List<CaptureSample> = samples.filter {
+        it.targetAppId == targetAppId &&
+            it.clickedAfterTargetMs >= 0 &&
+            it.activityName.isNotBlank()
+    }
+
+    private fun ruleGroups(samples: List<CaptureSample>): List<RuleGroup> {
+        val evidence = samples.mapNotNull { sample ->
+            val readySelectors = rankSelectors(listOf(sample))
+                .filter(SelectorRank::ready)
+                .take(MAX_RULE_SELECTORS)
+                .map(SelectorRank::selector)
+            val primary = readySelectors.firstOrNull() ?: return@mapNotNull null
+            RuleEvidence(sample, primary, readySelectors)
+        }
+        return evidence
+            .groupBy { it.primarySelector.stableKey() }
+            .values
+            .map { matching ->
+                RuleGroup(
+                    primarySelector = matching.first().primarySelector,
+                    selectors = matching.flatMap(RuleEvidence::selectors).distinct(),
+                    samples = matching.map(RuleEvidence::sample),
+                )
+            }
+            .sortedByDescending { group ->
+                group.samples.maxOf(CaptureSample::capturedAtEpochMs)
+            }
+    }
+
+    private fun RuleGroup.toRule(targetAppId: TargetAppId): AdRule = AdRule(
+        id = localRuleId(targetAppId, primarySelector),
+        targetAppId = targetAppId,
+        packageName = targetAppId.packageName,
+        targetAppName = samples.maxBy(CaptureSample::capturedAtEpochMs).targetAppName,
+        allowedActivities = samples.map(CaptureSample::activityName).toSet(),
+        selectors = selectors.take(MAX_RULE_SELECTORS).map { it.toRuntimeSelector() },
+        // 人工点击时序只作为采集证据；本机规则从目标页面首个事件开始安全匹配。
+        startupDelayMs = 0L,
+        cooldownMs = COOLDOWN_MS,
+        targetAppVersion = null,
+    )
+
     private fun CapturedSelector.isStrongEnough(): Boolean {
         if (conditionCount >= 2 || resourceId != null) return true
         val semantic = text ?: contentDescription ?: return false
@@ -167,13 +189,27 @@ object RuleCandidateAnalyzer {
 
     private fun localRuleId(
         targetAppId: TargetAppId,
-        version: AppVersion,
         selector: CapturedSelector,
     ): String {
-        val versionFingerprint = "${version.versionCode}:${version.versionName.orEmpty()}"
-            .hashCode().toUInt().toString(16)
         val fingerprint = selector.stableKey().hashCode().toUInt().toString(16)
-        return "local-${targetAppId.name.lowercase(Locale.ROOT)}-$versionFingerprint-$fingerprint"
+        val packageFingerprint = targetAppId.packageName.lowercase(Locale.ROOT)
+            .hashCode().toUInt().toString(16)
+        return "local-$packageFingerprint-$fingerprint"
+    }
+
+    private data class RuleEvidence(
+        val sample: CaptureSample,
+        val primarySelector: CapturedSelector,
+        val selectors: List<CapturedSelector>,
+    )
+
+    private data class RuleGroup(
+        val primarySelector: CapturedSelector,
+        val selectors: List<CapturedSelector>,
+        val samples: List<CaptureSample>,
+    ) {
+        val uniqueEvidenceCount: Int
+            get() = samples.count { primarySelector in it.preClickUniqueSelectors }
     }
 
     private data class SelectorRank(

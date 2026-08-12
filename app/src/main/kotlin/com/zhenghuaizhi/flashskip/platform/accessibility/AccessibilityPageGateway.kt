@@ -15,10 +15,9 @@ import kotlinx.coroutines.CompletableDeferred
 
 class AccessibilityPageGateway(
     private val service: AccessibilityService,
-    targetPackages: Set<String>,
+    private val targetPackages: () -> Set<String>,
     private val currentIdentity: () -> PageIdentity?,
 ) : PageGateway {
-    private val targetPackages = targetPackages.toSet()
     private val selectorMatcher = AccessibilityNodeSelectorMatcher(service)
     private val candidateFinder = AccessibilityCandidateFinder(selectorMatcher)
 
@@ -95,7 +94,7 @@ class AccessibilityPageGateway(
         onUnique: (AccessibilityNodeInfo) -> T,
     ): CandidateSearchResult<T> {
         // 包白名单必须先于身份、根节点及任何节点读取，避免上层误调用扩大数据访问范围。
-        if (expected.packageName !in targetPackages) return CandidateSearchResult.PageChanged
+        if (expected.packageName !in targetPackages()) return CandidateSearchResult.PageChanged
         if (currentIdentity() != expected) return CandidateSearchResult.PageChanged
         val root = service.rootInActiveWindow ?: return CandidateSearchResult.None
         if (root.packageName?.toString() != expected.packageName || root.windowId != expected.windowId) {

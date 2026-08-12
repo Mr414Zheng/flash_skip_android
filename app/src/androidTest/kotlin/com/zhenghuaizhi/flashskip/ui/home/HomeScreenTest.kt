@@ -16,14 +16,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
-import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.model.ServiceStatus
 import com.zhenghuaizhi.flashskip.domain.model.TargetApp
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
-import com.zhenghuaizhi.flashskip.domain.rules.BuiltinRuleCatalog
 import com.zhenghuaizhi.flashskip.ui.theme.FlashSkipTheme
 import org.junit.Rule
 import org.junit.Test
@@ -33,19 +31,11 @@ class HomeScreenTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun unavailableRulesExposeSeparateDisabledSwitchesAndCaptureButtons() {
+    fun emptyStateExposesOneGenericCaptureButton() {
         composeRule.setContent {
             FlashSkipTheme {
                 FlashSkipScreen(
-                    state = HomeUiState(
-                        targetApps = BuiltinRuleCatalog().targets.map {
-                            targetAppUiState(
-                                target = it,
-                                enabled = false,
-                                serviceStatus = ServiceStatus.NOT_ENABLED,
-                            )
-                        },
-                    ),
+                    state = HomeUiState(),
                     onToggleApp = { _, _ -> error("Unavailable rule must not toggle") },
                     onOpenAccessibilitySettings = {},
                 )
@@ -53,17 +43,7 @@ class HomeScreenTest {
         }
 
         composeRule.onNodeWithText("FlashSkip").assertIsDisplayed()
-        listOf("QQ音乐", "淘宝", "京东").forEach { appName ->
-            composeRule
-                .onNodeWithContentDescription("${appName}自动关闭开关")
-                .assertIsNotEnabled()
-        }
-        composeRule.onAllNodes(
-            hasContentDescription("QQ音乐自动关闭开关") or
-                hasContentDescription("淘宝自动关闭开关") or
-                hasContentDescription("京东自动关闭开关"),
-        ).assertCountEquals(3)
-        composeRule.onAllNodesWithText("采集规则").assertCountEquals(3)
+        composeRule.onAllNodesWithText("采集规则").assertCountEquals(1)
     }
 
     @Test
@@ -74,9 +54,9 @@ class HomeScreenTest {
                 TargetAppRow(
                     state = targetAppUiState(
                         target = TargetApp(
-                            id = TargetAppId.QQ_MUSIC,
-                            displayName = "QQ音乐",
-                            packageName = "com.tencent.qqmusic",
+                            id = TargetAppId("com.example.music"),
+                            displayName = "示例音乐",
+                            packageName = "com.example.music",
                             ruleAvailability = RuleAvailability.Available(1),
                         ),
                         enabled = true,
@@ -91,7 +71,7 @@ class HomeScreenTest {
         fun assertDeferredState() {
             composeRule.onNodeWithText("已启用 · 服务开启后生效").assertIsDisplayed()
             composeRule
-                .onNodeWithContentDescription("QQ音乐自动关闭开关")
+                .onNodeWithContentDescription("示例音乐自动关闭开关")
                 .assertIsDisplayed()
         }
 
@@ -106,31 +86,17 @@ class HomeScreenTest {
     fun capturedStateExposesCompletionActionSeparateFromSwitch() {
         composeRule.setContent {
             FlashSkipTheme {
-                TargetAppRow(
-                    state = targetAppUiState(
-                        target = TargetApp(
-                            id = TargetAppId.QQ_MUSIC,
-                            displayName = "QQ音乐",
-                            packageName = "com.tencent.qqmusic",
-                            ruleAvailability = RuleAvailability.Unavailable,
-                        ),
-                        enabled = false,
-                        serviceStatus = ServiceStatus.RUNNING,
-                        installedVersion = AppVersion("13.2", 42),
-                        capture = CaptureUiState(
-                            phase = CapturePhase.CAPTURED,
-                            canStart = false,
-                        ),
-                    ),
-                    compactIcon = false,
-                    onToggle = {},
+                CaptureControls(
+                    state = CaptureUiState(phase = CapturePhase.CAPTURED),
+                    targetAppName = "示例音乐",
+                    onStartCapture = {},
                     onFinishCapture = {},
+                    onCancelCapture = {},
                 )
             }
         }
 
         composeRule.onNodeWithText("采集完成").assertIsEnabled()
-        composeRule.onNodeWithContentDescription("QQ音乐自动关闭开关").assertIsNotEnabled()
     }
 
     @Test
@@ -141,22 +107,12 @@ class HomeScreenTest {
                 LocalDensity provides Density(density.density, fontScale = 2f),
             ) {
                 FlashSkipTheme {
-                    TargetAppRow(
-                        state = targetAppUiState(
-                            target = TargetApp(
-                                id = TargetAppId.QQ_MUSIC,
-                                displayName = "QQ音乐",
-                                packageName = "com.tencent.qqmusic",
-                                ruleAvailability = RuleAvailability.Unavailable,
-                            ),
-                            enabled = false,
-                            serviceStatus = ServiceStatus.RUNNING,
-                            installedVersion = AppVersion("13.2", 42),
-                            capture = CaptureUiState(canStart = true),
-                        ),
-                        compactIcon = true,
-                        onToggle = {},
+                    CaptureControls(
+                        state = CaptureUiState(canStart = true),
+                        targetAppName = null,
                         onStartCapture = {},
+                        onFinishCapture = {},
+                        onCancelCapture = {},
                     )
                 }
             }
@@ -166,28 +122,26 @@ class HomeScreenTest {
     }
 
     @Test
-    fun candidateRuleCardShowsSingleSampleThreshold() {
+    fun candidateRuleCardShowsAccumulatedCaptureHistory() {
         composeRule.setContent {
             FlashSkipTheme {
                 TargetAppRow(
                     state = targetAppUiState(
                         target = TargetApp(
-                            id = TargetAppId.QQ_MUSIC,
-                            displayName = "QQ音乐",
-                            packageName = "com.tencent.qqmusic",
+                            id = TargetAppId("com.example.music"),
+                            displayName = "示例音乐",
+                            packageName = "com.example.music",
                             ruleAvailability = RuleAvailability.Unavailable,
                         ),
                         enabled = false,
                         serviceStatus = ServiceStatus.RUNNING,
-                        installedVersion = AppVersion("13.2", 42),
-                        capture = CaptureUiState(canStart = true),
                         ruleCard = RuleCardUiState(
                             status = RuleCardStatus.CANDIDATE,
                             sampleCount = 1,
+                            ruleCount = 0,
                             stableSampleCount = 1,
                             uniqueEvidenceCount = 0,
-                            version = AppVersion("13.2", 42),
-                            selector = CapturedSelector(resourceId = "com.tencent.qqmusic:id/close"),
+                            selector = CapturedSelector(resourceId = "com.example.music:id/close"),
                         ),
                     ),
                     compactIcon = false,
@@ -197,6 +151,6 @@ class HomeScreenTest {
         }
 
         composeRule.onNodeWithText("候选规则 · 1/1").assertIsDisplayed()
-        composeRule.onNodeWithText("有效样本 1/1 · 唯一性记录 0（非门槛）").assertIsDisplayed()
+        composeRule.onNodeWithText("成功采集 1 次 · 累计规则 0 条 · 唯一性记录 0").assertIsDisplayed()
     }
 }

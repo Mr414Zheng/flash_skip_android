@@ -1,6 +1,5 @@
 package com.zhenghuaizhi.flashskip.application.rulecapture
 
-import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
@@ -11,7 +10,6 @@ import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
 import com.zhenghuaizhi.flashskip.domain.ports.MonotonicClock
 import com.zhenghuaizhi.flashskip.domain.ports.RuleCaptureStore
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
-import com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -29,17 +27,13 @@ class RuleCaptureCoordinator(
     val state: Flow<RuleCaptureState> = captureStore.state
     private val sessionSequence = AtomicLong(0)
 
-    suspend fun requestStart(targetAppId: TargetAppId, appVersion: AppVersion): Long {
-        flashSkipStore.setAppEnabled(targetAppId, false)
+    suspend fun requestStart(): Long {
         val now = wallClock.currentTimeMillis()
         val sessionId = sessionSequence.updateAndGet { previous -> maxOf(now, previous + 1) }
         captureStore.update { state ->
             state.copy(
                 activeSession = CaptureSession(
                     id = sessionId,
-                    targetAppId = targetAppId,
-                    packageName = TargetAppRegistry.expectedPackage(targetAppId),
-                    appVersion = appVersion,
                     phase = CapturePhase.CONFIGURING,
                     phaseStartedAtEpochMs = now,
                     deadlineAtEpochMs = now + CONFIGURATION_TIMEOUT_MS,
@@ -75,23 +69,23 @@ class RuleCaptureCoordinator(
 
     suspend fun observeTarget(
         sessionId: Long,
-        appVersion: AppVersion,
+        targetAppId: TargetAppId,
+        targetAppName: String,
+        packageName: String,
         activityName: String,
         windowId: Int,
         enteredAtElapsedMs: Long,
     ) {
         captureStore.update { state ->
             val session = state.activeSession?.takeIf { it.id == sessionId } ?: return@update state
-            if (session.appVersion != appVersion) {
-                return@update state.copy(
-                    activeSession = failed(session, CaptureFailure.APP_VERSION_CHANGED),
-                )
-            }
             when (session.phase) {
                 CapturePhase.WAITING_FOR_TARGET -> {
                     val now = wallClock.currentTimeMillis()
                     state.copy(
                         activeSession = session.copy(
+                            targetAppId = targetAppId,
+                            targetAppName = targetAppName,
+                            packageName = packageName,
                             phase = CapturePhase.OBSERVING_CLICK,
                             phaseStartedAtEpochMs = now,
                             deadlineAtEpochMs = now + CLICK_TIMEOUT_MS,
@@ -102,12 +96,12 @@ class RuleCaptureCoordinator(
                     )
                 }
 
-                CapturePhase.OBSERVING_CLICK -> state.copy(
-                    activeSession = session.copy(
+                CapturePhase.OBSERVING_CLICK -> if (session.targetAppId == targetAppId) {
+                    state.copy(activeSession = session.copy(
                         activityName = activityName,
                         windowId = windowId,
-                    ),
-                )
+                    ))
+                } else state
 
                 else -> state
             }
@@ -122,14 +116,15 @@ class RuleCaptureCoordinator(
                     CapturePhase.OBSERVING_CLICK,
                 )
             } ?: return@update state
-            if (sample.targetAppId != session.targetAppId || sample.appVersion != session.appVersion) {
-                return@update state.copy(
-                    activeSession = failed(session, CaptureFailure.APP_VERSION_CHANGED),
-                )
+            if (session.targetAppId != null && sample.targetAppId != session.targetAppId) {
+                return@update state
             }
             val now = wallClock.currentTimeMillis()
             state.copy(
                 activeSession = session.copy(
+                    targetAppId = sample.targetAppId,
+                    targetAppName = sample.targetAppName,
+                    packageName = sample.targetAppId.packageName,
                     phase = CapturePhase.CAPTURED,
                     phaseStartedAtEpochMs = now,
                     deadlineAtEpochMs = now + COMPLETION_TIMEOUT_MS,
@@ -144,19 +139,16 @@ class RuleCaptureCoordinator(
     }
 
     suspend fun finish(sessionId: Long) {
+        val sample = captureStore.state.first().activeSession?.takeIf {
+            it.id == sessionId && it.phase == CapturePhase.CAPTURED
+        }?.pendingSample ?: return
         captureStore.update { state ->
             val session = state.activeSession?.takeIf {
                 it.id == sessionId && it.phase == CapturePhase.CAPTURED
             } ?: return@update state
-            val sample = session.pendingSample ?: return@update state
-            val sameGroup = (state.samples + sample)
-                .filter { it.targetAppId == sample.targetAppId && it.appVersion == sample.appVersion }
-                .takeLast(MAX_SAMPLES_PER_APP_VERSION)
-            val otherGroups = state.samples.filterNot {
-                it.targetAppId == sample.targetAppId && it.appVersion == sample.appVersion
-            }
-            state.copy(samples = otherGroups + sameGroup, activeSession = null)
+            state.copy(samples = state.samples + sample, activeSession = null)
         }
+        flashSkipStore.setAppEnabled(sample.targetAppId, false)
     }
 
     suspend fun cancel(sessionId: Long? = null) {
@@ -202,7 +194,9 @@ class RuleCaptureCoordinator(
     }
 
     suspend fun clearAll() {
-        TargetAppId.entries.forEach { flashSkipStore.setAppEnabled(it, false) }
+        captureStore.state.first().samples.map(CaptureSample::targetAppId).distinct().forEach {
+            flashSkipStore.setAppEnabled(it, false)
+        }
         captureStore.update { RuleCaptureState() }
     }
 
@@ -210,19 +204,6 @@ class RuleCaptureCoordinator(
         applicationScope.launch {
             val active = captureStore.state.first().activeSession ?: return@launch
             if (active.blocksAutomation) fail(active.id, CaptureFailure.SERVICE_UNAVAILABLE)
-        }
-    }
-
-    fun targetPackageChanged(targetAppId: TargetAppId) {
-        applicationScope.launch {
-            flashSkipStore.setAppEnabled(targetAppId, false)
-            captureStore.update { state ->
-                val active = state.activeSession?.takeIf { it.targetAppId == targetAppId }
-                    ?: return@update state
-                state.copy(
-                    activeSession = failed(active, CaptureFailure.APP_VERSION_CHANGED),
-                )
-            }
         }
     }
 
@@ -259,7 +240,6 @@ class RuleCaptureCoordinator(
         const val TARGET_TIMEOUT_MS = 90_000L
         const val CLICK_TIMEOUT_MS = 15_000L
         const val COMPLETION_TIMEOUT_MS = 10 * 60_000L
-        const val MAX_SAMPLES_PER_APP_VERSION = 10
         private const val CONFIGURATION_WAIT_MS = CONFIGURATION_TIMEOUT_MS + 500L
     }
 }

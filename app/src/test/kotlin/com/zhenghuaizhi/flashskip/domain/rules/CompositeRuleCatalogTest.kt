@@ -20,7 +20,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class CompositeRuleCatalogTest {
     @Test
-    fun readyLocalRulePublishesFirstAndCandidateWithdrawalLeavesBuiltin() = runTest {
+    fun successfulLocalRulesAccumulateBeforeBuiltinRules() = runTest {
         val store = FakeCaptureStore(
             RuleCaptureState(samples = (1L..2L).map(::sample)),
         )
@@ -32,7 +32,7 @@ class CompositeRuleCatalogTest {
         )
         runCurrent()
 
-        val readyRules = catalog.snapshot.value.rulesForTarget(TargetAppId.QQ_MUSIC, VERSION)
+        val readyRules = catalog.snapshot.value.rulesForTarget(TargetAppId("com.example.music"), VERSION)
         assertEquals(2, readyRules.size)
         assertTrue(readyRules.first().id.startsWith("local-"))
         assertEquals(builtin.id, readyRules.last().id)
@@ -41,14 +41,14 @@ class CompositeRuleCatalogTest {
             state.copy(samples = state.samples + divergentSample(3))
         }
         runCurrent()
-        assertEquals(
-            listOf(builtin.id),
-            catalog.snapshot.value.rulesForTarget(TargetAppId.QQ_MUSIC, VERSION).map { it.id },
-        )
+        val accumulated = catalog.snapshot.value.rulesForTarget(TargetAppId("com.example.music"), VERSION)
+        assertEquals(3, accumulated.size)
+        assertTrue(accumulated.take(2).all { it.id.startsWith("local-") })
+        assertEquals(builtin.id, accumulated.last().id)
     }
 
     @Test
-    fun versionBoundRuleNeverAppearsForAnotherVersion() = runTest {
+    fun capturedRuleRemainsAvailableForAnotherInstalledVersion() = runTest {
         val store = FakeCaptureStore(
             RuleCaptureState(samples = (1L..2L).map(::sample)),
         )
@@ -57,13 +57,14 @@ class CompositeRuleCatalogTest {
 
         assertEquals(
             1,
-            catalog.snapshot.value.rulesForTarget(TargetAppId.QQ_MUSIC, VERSION).size,
+            catalog.snapshot.value.rulesForTarget(TargetAppId("com.example.music"), VERSION).size,
         )
-        assertTrue(
+        assertEquals(
+            1,
             catalog.snapshot.value.rulesForTarget(
-                TargetAppId.QQ_MUSIC,
+                TargetAppId("com.example.music"),
                 VERSION.copy(versionCode = 99),
-            ).isEmpty(),
+            ).size,
         )
     }
 
@@ -76,20 +77,19 @@ class CompositeRuleCatalogTest {
 
     private companion object {
         val VERSION = AppVersion("13.2.0", 42)
-        val SELECTOR = CapturedSelector(resourceId = "com.tencent.qqmusic:id/close")
+        val SELECTOR = CapturedSelector(resourceId = "com.example.music:id/close")
 
         fun sample(id: Long) = captureSample(id, SELECTOR)
 
         fun divergentSample(id: Long) = captureSample(
             id,
-            CapturedSelector(resourceId = "com.tencent.qqmusic:id/dismiss"),
+            CapturedSelector(resourceId = "com.example.music:id/dismiss"),
         )
 
         fun captureSample(id: Long, selector: CapturedSelector) = CaptureSample(
             id = id,
-            targetAppId = TargetAppId.QQ_MUSIC,
-            appVersion = VERSION,
-            activityName = "com.tencent.qqmusic.activity.AppStarterActivity",
+            targetAppId = TargetAppId("com.example.music"),
+            activityName = "com.example.music.activity.AppStarterActivity",
             clickedAfterTargetMs = 1_000 + id,
             capturedAtEpochMs = 2_000 + id,
             nodes = listOf(
@@ -105,10 +105,10 @@ class CompositeRuleCatalogTest {
         )
 
         fun builtinRule() = AdRule(
-            id = "builtin-qq",
-            targetAppId = TargetAppId.QQ_MUSIC,
-            packageName = "com.tencent.qqmusic",
-            allowedActivities = setOf("com.tencent.qqmusic.activity.AppStarterActivity"),
+            id = "builtin-example",
+            targetAppId = TargetAppId("com.example.music"),
+            packageName = "com.example.music",
+            allowedActivities = setOf("com.example.music.activity.AppStarterActivity"),
             selectors = listOf(NodeSelector(resourceId = "builtin-close")),
             startupDelayMs = 0,
             cooldownMs = 10_000,

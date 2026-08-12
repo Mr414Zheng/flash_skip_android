@@ -1,9 +1,13 @@
 package com.zhenghuaizhi.flashskip.domain.model
 
-enum class TargetAppId {
-    QQ_MUSIC,
-    TAOBAO,
-    JD,
+data class TargetAppId(val packageName: String) {
+    init {
+        require(packageName.length in 3..255 && PACKAGE_NAME.matches(packageName))
+    }
+
+    private companion object {
+        val PACKAGE_NAME = Regex("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+")
+    }
 }
 
 data class TargetApp(

@@ -5,7 +5,7 @@ import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import kotlinx.coroutines.flow.Flow
 
 data class FlashSkipPreferences(
-    val enabledApps: Map<TargetAppId, Boolean> = TargetAppId.entries.associateWith { false },
+    val enabledApps: Map<TargetAppId, Boolean> = emptyMap(),
     val records: List<ActionRecord> = emptyList(),
 )
 

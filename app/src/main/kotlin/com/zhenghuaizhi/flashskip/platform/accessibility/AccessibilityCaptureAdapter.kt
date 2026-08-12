@@ -3,13 +3,13 @@ package com.zhenghuaizhi.flashskip.platform.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityEvent
 import com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCoordinator
-import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
+import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.rulecapture.ClickSemanticHint
 import com.zhenghuaizhi.flashskip.domain.rulecapture.ClickSourceRecoveryMatcher
@@ -21,21 +21,24 @@ internal class AccessibilityCaptureAdapter(
     private val service: AccessibilityService,
     private val coordinator: RuleCaptureCoordinator,
     private val scope: CoroutineScope,
-    targetPackages: Set<String>,
     private val stateProvider: () -> RuleCaptureState,
 ) {
-    private val targetPackages = targetPackages.toSet()
     private var currentIdentity: PageIdentity? = null
     private var latestUniqueSelectors: Set<CapturedSelector> = emptySet()
     private var lockedSessionId: Long? = null
     private var observedSessionId: Long? = null
     private var verifiedTargetEnteredAtElapsedMs: Long? = null
+    private var currentTargetAppName: String? = null
     private var preClickRecoverySnapshot: PreClickRecoverySnapshot? = null
     private var lastRecoveryProbeAtElapsedMs: Long? = null
     private val semanticSnapshotter = AccessibilitySemanticSnapshotter(service)
     private val probe = AccessibilityCaptureProbe(
         service = service,
-        targetPackages = targetPackages,
+        targetPackages = {
+            val packageName = stateProvider().activeSession?.packageName
+                ?: currentIdentity?.packageName
+            packageName?.let(::setOf).orEmpty()
+        },
         currentIdentity = { currentIdentity },
         semanticSnapshotter = semanticSnapshotter,
     )
@@ -47,6 +50,7 @@ internal class AccessibilityCaptureAdapter(
             lockedSessionId = null
             currentIdentity = null
             verifiedTargetEnteredAtElapsedMs = null
+            currentTargetAppName = null
             latestUniqueSelectors = emptySet()
             clearPreClickRecoverySnapshot()
         }
@@ -58,6 +62,7 @@ internal class AccessibilityCaptureAdapter(
         ) {
             currentIdentity = null
             verifiedTargetEnteredAtElapsedMs = null
+            currentTargetAppName = null
             latestUniqueSelectors = emptySet()
             clearPreClickRecoverySnapshot()
         }
@@ -65,18 +70,18 @@ internal class AccessibilityCaptureAdapter(
 
     fun onVerifiedTargetWindow(
         event: AccessibilityEvent,
+        targetAppName: String,
         activityName: String,
-        appVersion: AppVersion,
     ) {
         val state = stateProvider()
         val session = state.activeSession ?: return
         val packageName = event.packageName?.toString() ?: return
-        if (packageName !in targetPackages || packageName != session.packageName) return
-        if (session.phase !in setOf(CapturePhase.WAITING_FOR_TARGET, CapturePhase.OBSERVING_CLICK)) {
+        if (session.packageName != null && packageName != session.packageName) return
+        // 状态落盘前先在回调栈内锁住首次验证包，避免快速切换应用改写本次目标。
+        if (session.packageName == null && currentIdentity?.packageName?.let { it != packageName } == true) {
             return
         }
-        if (appVersion != session.appVersion) {
-            lockAndFail(session.id, CaptureFailure.APP_VERSION_CHANGED)
+        if (session.phase !in setOf(CapturePhase.WAITING_FOR_TARGET, CapturePhase.OBSERVING_CLICK)) {
             return
         }
         val enteredAt = session.targetEnteredAtElapsedMs ?: coordinator.elapsedRealtimeMs()
@@ -84,16 +89,19 @@ internal class AccessibilityCaptureAdapter(
             packageName = packageName,
             activityName = activityName,
             windowId = event.windowId,
-            appVersion = appVersion,
+            appVersion = null,
         )
         currentIdentity = identity
+        currentTargetAppName = targetAppName
         verifiedTargetEnteredAtElapsedMs = enteredAt
         refreshPreClickRecoverySnapshot(identity)
         refreshUniqueEvidence(state, identity)
         scope.launch {
             coordinator.observeTarget(
                 sessionId = session.id,
-                appVersion = appVersion,
+                targetAppId = TargetAppId(packageName),
+                targetAppName = targetAppName,
+                packageName = packageName,
                 activityName = activityName,
                 windowId = event.windowId,
                 enteredAtElapsedMs = enteredAt,
@@ -107,8 +115,7 @@ internal class AccessibilityCaptureAdapter(
         if (session.phase != CapturePhase.OBSERVING_CLICK) return
         val packageName = event.packageName?.toString() ?: return
         val identity = currentIdentity?.takeIf {
-            packageName in targetPackages &&
-                packageName == session.packageName &&
+            (session.packageName == null || packageName == session.packageName) &&
                 it.packageName == packageName &&
                 it.windowId == event.windowId
         } ?: return
@@ -128,9 +135,12 @@ internal class AccessibilityCaptureAdapter(
         }
         val packageName = event.packageName?.toString() ?: return
         // 包和窗口检查必须先于 event.source，确保非目标点击零节点读取。
-        if (packageName !in targetPackages || packageName != session.packageName) return
+        if (session.packageName != null && packageName != session.packageName) return
         val identity = currentIdentity
-        if (identity == null || identity.windowId != event.windowId) {
+        if (identity == null ||
+            identity.packageName != packageName ||
+            identity.windowId != event.windowId
+        ) {
             lockAndFail(session.id, CaptureFailure.ACTIVITY_UNAVAILABLE)
             return
         }
@@ -171,8 +181,8 @@ internal class AccessibilityCaptureAdapter(
         }
         val sample = CaptureSample(
             id = session.id,
-            targetAppId = session.targetAppId,
-            appVersion = session.appVersion,
+            targetAppId = session.targetAppId ?: TargetAppId(packageName),
+            targetAppName = session.targetAppName ?: currentTargetAppName ?: packageName,
             activityName = activityName.take(MAX_ACTIVITY_LENGTH),
             clickedAfterTargetMs = (coordinator.elapsedRealtimeMs() - enteredAt).coerceAtLeast(0),
             capturedAtEpochMs = coordinator.currentTimeMillis(),
@@ -234,10 +244,10 @@ internal class AccessibilityCaptureAdapter(
 
     private fun refreshUniqueEvidence(state: RuleCaptureState, identity: PageIdentity) {
         val session = state.activeSession ?: return
+        val targetAppId = session.targetAppId ?: TargetAppId(identity.packageName)
         val selectors = RuleCandidateAnalyzer.analyze(
             samples = state.samples,
-            targetAppId = session.targetAppId,
-            currentVersion = session.appVersion,
+            targetAppId = targetAppId,
         ).probeSelectors
         latestUniqueSelectors = when (val result = probe.uniqueSelectors(identity, selectors)) {
             is AccessibilityCaptureProbe.ProbeResult.Success -> result.selectors

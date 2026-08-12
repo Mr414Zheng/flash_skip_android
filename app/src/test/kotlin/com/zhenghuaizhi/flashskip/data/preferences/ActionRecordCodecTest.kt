@@ -35,19 +35,10 @@ class ActionRecordCodecTest {
     }
 
     @Test
-    fun legacyVersionOneRecordWithoutTimingRemainsReadable() {
-        val raw = """{"version":1,"records":[{"timestamp":7,"app":"TAOBAO","rule":"legacy","method":"NODE_CLICK","outcome":"CLOSED","reason":null}]}"""
+    fun legacyVersionOneRecordsAreDiscarded() {
+        val raw = """{"version":1,"records":[{"timestamp":7,"app":"LEGACY","rule":"legacy","method":"NODE_CLICK","outcome":"CLOSED","reason":null}]}"""
 
-        assertEquals(
-            ActionRecord(
-                timestampEpochMs = 7,
-                targetAppId = TargetAppId.TAOBAO,
-                ruleId = "legacy",
-                method = ActionMethod.NODE_CLICK,
-                outcome = ActionOutcome.CLOSED,
-            ),
-            ActionRecordCodec.decodeOrEmpty(raw).single(),
-        )
+        assertTrue(ActionRecordCodec.decodeOrEmpty(raw).isEmpty())
     }
 
     @Test
@@ -77,7 +68,8 @@ class ActionRecordCodecTest {
 
     private fun record(timestamp: Long) = ActionRecord(
         timestampEpochMs = timestamp,
-        targetAppId = TargetAppId.TAOBAO,
+        targetAppId = TargetAppId("com.example.mall"),
+        targetAppName = "示例商城",
         ruleId = "test-rule-$timestamp",
         method = ActionMethod.NODE_CLICK,
         outcome = ActionOutcome.CLOSED,

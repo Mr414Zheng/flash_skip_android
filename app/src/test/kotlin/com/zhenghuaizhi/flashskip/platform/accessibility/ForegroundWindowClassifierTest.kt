@@ -5,7 +5,7 @@ import org.junit.Test
 
 class ForegroundWindowClassifierTest {
     private val classifier = ForegroundWindowClassifier(
-        targetPackages = setOf(TARGET_PACKAGE),
+        targetPackages = { setOf(TARGET_PACKAGE) },
         applicationWindowType = TYPE_APPLICATION,
     )
 
@@ -58,7 +58,7 @@ class ForegroundWindowClassifierTest {
     }
 
     private companion object {
-        const val TARGET_PACKAGE = "com.tencent.qqmusic"
+        const val TARGET_PACKAGE = "com.example.music"
         const val TYPE_APPLICATION = 1
         const val TYPE_INPUT_METHOD = 2
         const val TYPE_SYSTEM = 3

@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">FlashSkip</string>
     <string name="accessibility_service_label">FlashSkip 开屏关闭服务</string>
-    <string name="accessibility_service_description">仅处理 QQ音乐、淘宝和京东；可在用户主动采集时临时读取一次点击的限长规则字段，数据只存本机且不确定时不会执行。</string>
+    <string name="accessibility_service_description">仅处理你主动采集并启用的应用；采集时临时读取一次点击的限长规则字段，数据只存本机且不确定时不会执行。</string>
 </resources>

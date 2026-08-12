@@ -10,7 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 object ActionRecordCodec {
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     fun encode(records: List<ActionRecord>): String {
         val array = JSONArray()
@@ -18,7 +18,8 @@ object ActionRecordCodec {
             array.put(
                 JSONObject()
                     .put("timestamp", record.timestampEpochMs)
-                    .put("app", record.targetAppId.name)
+                    .put("packageName", record.targetAppId.packageName)
+                    .put("appName", record.targetAppName)
                     .put("rule", record.ruleId)
                     .put("method", record.method?.name ?: JSONObject.NULL)
                     .put("outcome", record.outcome.name)
@@ -46,7 +47,8 @@ object ActionRecordCodec {
 
     private fun JSONObject.toRecord(): ActionRecord = ActionRecord(
         timestampEpochMs = getLong("timestamp"),
-        targetAppId = TargetAppId.valueOf(getString("app")),
+        targetAppId = TargetAppId(getString("packageName")),
+        targetAppName = getString("appName"),
         ruleId = getString("rule"),
         method = optionalEnum("method", ActionMethod::valueOf),
         outcome = ActionOutcome.valueOf(getString("outcome")),

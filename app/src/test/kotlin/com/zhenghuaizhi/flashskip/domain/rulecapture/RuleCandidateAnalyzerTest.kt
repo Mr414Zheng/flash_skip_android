@@ -1,6 +1,5 @@
 package com.zhenghuaizhi.flashskip.domain.rulecapture
 
-import com.zhenghuaizhi.flashskip.domain.model.AppVersion
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
@@ -17,13 +16,12 @@ class RuleCandidateAnalyzerTest {
     @Test
     fun oneStrongSampleCreatesReadyRuleWithoutUniqueProbe() {
         val selector = CapturedSelector(
-            resourceId = "com.tencent.qqmusic:id/close",
+            resourceId = "com.example.music:id/close",
             contentDescription = "关闭启动广告",
         )
         val ready = RuleCandidateAnalyzer.analyze(
             listOf(sample(1, selector, unique = false)),
-            TargetAppId.QQ_MUSIC,
-            VERSION,
+            TargetAppId("com.example.music"),
         )
         assertEquals(RuleCardStatus.READY, ready.status)
         assertEquals(1, ready.stableSampleCount)
@@ -32,7 +30,7 @@ class RuleCandidateAnalyzerTest {
         assertNotNull(ready.rule)
         val rule = requireNotNull(ready.rule)
         assertEquals(0L, rule.startupDelayMs)
-        assertEquals(VERSION, rule.targetAppVersion)
+        assertNull(rule.targetAppVersion)
     }
 
     @Test
@@ -40,8 +38,7 @@ class RuleCandidateAnalyzerTest {
         val selector = CapturedSelector(text = "关闭")
         val analysis = RuleCandidateAnalyzer.analyze(
             listOf(sample(1, selector, unique = false)),
-            TargetAppId.QQ_MUSIC,
-            VERSION,
+            TargetAppId("com.example.music"),
         )
 
         assertEquals(RuleCardStatus.CANDIDATE, analysis.status)
@@ -49,33 +46,51 @@ class RuleCandidateAnalyzerTest {
     }
 
     @Test
-    fun divergentLatestCaptureWithdrawsReadyRule() {
-        val stable = CapturedSelector(resourceId = "com.tencent.qqmusic:id/close")
-        val divergent = CapturedSelector(resourceId = "com.tencent.qqmusic:id/dismiss")
+    fun divergentSuccessfulCapturesAccumulateIndependentRules() {
+        val stable = CapturedSelector(resourceId = "com.example.music:id/close")
+        val divergent = CapturedSelector(resourceId = "com.example.music:id/dismiss")
         val samples = (1L..2L).map { sample(it, stable, unique = it == 2L) } +
             sample(3, divergent, unique = true)
 
         val analysis = RuleCandidateAnalyzer.analyze(
             samples,
-            TargetAppId.QQ_MUSIC,
-            VERSION,
+            TargetAppId("com.example.music"),
         )
 
-        assertEquals(RuleCardStatus.CANDIDATE, analysis.status)
-        assertNull(analysis.rule)
+        assertEquals(RuleCardStatus.READY, analysis.status)
+        assertEquals(2, analysis.rules.size)
+        assertEquals("com.example.music:id/dismiss", analysis.primarySelector?.resourceId)
     }
 
     @Test
-    fun differentInstalledVersionMarksExistingSamplesStale() {
-        val selector = CapturedSelector(resourceId = "com.tencent.qqmusic:id/close")
+    fun repeatedSelectorMergesEvidenceAndActivities() {
+        val selector = CapturedSelector(resourceId = "com.example.music:id/close")
+        val original = RuleCandidateAnalyzer.analyze(
+            listOf(sample(1, selector, unique = false)),
+            TargetAppId("com.example.music"),
+        )
         val analysis = RuleCandidateAnalyzer.analyze(
-            listOf(sample(1, selector, unique = true)),
-            TargetAppId.QQ_MUSIC,
-            VERSION.copy(versionCode = 43),
+            listOf(
+                sample(1, selector, unique = false),
+                sample(2, selector, unique = true).copy(
+                    activityName = "com.example.music.activity.NewStarterActivity",
+                ),
+            ),
+            TargetAppId("com.example.music"),
         )
 
-        assertEquals(RuleCardStatus.STALE, analysis.status)
-        assertEquals(0, analysis.currentVersionSampleCount)
+        assertEquals(RuleCardStatus.READY, analysis.status)
+        assertEquals(2, analysis.sampleCount)
+        assertEquals(1, analysis.rules.size)
+        assertNull(requireNotNull(analysis.rule).targetAppVersion)
+        assertEquals(
+            setOf(
+                "com.example.music.activity.AppStarterActivity",
+                "com.example.music.activity.NewStarterActivity",
+            ),
+            requireNotNull(analysis.rule).allowedActivities,
+        )
+        assertEquals(original.rule?.id, analysis.rule?.id)
     }
 
     @Test
@@ -92,15 +107,14 @@ class RuleCandidateAnalyzerTest {
     fun genericClickedTextBecomesReadyOnlyWhenScopedByStableAncestor() {
         val structural = CapturedSelector(
             text = "跳过",
-            ancestorResourceId = "com.tencent.qqmusic:id/jap",
+            ancestorResourceId = "com.example.music:id/jap",
             ancestorDistance = 1,
         )
-        val samples = listOf(qqMusicSample(id = 1, uniqueSelectors = emptyList()))
+        val samples = listOf(capturedSample(id = 1, uniqueSelectors = emptyList()))
 
         val analysis = RuleCandidateAnalyzer.analyze(
             samples,
-            TargetAppId.QQ_MUSIC,
-            VERSION,
+            TargetAppId("com.example.music"),
         )
 
         assertEquals(RuleCardStatus.READY, analysis.status)
@@ -121,7 +135,7 @@ class RuleCandidateAnalyzerTest {
             TextCondition.Exact("关闭"),
             CapturedSelector(
                 text = "关闭",
-                ancestorResourceId = "com.tencent.qqmusic:id/jap",
+                ancestorResourceId = "com.example.music:id/jap",
                 ancestorDistance = 1,
             ).toRuntimeSelector().text,
         )
@@ -138,10 +152,10 @@ class RuleCandidateAnalyzerTest {
     @Test
     fun nonClickableParentIdCannotBecomeFlatActionSelector() {
         val oldParentEvidence = CapturedSelector(
-            resourceId = "com.tencent.qqmusic:id/jap",
+            resourceId = "com.example.music:id/jap",
         )
         val samples = (1L..2L).map { id ->
-            qqMusicSample(
+            capturedSample(
                 id = id,
                 uniqueSelectors = if (id == 2L) listOf(oldParentEvidence) else emptyList(),
             )
@@ -149,8 +163,7 @@ class RuleCandidateAnalyzerTest {
 
         val analysis = RuleCandidateAnalyzer.analyze(
             samples,
-            TargetAppId.QQ_MUSIC,
-            VERSION,
+            TargetAppId("com.example.music"),
         )
 
         assertEquals(RuleCardStatus.READY, analysis.status)
@@ -167,11 +180,10 @@ class RuleCandidateAnalyzerTest {
 
     @Test
     fun oneStrongSampleWithoutUniqueProbeStillBecomesReady() {
-        val selector = CapturedSelector(resourceId = "com.tencent.qqmusic:id/close")
+        val selector = CapturedSelector(resourceId = "com.example.music:id/close")
         val analysis = RuleCandidateAnalyzer.analyze(
             listOf(sample(1, selector, unique = false)),
-            TargetAppId.QQ_MUSIC,
-            VERSION,
+            TargetAppId("com.example.music"),
         )
 
         assertEquals(RuleCardStatus.READY, analysis.status)
@@ -186,9 +198,8 @@ class RuleCandidateAnalyzerTest {
         unique: Boolean,
     ) = CaptureSample(
         id = id,
-        targetAppId = TargetAppId.QQ_MUSIC,
-        appVersion = VERSION,
-        activityName = "com.tencent.qqmusic.activity.AppStarterActivity",
+        targetAppId = TargetAppId("com.example.music"),
+        activityName = "com.example.music.activity.AppStarterActivity",
         clickedAfterTargetMs = 1_000L + id,
         capturedAtEpochMs = 10_000L + id,
         nodes = listOf(
@@ -205,14 +216,13 @@ class RuleCandidateAnalyzerTest {
         preClickUniqueSelectors = if (unique) listOf(selector) else emptyList(),
     )
 
-    private fun qqMusicSample(
+    private fun capturedSample(
         id: Long,
         uniqueSelectors: List<CapturedSelector>,
     ) = CaptureSample(
         id = id,
-        targetAppId = TargetAppId.QQ_MUSIC,
-        appVersion = VERSION,
-        activityName = "com.tencent.qqmusic.activity.AppStarterActivity",
+        targetAppId = TargetAppId("com.example.music"),
+        activityName = "com.example.music.activity.AppStarterActivity",
         clickedAfterTargetMs = 200L + id,
         capturedAtEpochMs = 20_000L + id,
         nodes = listOf(
@@ -224,15 +234,11 @@ class RuleCandidateAnalyzerTest {
                 hasUsableBounds = true,
             ),
             CapturedNode(
-                resourceId = "com.tencent.qqmusic:id/jap",
+                resourceId = "com.example.music:id/jap",
                 visibleToUser = true,
                 hasUsableBounds = true,
             ),
         ),
         preClickUniqueSelectors = uniqueSelectors,
     )
-
-    private companion object {
-        val VERSION = AppVersion("13.2.0", 42)
-    }
 }

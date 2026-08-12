@@ -31,12 +31,12 @@ class AutomationEngineForegroundTest {
     @Test
     fun outsideThenSameTargetCreatesExactlyOneNewSession() = runTest {
         val fixture = Fixture(this)
-        fixture.target(QQ_IDENTITY, 0)
+        fixture.target(MUSIC_IDENTITY, 0)
         fixture.advance(this, 120)
         assertEquals(1, fixture.gateway.queryCalls)
 
         fixture.outside(200)
-        fixture.target(QQ_IDENTITY, 300)
+        fixture.target(MUSIC_IDENTITY, 300)
         fixture.gateway.queryResults.add(QueryResult.Unique)
         fixture.gateway.clickResults.add(ClickResult.Clicked)
         fixture.advance(this, 120, clockNow = 420)
@@ -50,24 +50,24 @@ class AutomationEngineForegroundTest {
 
     @Test
     fun targetSwitchInvalidatesFirstTargetAndStartsSecondTarget() = runTest {
-        val fixture = Fixture(this, rules = listOf(QQ_RULE, TAOBAO_RULE))
-        fixture.target(QQ_IDENTITY, 0)
+        val fixture = Fixture(this, rules = listOf(MUSIC_RULE, MALL_RULE))
+        fixture.target(MUSIC_IDENTITY, 0)
         fixture.advance(this, 50)
-        fixture.target(TAOBAO_IDENTITY, 50)
+        fixture.target(MALL_IDENTITY, 50)
         fixture.gateway.queryResults.add(QueryResult.Unique)
         fixture.gateway.clickResults.add(ClickResult.Clicked)
         fixture.advance(this, 120, clockNow = 170)
         fixture.advance(this, 150, clockNow = 320)
 
-        assertEquals(listOf(TAOBAO_IDENTITY, TAOBAO_IDENTITY), fixture.gateway.queriedIdentities)
-        assertEquals(TargetAppId.TAOBAO, fixture.store.current.records.single().targetAppId)
+        assertEquals(listOf(MALL_IDENTITY, MALL_IDENTITY), fixture.gateway.queriedIdentities)
+        assertEquals(TargetAppId("com.example.mall"), fixture.store.current.records.single().targetAppId)
         fixture.engine.close()
     }
 
     @Test
     fun outsideCancelsPendingQueryWithoutRecord() = runTest {
         val fixture = Fixture(this)
-        fixture.target(QQ_IDENTITY, 0)
+        fixture.target(MUSIC_IDENTITY, 0)
         fixture.advance(this, 50)
         fixture.outside(50)
         fixture.advance(this, 200, clockNow = 250)
@@ -80,16 +80,16 @@ class AutomationEngineForegroundTest {
     @Test
     fun disabledOrUnavailableRuleDoesNotArmWithinSameForeground() = runTest {
         val disabled = Fixture(this, enabledTargets = emptySet())
-        disabled.target(QQ_IDENTITY, 0)
-        disabled.store.setAppEnabled(TargetAppId.QQ_MUSIC, true)
-        disabled.target(QQ_IDENTITY.copy(windowId = 8), 1)
+        disabled.target(MUSIC_IDENTITY, 0)
+        disabled.store.setAppEnabled(TargetAppId("com.example.music"), true)
+        disabled.target(MUSIC_IDENTITY.copy(windowId = 8), 1)
         disabled.advance(this, 200, clockNow = 201)
         assertEquals(0, disabled.gateway.queryCalls)
         disabled.engine.close()
 
         val unavailable = Fixture(this, rules = emptyList())
-        unavailable.target(QQ_IDENTITY, 300)
-        unavailable.target(QQ_IDENTITY.copy(activityName = "com.example.OtherActivity"), 301)
+        unavailable.target(MUSIC_IDENTITY, 300)
+        unavailable.target(MUSIC_IDENTITY.copy(activityName = "com.example.OtherActivity"), 301)
         unavailable.advance(this, 200, clockNow = 501)
         assertEquals(0, unavailable.gateway.queryCalls)
         unavailable.engine.close()
@@ -98,13 +98,13 @@ class AutomationEngineForegroundTest {
     @Test
     fun newEngineLifecycleStartsFromUnknown() = runTest {
         val firstLifecycle = Fixture(this)
-        firstLifecycle.target(QQ_IDENTITY, 0)
+        firstLifecycle.target(MUSIC_IDENTITY, 0)
         firstLifecycle.engine.close()
 
         val secondLifecycle = Fixture(this)
         secondLifecycle.gateway.queryResults.add(QueryResult.Unique)
         secondLifecycle.gateway.clickResults.add(ClickResult.Clicked)
-        secondLifecycle.target(QQ_IDENTITY, 1)
+        secondLifecycle.target(MUSIC_IDENTITY, 1)
         secondLifecycle.advance(this, 120, clockNow = 121)
         secondLifecycle.advance(this, 150, clockNow = 271)
 
@@ -118,15 +118,15 @@ class AutomationEngineForegroundTest {
         val fixture = Fixture(this)
         fixture.gateway.queryResults.add(QueryResult.Unique)
         fixture.gateway.clickResults.add(ClickResult.Clicked)
-        fixture.target(QQ_IDENTITY, 0)
+        fixture.target(MUSIC_IDENTITY, 0)
         fixture.advance(this, 120)
 
         fixture.clock.now = 130
-        fixture.engine.onContentChanged(QQ_IDENTITY.copy(windowId = 99), 130)
+        fixture.engine.onContentChanged(MUSIC_IDENTITY.copy(windowId = 99), 130)
         fixture.engine.awaitIdle()
         fixture.advance(this, 150, clockNow = 280)
 
-        assertEquals(listOf(QQ_IDENTITY, QQ_IDENTITY), fixture.gateway.queriedIdentities)
+        assertEquals(listOf(MUSIC_IDENTITY, MUSIC_IDENTITY), fixture.gateway.queriedIdentities)
         assertEquals(1, fixture.gateway.clickCalls)
         assertEquals(1, fixture.store.current.records.size)
         fixture.engine.close()
@@ -134,8 +134,8 @@ class AutomationEngineForegroundTest {
 
     private class Fixture(
         scope: TestScope,
-        rules: List<AdRule> = listOf(QQ_RULE),
-        enabledTargets: Set<TargetAppId> = setOf(TargetAppId.QQ_MUSIC, TargetAppId.TAOBAO),
+        rules: List<AdRule> = listOf(MUSIC_RULE),
+        enabledTargets: Set<TargetAppId> = setOf(TargetAppId("com.example.music"), TargetAppId("com.example.mall")),
     ) {
         val clock = FakeClock()
         val store = FakeStore(enabledTargets)
@@ -178,7 +178,7 @@ class AutomationEngineForegroundTest {
     private class FakeStore(enabledTargets: Set<TargetAppId>) : FlashSkipStore {
         private val state = MutableStateFlow(
             FlashSkipPreferences(
-                enabledApps = TargetAppId.entries.associateWith(enabledTargets::contains),
+                enabledApps = enabledTargets.associateWith { true },
             ),
         )
         val current: FlashSkipPreferences get() = state.value
@@ -223,25 +223,25 @@ class AutomationEngineForegroundTest {
     }
 
     private companion object {
-        val QQ_IDENTITY = PageIdentity(
-            packageName = "com.tencent.qqmusic",
-            activityName = "com.example.QqSplashActivity",
+        val MUSIC_IDENTITY = PageIdentity(
+            packageName = "com.example.music",
+            activityName = "com.example.MusicSplashActivity",
             windowId = 7,
         )
-        val TAOBAO_IDENTITY = PageIdentity(
-            packageName = "com.taobao.taobao",
-            activityName = "com.example.TaobaoSplashActivity",
+        val MALL_IDENTITY = PageIdentity(
+            packageName = "com.example.mall",
+            activityName = "com.example.MallSplashActivity",
             windowId = 9,
         )
-        val QQ_RULE = testRule(
-            id = "qq-test",
-            targetAppId = TargetAppId.QQ_MUSIC,
-            identity = QQ_IDENTITY,
+        val MUSIC_RULE = testRule(
+            id = "music-test",
+            targetAppId = TargetAppId("com.example.music"),
+            identity = MUSIC_IDENTITY,
         )
-        val TAOBAO_RULE = testRule(
-            id = "taobao-test",
-            targetAppId = TargetAppId.TAOBAO,
-            identity = TAOBAO_IDENTITY,
+        val MALL_RULE = testRule(
+            id = "mall-test",
+            targetAppId = TargetAppId("com.example.mall"),
+            identity = MALL_IDENTITY,
         )
 
         fun testRule(id: String, targetAppId: TargetAppId, identity: PageIdentity) = AdRule(
