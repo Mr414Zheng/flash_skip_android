@@ -135,8 +135,7 @@ private fun CaptureControls(
             state.installedVersion == null -> "未检测到目标应用，安装后才能采集。"
             state.capture.blockedByOtherApp -> "另一应用正在采集，请先完成或取消。"
             !state.capture.canStart -> "开启并保持 FlashSkip 无障碍服务运行后可采集。"
-            else -> "采集 ${RuleCandidateAnalyzer.REQUIRED_STABLE_SAMPLES} 次一致点击后生成本机规则；" +
-                "采集期间只点击一次。"
+            else -> "完成 1 次有效采集后生成本机规则；采集期间只点击一次。"
         }
     }
     Text(
@@ -241,7 +240,7 @@ private fun RuleCard(
             }
             Text(
                 text = "有效样本 ${card.sampleCount}/${RuleCandidateAnalyzer.REQUIRED_STABLE_SAMPLES} · " +
-                    "唯一性证据 ${card.uniqueEvidenceCount}/${RuleCandidateAnalyzer.REQUIRED_UNIQUE_PROBES}",
+                    "唯一性记录 ${card.uniqueEvidenceCount}（非门槛）",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

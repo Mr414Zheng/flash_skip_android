@@ -166,7 +166,7 @@ class HomeScreenTest {
     }
 
     @Test
-    fun candidateRuleCardShowsTwoSampleAndOneProbeThresholds() {
+    fun candidateRuleCardShowsSingleSampleThreshold() {
         composeRule.setContent {
             FlashSkipTheme {
                 TargetAppRow(
@@ -196,7 +196,7 @@ class HomeScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("候选规则 · 1/2").assertIsDisplayed()
-        composeRule.onNodeWithText("有效样本 1/2 · 唯一性证据 0/1").assertIsDisplayed()
+        composeRule.onNodeWithText("候选规则 · 1/1").assertIsDisplayed()
+        composeRule.onNodeWithText("有效样本 1/1 · 唯一性记录 0（非门槛）").assertIsDisplayed()
     }
 }

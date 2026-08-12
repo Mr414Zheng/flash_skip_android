@@ -108,7 +108,7 @@
 ### 5.4 采集控制与内联规则卡
 
 - 应用信息行下方依次放采集说明、采集/取消/完成操作和可选规则卡；不新增详情页或 Bottom Sheet。
-- 规则卡使用 `surfaceVariant`、12 dp 圆角，显示 Candidate/Ready/Stale、样本进度、唯一性证据、应用版本和限长选择器摘要。
+- 规则卡使用 `surfaceVariant`、12 dp 圆角，显示 Candidate/Ready/Stale、单次有效样本进度、非门槛唯一性记录、应用版本和限长选择器摘要。
 - 200% 字体时操作纵向排列，卡片与行高由内容撑开，关键 CTA 不得横向溢出。
 
 ## 6. ExecutionTimeline

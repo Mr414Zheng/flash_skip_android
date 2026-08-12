@@ -13,8 +13,8 @@ import com.zhenghuaizhi.flashskip.domain.rules.TargetAppRegistry
 import java.util.Locale
 
 object RuleCandidateAnalyzer {
-    const val REQUIRED_STABLE_SAMPLES = 2
-    const val REQUIRED_UNIQUE_PROBES = 1
+    const val REQUIRED_STABLE_SAMPLES = 1
+    const val REQUIRED_UNIQUE_PROBES = 0
     const val COOLDOWN_MS = 10_000L
 
     fun analyze(

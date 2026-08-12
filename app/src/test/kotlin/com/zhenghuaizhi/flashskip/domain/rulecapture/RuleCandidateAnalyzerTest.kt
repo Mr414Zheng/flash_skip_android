@@ -15,27 +15,19 @@ import org.junit.Test
 
 class RuleCandidateAnalyzerTest {
     @Test
-    fun oneSampleCreatesCandidateAndTwoStableSamplesCreateReadyRule() {
+    fun oneStrongSampleCreatesReadyRuleWithoutUniqueProbe() {
         val selector = CapturedSelector(
             resourceId = "com.tencent.qqmusic:id/close",
             contentDescription = "关闭启动广告",
         )
-        val one = RuleCandidateAnalyzer.analyze(
-            listOf(sample(1, selector, unique = true)),
-            TargetAppId.QQ_MUSIC,
-            VERSION,
-        )
-        assertEquals(RuleCardStatus.CANDIDATE, one.status)
-        assertNull(one.rule)
-
         val ready = RuleCandidateAnalyzer.analyze(
-            (1L..2L).map { sample(it, selector, unique = it == 2L) },
+            listOf(sample(1, selector, unique = false)),
             TargetAppId.QQ_MUSIC,
             VERSION,
         )
         assertEquals(RuleCardStatus.READY, ready.status)
-        assertEquals(2, ready.stableSampleCount)
-        assertEquals(1, ready.uniqueEvidenceCount)
+        assertEquals(1, ready.stableSampleCount)
+        assertEquals(0, ready.uniqueEvidenceCount)
         assertEquals(1_001L, ready.minimumClickDelayMs)
         assertNotNull(ready.rule)
         val rule = requireNotNull(ready.rule)
@@ -47,7 +39,7 @@ class RuleCandidateAnalyzerTest {
     fun genericSingleTextNeverBecomesReady() {
         val selector = CapturedSelector(text = "关闭")
         val analysis = RuleCandidateAnalyzer.analyze(
-            (1L..2L).map { sample(it, selector, unique = true) },
+            listOf(sample(1, selector, unique = false)),
             TargetAppId.QQ_MUSIC,
             VERSION,
         )
@@ -103,12 +95,7 @@ class RuleCandidateAnalyzerTest {
             ancestorResourceId = "com.tencent.qqmusic:id/jap",
             ancestorDistance = 1,
         )
-        val samples = (1L..2L).map { id ->
-            qqMusicSample(
-                id = id,
-                uniqueSelectors = if (id == 2L) listOf(structural) else emptyList(),
-            )
-        }
+        val samples = listOf(qqMusicSample(id = 1, uniqueSelectors = emptyList()))
 
         val analysis = RuleCandidateAnalyzer.analyze(
             samples,
@@ -166,28 +153,31 @@ class RuleCandidateAnalyzerTest {
             VERSION,
         )
 
-        assertEquals(RuleCardStatus.CANDIDATE, analysis.status)
+        assertEquals(RuleCardStatus.READY, analysis.status)
         assertEquals(0, analysis.uniqueEvidenceCount)
-        assertNull(analysis.rule)
+        assertNotNull(analysis.rule)
         assertFalse(
-            RuleCandidateAnalyzer.selectorCandidates(samples.first().nodes)
-                .contains(oldParentEvidence),
+            requireNotNull(analysis.rule).selectors.any {
+                it.resourceId == oldParentEvidence.resourceId &&
+                    it.text == null &&
+                    it.contentDescription == null
+            },
         )
     }
 
     @Test
-    fun twoStableSamplesWithoutUniqueProbeRemainCandidate() {
+    fun oneStrongSampleWithoutUniqueProbeStillBecomesReady() {
         val selector = CapturedSelector(resourceId = "com.tencent.qqmusic:id/close")
         val analysis = RuleCandidateAnalyzer.analyze(
-            (1L..2L).map { sample(it, selector, unique = false) },
+            listOf(sample(1, selector, unique = false)),
             TargetAppId.QQ_MUSIC,
             VERSION,
         )
 
-        assertEquals(RuleCardStatus.CANDIDATE, analysis.status)
-        assertEquals(2, analysis.stableSampleCount)
+        assertEquals(RuleCardStatus.READY, analysis.status)
+        assertEquals(1, analysis.stableSampleCount)
         assertEquals(0, analysis.uniqueEvidenceCount)
-        assertNull(analysis.rule)
+        assertNotNull(analysis.rule)
     }
 
     private fun sample(
