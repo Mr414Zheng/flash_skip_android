@@ -11,6 +11,7 @@ import com.zhenghuaizhi.flashskip.domain.automation.ForegroundSignal
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowRecognitionOutcome
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     private var captureConfigurationPackage: String? = null
     private var captureConfigured = false
     private var automationPaused = false
+    private val targetWindowDiagnosticsTracker = TargetWindowDiagnosticsTracker()
 
     @Volatile
     private var latestIdentity: PageIdentity? = null
@@ -46,6 +48,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         serviceScope?.cancel()
         latestIdentity = null
         latestCaptureState = RuleCaptureState()
+        targetWindowDiagnosticsTracker.reset()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val gateway = AccessibilityPageGateway(this, ::currentTargetPackages) { latestIdentity }
         serviceScope = scope
@@ -64,6 +67,12 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             coordinator = container.ruleCaptureCoordinator,
             scope = scope,
             stateProvider = { latestCaptureState },
+            targetWindowDiagnosticsProvider = { sessionId ->
+                targetWindowDiagnosticsTracker.snapshot(
+                    expectedSessionId = sessionId,
+                    nowElapsedMs = AndroidMonotonicClock.elapsedRealtimeMs(),
+                )
+            },
         )
         restoreDefaultEventConfiguration()
         observeCaptureState(scope)
@@ -85,27 +94,98 @@ class FlashSkipAccessibilityService : AccessibilityService() {
 
     private fun handleCaptureEvent(event: AccessibilityEvent) {
         val session = latestCaptureState.activeSession ?: return
-        val packageName = event.packageName?.toString() ?: return
-        if (session.packageName != null && packageName != session.packageName) return
-        if (session.packageName == null && packageName in captureIgnoredPackages()) return
+        val occurredAt = AndroidMonotonicClock.elapsedRealtimeMs()
+        val packageName = event.packageName?.toString() ?: run {
+            targetWindowDiagnosticsTracker.recordMissingPackage()
+            return
+        }
+        if (session.packageName != null && packageName != session.packageName) {
+            targetWindowDiagnosticsTracker.recordIgnoredPackage()
+            return
+        }
+        if (session.packageName == null && packageName in captureIgnoredPackages()) {
+            targetWindowDiagnosticsTracker.recordIgnoredPackage()
+            return
+        }
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                val metadata = snapshotWindowMetadata() ?: return
-                val activeWindow = metadata.singleOrNull { it.id == event.windowId }
-                if (activeWindow?.isActive != true ||
-                    activeWindow.type != AccessibilityWindowInfo.TYPE_APPLICATION
-                ) return
+                val className = event.className?.toString()
+                val metadata = snapshotWindowMetadata()
+                if (metadata == null) {
+                    targetWindowDiagnosticsTracker.recordWindowState(
+                        packageName = packageName,
+                        className = className,
+                        windowId = event.windowId,
+                        windowCount = null,
+                        matchingWindowCount = null,
+                        matchingWindowType = null,
+                        matchingWindowActive = null,
+                        outcome = TargetWindowRecognitionOutcome.WINDOW_METADATA_UNAVAILABLE,
+                        occurredAtElapsedMs = occurredAt,
+                    )
+                    return
+                }
+                val matchingWindows = metadata.filter { it.id == event.windowId }
+                val activeWindow = matchingWindows.singleOrNull()
+                val boundaryOutcome = when {
+                    matchingWindows.isEmpty() ->
+                        TargetWindowRecognitionOutcome.EVENT_WINDOW_NOT_FOUND
+                    matchingWindows.size > 1 ->
+                        TargetWindowRecognitionOutcome.EVENT_WINDOW_AMBIGUOUS
+                    activeWindow?.isActive != true ->
+                        TargetWindowRecognitionOutcome.WINDOW_NOT_ACTIVE
+                    activeWindow.type != AccessibilityWindowInfo.TYPE_APPLICATION ->
+                        TargetWindowRecognitionOutcome.NON_APPLICATION_WINDOW
+                    else -> null
+                }
+                if (boundaryOutcome != null) {
+                    targetWindowDiagnosticsTracker.recordWindowState(
+                        packageName = packageName,
+                        className = className,
+                        windowId = event.windowId,
+                        windowCount = metadata.size,
+                        matchingWindowCount = matchingWindows.size,
+                        matchingWindowType = activeWindow?.type,
+                        matchingWindowActive = activeWindow?.isActive,
+                        outcome = boundaryOutcome,
+                        occurredAtElapsedMs = occurredAt,
+                    )
+                    return
+                }
                 val activityName = container.targetAppVersionReader.verifiedActivity(
                     packageName = packageName,
-                    className = event.className?.toString(),
-                ) ?: return
+                    className = className,
+                )
+                targetWindowDiagnosticsTracker.recordWindowState(
+                    packageName = packageName,
+                    className = className,
+                    windowId = event.windowId,
+                    windowCount = metadata.size,
+                    matchingWindowCount = matchingWindows.size,
+                    matchingWindowType = activeWindow?.type,
+                    matchingWindowActive = activeWindow?.isActive,
+                    outcome = if (activityName == null) {
+                        TargetWindowRecognitionOutcome.ACTIVITY_UNVERIFIED
+                    } else {
+                        TargetWindowRecognitionOutcome.VERIFIED
+                    },
+                    occurredAtElapsedMs = occurredAt,
+                )
+                if (activityName == null) return
                 val appName = container.targetAppVersionReader.displayNameFor(packageName)
                     ?: packageName
                 captureAdapter?.onVerifiedTargetWindow(event, appName, activityName)
             }
 
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> captureAdapter?.onContentChanged(event)
-            AccessibilityEvent.TYPE_VIEW_CLICKED -> captureAdapter?.onClicked(event)
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                targetWindowDiagnosticsTracker.recordContentChanged(packageName, occurredAt)
+                captureAdapter?.onContentChanged(event)
+            }
+
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                targetWindowDiagnosticsTracker.recordViewClicked(packageName, occurredAt)
+                captureAdapter?.onClicked(event)
+            }
             else -> Unit
         }
     }
@@ -156,6 +236,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         scope.launch {
             container.ruleCaptureCoordinator.state.collect { state ->
                 latestCaptureState = state
+                targetWindowDiagnosticsTracker.onSessionChanged(state.activeSession?.id)
                 captureAdapter?.onStateChanged(state)
                 scheduleExpiry(state)
                 val session = state.activeSession
@@ -248,7 +329,11 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         val session = state.activeSession?.takeUnless { it.phase == CapturePhase.FAILED } ?: return
         captureExpiryJob = serviceScope?.launch {
             delay((session.deadlineAtEpochMs - AndroidWallClock.currentTimeMillis()).coerceAtLeast(0))
-            container.ruleCaptureCoordinator.expireActive()
+            val targetWindowDiagnostics = targetWindowDiagnosticsTracker.snapshot(
+                expectedSessionId = session.id,
+                nowElapsedMs = AndroidMonotonicClock.elapsedRealtimeMs(),
+            )
+            container.ruleCaptureCoordinator.expireActive(targetWindowDiagnostics)
         }
     }
 
@@ -290,6 +375,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         captureConfigurationPackage = null
         captureConfigured = false
         automationPaused = false
+        targetWindowDiagnosticsTracker.reset()
         super.onDestroy()
     }
 

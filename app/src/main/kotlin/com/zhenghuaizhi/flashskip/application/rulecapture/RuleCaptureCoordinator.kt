@@ -1,11 +1,13 @@
 package com.zhenghuaizhi.flashskip.application.rulecapture
 
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
 import com.zhenghuaizhi.flashskip.domain.ports.MonotonicClock
 import com.zhenghuaizhi.flashskip.domain.ports.RuleCaptureStore
@@ -158,14 +160,26 @@ class RuleCaptureCoordinator(
         }
     }
 
-    suspend fun fail(sessionId: Long, failure: CaptureFailure) {
+    suspend fun fail(
+        sessionId: Long,
+        failure: CaptureFailure,
+        diagnostics: CaptureFailureDiagnostics? = null,
+        targetWindowDiagnostics: TargetWindowDiagnostics? = null,
+    ) {
         captureStore.update { state ->
             val session = state.activeSession?.takeIf { it.id == sessionId } ?: return@update state
-            state.copy(activeSession = failed(session, failure))
+            state.copy(
+                activeSession = failed(
+                    session = session,
+                    failure = failure,
+                    diagnostics = diagnostics,
+                    targetWindowDiagnostics = targetWindowDiagnostics,
+                ),
+            )
         }
     }
 
-    suspend fun expireActive() {
+    suspend fun expireActive(targetWindowDiagnostics: TargetWindowDiagnostics? = null) {
         val now = wallClock.currentTimeMillis()
         captureStore.update { state ->
             val session = state.activeSession ?: return@update state
@@ -179,7 +193,13 @@ class RuleCaptureCoordinator(
                 CapturePhase.CAPTURED -> CaptureFailure.COMPLETION_TIMEOUT
                 CapturePhase.FAILED -> return@update state
             }
-            state.copy(activeSession = failed(session, failure))
+            state.copy(
+                activeSession = failed(
+                    session = session,
+                    failure = failure,
+                    targetWindowDiagnostics = targetWindowDiagnostics,
+                ),
+            )
         }
     }
 
@@ -224,7 +244,12 @@ class RuleCaptureCoordinator(
         }
     }
 
-    private fun failed(session: CaptureSession, failure: CaptureFailure): CaptureSession {
+    private fun failed(
+        session: CaptureSession,
+        failure: CaptureFailure,
+        diagnostics: CaptureFailureDiagnostics? = null,
+        targetWindowDiagnostics: TargetWindowDiagnostics? = null,
+    ): CaptureSession {
         val now = wallClock.currentTimeMillis()
         return session.copy(
             phase = CapturePhase.FAILED,
@@ -232,6 +257,8 @@ class RuleCaptureCoordinator(
             deadlineAtEpochMs = now,
             pendingSample = null,
             failure = failure,
+            failureDiagnostics = diagnostics,
+            targetWindowDiagnostics = targetWindowDiagnostics,
         )
     }
 

@@ -1,11 +1,15 @@
 package com.zhenghuaizhi.flashskip.application.rulecapture
 
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowRecognitionOutcome
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipPreferences
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
 import com.zhenghuaizhi.flashskip.domain.ports.MonotonicClock
@@ -65,6 +69,55 @@ class RuleCaptureCoordinatorTest {
         assertEquals(11, fixture.captureStore.state.value.samples.size)
     }
 
+    @Test
+    fun failedCapturePreservesStructuredDiagnostics() = runTest {
+        val fixture = Fixture(this)
+        val sessionId = fixture.coordinator.requestStart()
+        val diagnostics = CaptureFailureDiagnostics(
+            sourceAvailable = false,
+            eventTextCount = 0,
+            eventHasContentDescription = false,
+            lastWindowVerifiedAgeMs = 750,
+        )
+        val targetWindowDiagnostics = TargetWindowDiagnostics(
+            windowStateEventCount = 1,
+            lastOutcome = TargetWindowRecognitionOutcome.ACTIVITY_UNVERIFIED,
+        )
+
+        fixture.coordinator.fail(
+            sessionId,
+            CaptureFailure.CLICK_SOURCE_UNAVAILABLE,
+            diagnostics,
+            targetWindowDiagnostics,
+        )
+
+        val failed = requireNotNull(fixture.captureStore.state.value.activeSession)
+        assertEquals(CapturePhase.FAILED, failed.phase)
+        assertEquals(CaptureFailure.CLICK_SOURCE_UNAVAILABLE, failed.failure)
+        assertEquals(diagnostics, failed.failureDiagnostics)
+        assertEquals(targetWindowDiagnostics, failed.targetWindowDiagnostics)
+    }
+
+    @Test
+    fun targetTimeoutPreservesWindowRecognitionDiagnostics() = runTest {
+        val fixture = Fixture(this)
+        val sessionId = fixture.coordinator.requestStart()
+        fixture.coordinator.markConfigured(sessionId)
+        fixture.clock.wallNowMs += RuleCaptureCoordinator.TARGET_TIMEOUT_MS
+        val diagnostics = TargetWindowDiagnostics(
+            windowStateEventCount = 1,
+            lastPackageName = "com.example.maps",
+            lastClassName = "android.view.View",
+            lastOutcome = TargetWindowRecognitionOutcome.ACTIVITY_UNVERIFIED,
+        )
+
+        fixture.coordinator.expireActive(diagnostics)
+
+        val failed = requireNotNull(fixture.captureStore.state.value.activeSession)
+        assertEquals(CaptureFailure.TARGET_TIMEOUT, failed.failure)
+        assertEquals(diagnostics, failed.targetWindowDiagnostics)
+    }
+
     private class Fixture(scope: kotlinx.coroutines.CoroutineScope) {
         val captureStore = FakeCaptureStore()
         val flashStore = FakeFlashStore()
@@ -91,8 +144,9 @@ class RuleCaptureCoordinatorTest {
     }
 
     private class FakeClock : MonotonicClock, WallClock {
+        var wallNowMs = 1_000L
         override fun elapsedRealtimeMs(): Long = 1_500
-        override fun currentTimeMillis(): Long = 1_000
+        override fun currentTimeMillis(): Long = wallNowMs
     }
 
     private companion object {

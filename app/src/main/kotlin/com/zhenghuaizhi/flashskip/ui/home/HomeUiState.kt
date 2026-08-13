@@ -2,10 +2,12 @@ package com.zhenghuaizhi.flashskip.ui.home
 
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.model.ServiceStatus
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.TargetApp
 import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
 
@@ -31,6 +33,8 @@ data class TargetAppUiState(
 data class CaptureUiState(
     val phase: CapturePhase? = null,
     val failure: CaptureFailure? = null,
+    val failureDiagnostics: CaptureFailureDiagnostics? = null,
+    val targetWindowDiagnostics: TargetWindowDiagnostics? = null,
     val canStart: Boolean = false,
 )
 

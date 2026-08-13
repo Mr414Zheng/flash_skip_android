@@ -4,6 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityNodeInfo
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
+import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryOutcome
+import com.zhenghuaizhi.flashskip.domain.model.TraversalLimitReason
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.rulecapture.ClickSemanticHint
 import com.zhenghuaizhi.flashskip.domain.rulecapture.ClickSourceRecoveryMatcher
@@ -76,39 +79,90 @@ internal class AccessibilityCaptureProbe(
         expected: PageIdentity,
         hint: ClickSemanticHint,
     ): RecoveryResult {
+        val startedAt = AndroidMonotonicClock.elapsedRealtimeMs()
         // 恢复路径仍遵守与自动化 Gateway 相同的包和窗口边界，不能因 source 为空而放宽。
-        if (expected.packageName !in targetPackages()) return RecoveryResult.PageChanged
-        if (currentIdentity() != expected) return RecoveryResult.PageChanged
-        val root = service.rootInActiveWindow ?: return RecoveryResult.NoRoot
+        if (expected.packageName !in targetPackages()) {
+            return RecoveryResult.Failure(
+                diagnostics(ClickRecoveryOutcome.OUTSIDE_TARGETS, startedAt),
+            )
+        }
+        if (currentIdentity() != expected) {
+            return RecoveryResult.Failure(
+                diagnostics(ClickRecoveryOutcome.IDENTITY_CHANGED, startedAt),
+            )
+        }
+        val root = service.rootInActiveWindow ?: return RecoveryResult.Failure(
+            diagnostics(ClickRecoveryOutcome.NO_ROOT, startedAt),
+        )
         if (root.packageName?.toString() != expected.packageName || root.windowId != expected.windowId) {
             root.recycle()
-            return RecoveryResult.PageChanged
+            return RecoveryResult.Failure(
+                diagnostics(ClickRecoveryOutcome.ROOT_MISMATCH, startedAt),
+            )
         }
 
         val queue = ArrayDeque<NodeAtDepth>().apply { add(NodeAtDepth(root, 0)) }
         var recovered: List<CapturedNode>? = null
         var ambiguous = false
         var visited = 0
-        val startedAt = AndroidMonotonicClock.elapsedRealtimeMs()
+        var maxDepth = 0
+        var semanticNodes = 0
+        var matchedNodes = 0
+        var knownDismissNodes = 0
+        var selectorCandidateNodes = 0
         try {
             while (queue.isNotEmpty() && !ambiguous) {
                 val item = queue.removeFirst()
                 val node = item.node
                 visited++
-                if (visited > MAX_NODES ||
-                    item.depth > MAX_DEPTH ||
-                    AndroidMonotonicClock.elapsedRealtimeMs() - startedAt > MAX_TRAVERSAL_MS
-                ) {
+                maxDepth = maxOf(maxDepth, item.depth)
+                val limitReason = when {
+                    visited > MAX_NODES -> TraversalLimitReason.NODE_COUNT
+                    item.depth > MAX_DEPTH -> TraversalLimitReason.DEPTH
+                    AndroidMonotonicClock.elapsedRealtimeMs() - startedAt > MAX_TRAVERSAL_MS ->
+                        TraversalLimitReason.TIME
+                    else -> null
+                }
+                if (limitReason != null) {
                     node.recycle()
-                    return RecoveryResult.TraversalLimit
+                    return RecoveryResult.Failure(
+                        diagnostics(
+                            outcome = ClickRecoveryOutcome.TRAVERSAL_LIMIT,
+                            startedAt = startedAt,
+                            visitedNodeCount = visited,
+                            maxDepth = maxDepth,
+                            semanticNodeCount = semanticNodes,
+                            matchedNodeCount = matchedNodes,
+                            knownDismissNodeCount = knownDismissNodes,
+                            selectorCandidateNodeCount = selectorCandidateNodes,
+                            traversalLimitReason = limitReason,
+                        ),
+                    )
                 }
                 val snapshot = semanticSnapshotter.snapshot(node, expected.packageName)
+                if (snapshot != null &&
+                    snapshot.visibleToUser &&
+                    (snapshot.resourceId != null ||
+                        snapshot.text != null ||
+                        snapshot.contentDescription != null)
+                ) {
+                    semanticNodes++
+                }
+                if (snapshot != null && ClickSourceRecoveryMatcher.matches(
+                        snapshot,
+                        ClickSemanticHint(),
+                    )
+                ) {
+                    knownDismissNodes++
+                }
                 if (snapshot != null && ClickSourceRecoveryMatcher.matches(snapshot, hint)) {
+                    matchedNodes++
                     val chain = semanticSnapshotter.copySemanticChain(
                         AccessibilityNodeInfo.obtain(node),
                         expected.packageName,
                     )
                     if (RuleCandidateAnalyzer.selectorCandidates(chain).isNotEmpty()) {
+                        selectorCandidateNodes++
                         if (recovered == null) recovered = chain else ambiguous = true
                     }
                 }
@@ -121,15 +175,52 @@ internal class AccessibilityCaptureProbe(
                 }
                 node.recycle()
             }
-            return when {
-                ambiguous -> RecoveryResult.Ambiguous
-                recovered != null -> RecoveryResult.Success(requireNotNull(recovered))
-                else -> RecoveryResult.NoMatch
+            val outcome = when {
+                ambiguous -> ClickRecoveryOutcome.AMBIGUOUS
+                recovered != null -> ClickRecoveryOutcome.SUCCESS
+                else -> ClickRecoveryOutcome.NO_MATCH
+            }
+            val resultDiagnostics = diagnostics(
+                outcome = outcome,
+                startedAt = startedAt,
+                visitedNodeCount = visited,
+                maxDepth = maxDepth,
+                semanticNodeCount = semanticNodes,
+                matchedNodeCount = matchedNodes,
+                knownDismissNodeCount = knownDismissNodes,
+                selectorCandidateNodeCount = selectorCandidateNodes,
+            )
+            return if (recovered != null && !ambiguous) {
+                RecoveryResult.Success(requireNotNull(recovered), resultDiagnostics)
+            } else {
+                RecoveryResult.Failure(resultDiagnostics)
             }
         } finally {
             while (queue.isNotEmpty()) queue.removeFirst().node.recycle()
         }
     }
+
+    private fun diagnostics(
+        outcome: ClickRecoveryOutcome,
+        startedAt: Long,
+        visitedNodeCount: Int = 0,
+        maxDepth: Int = 0,
+        semanticNodeCount: Int = 0,
+        matchedNodeCount: Int = 0,
+        knownDismissNodeCount: Int = 0,
+        selectorCandidateNodeCount: Int = 0,
+        traversalLimitReason: TraversalLimitReason? = null,
+    ) = ClickRecoveryDiagnostics(
+        outcome = outcome,
+        visitedNodeCount = visitedNodeCount,
+        maxDepth = maxDepth,
+        elapsedMs = (AndroidMonotonicClock.elapsedRealtimeMs() - startedAt).coerceAtLeast(0),
+        semanticNodeCount = semanticNodeCount,
+        matchedNodeCount = matchedNodeCount,
+        knownDismissNodeCount = knownDismissNodeCount,
+        selectorCandidateNodeCount = selectorCandidateNodeCount,
+        traversalLimitReason = traversalLimitReason,
+    )
 
     private data class NodeAtDepth(val node: AccessibilityNodeInfo, val depth: Int)
 
@@ -141,15 +232,16 @@ internal class AccessibilityCaptureProbe(
     }
 
     sealed interface RecoveryResult {
+        val diagnostics: ClickRecoveryDiagnostics
+
         data class Success(
             val nodes: List<CapturedNode>,
+            override val diagnostics: ClickRecoveryDiagnostics,
         ) : RecoveryResult
 
-        data object NoRoot : RecoveryResult
-        data object PageChanged : RecoveryResult
-        data object TraversalLimit : RecoveryResult
-        data object NoMatch : RecoveryResult
-        data object Ambiguous : RecoveryResult
+        data class Failure(
+            override val diagnostics: ClickRecoveryDiagnostics,
+        ) : RecoveryResult
     }
 
     private companion object {

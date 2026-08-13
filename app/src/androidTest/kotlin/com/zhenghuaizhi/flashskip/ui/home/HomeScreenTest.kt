@@ -16,12 +16,16 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.model.ServiceStatus
 import com.zhenghuaizhi.flashskip.domain.model.TargetApp
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowRecognitionOutcome
 import com.zhenghuaizhi.flashskip.ui.theme.FlashSkipTheme
 import org.junit.Rule
 import org.junit.Test
@@ -119,6 +123,40 @@ class HomeScreenTest {
         }
 
         composeRule.onNodeWithText("采集规则").assertIsDisplayed().assertIsEnabled()
+    }
+
+    @Test
+    fun failedCaptureShowsLocalStructuredDiagnostics() {
+        composeRule.setContent {
+            FlashSkipTheme {
+                CaptureControls(
+                    state = CaptureUiState(
+                        phase = CapturePhase.FAILED,
+                        failure = CaptureFailure.CLICK_SOURCE_UNAVAILABLE,
+                        failureDiagnostics = CaptureFailureDiagnostics(
+                            sourceAvailable = false,
+                            eventTextCount = 0,
+                            eventHasContentDescription = false,
+                        ),
+                        targetWindowDiagnostics = TargetWindowDiagnostics(
+                            windowStateEventCount = 1,
+                            lastPackageName = "com.example.maps",
+                            lastOutcome = TargetWindowRecognitionOutcome.ACTIVITY_UNVERIFIED,
+                        ),
+                        canStart = true,
+                    ),
+                    targetAppName = "示例地图",
+                    onStartCapture = {},
+                    onFinishCapture = {},
+                    onCancelCapture = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("本地诊断").assertIsDisplayed()
+        composeRule.onNodeWithText("目标窗口", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("包名：com.example.maps", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("点击源：为空", substring = true).assertIsDisplayed()
     }
 
     @Test

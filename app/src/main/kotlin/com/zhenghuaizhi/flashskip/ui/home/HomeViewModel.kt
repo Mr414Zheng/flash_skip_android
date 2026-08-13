@@ -85,6 +85,8 @@ class HomeViewModel(
             capture = CaptureUiState(
                 phase = activeSession?.phase,
                 failure = activeSession?.failure,
+                failureDiagnostics = activeSession?.failureDiagnostics,
+                targetWindowDiagnostics = activeSession?.targetWindowDiagnostics,
                 canStart = serviceStatus == ServiceStatus.RUNNING &&
                     (activeSession == null || activeSession.phase == CapturePhase.FAILED),
             ),

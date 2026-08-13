@@ -1,12 +1,21 @@
 package com.zhenghuaizhi.flashskip.data.preferences
 
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
+import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryOutcome
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
+import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryOutcome
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowRecognitionOutcome
+import com.zhenghuaizhi.flashskip.domain.model.TraversalLimitReason
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
@@ -52,6 +61,65 @@ class RuleCaptureCodecTest {
         val encoded = RuleCaptureCodec.encode(RuleCaptureState(samples = listOf(sample(7))))
 
         assertFalse(encoded.contains("\"appVersion\""))
+    }
+
+    @Test
+    fun roundTripPreservesStructuredFailureDiagnostics() {
+        val diagnostics = CaptureFailureDiagnostics(
+            sourceAvailable = false,
+            eventTextCount = 1,
+            eventHasContentDescription = false,
+            immediateRecovery = ClickRecoveryDiagnostics(
+                outcome = ClickRecoveryOutcome.TRAVERSAL_LIMIT,
+                visitedNodeCount = 501,
+                maxDepth = 17,
+                elapsedMs = 82,
+                semanticNodeCount = 420,
+                matchedNodeCount = 0,
+                knownDismissNodeCount = 1,
+                selectorCandidateNodeCount = 0,
+                traversalLimitReason = TraversalLimitReason.NODE_COUNT,
+            ),
+            preClickProbe = ClickRecoveryDiagnostics(
+                outcome = ClickRecoveryOutcome.NO_MATCH,
+                visitedNodeCount = 300,
+                maxDepth = 12,
+                elapsedMs = 45,
+                semanticNodeCount = 250,
+            ),
+            snapshotRecovery = SnapshotRecoveryDiagnostics(
+                outcome = SnapshotRecoveryOutcome.NOT_AVAILABLE,
+            ),
+            lastWindowVerifiedAgeMs = 1_500,
+            lastContentChangedAgeMs = null,
+        )
+        val state = RuleCaptureState(
+            activeSession = CaptureSession(
+                id = 9,
+                targetAppId = TargetAppId("com.example.maps"),
+                packageName = "com.example.maps",
+                phase = CapturePhase.FAILED,
+                phaseStartedAtEpochMs = 500,
+                deadlineAtEpochMs = 500,
+                failure = CaptureFailure.CLICK_SOURCE_UNAVAILABLE,
+                failureDiagnostics = diagnostics,
+                targetWindowDiagnostics = TargetWindowDiagnostics(
+                    windowStateEventCount = 2,
+                    contentChangedEventCount = 8,
+                    lastPackageName = "com.example.maps",
+                    lastClassName = "com.example.maps.MainActivity",
+                    lastEventWindowId = 4,
+                    lastWindowCount = 3,
+                    lastMatchingWindowCount = 1,
+                    lastMatchingWindowType = 1,
+                    lastMatchingWindowActive = true,
+                    lastOutcome = TargetWindowRecognitionOutcome.VERIFIED,
+                    lastEventAgeMs = 25,
+                ),
+            ),
+        )
+
+        assertEquals(state, RuleCaptureCodec.decodeOrEmpty(RuleCaptureCodec.encode(state)))
     }
 
     private fun sample(id: Long) = CaptureSample(

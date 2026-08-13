@@ -1,13 +1,21 @@
 package com.zhenghuaizhi.flashskip.data.preferences
 
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
+import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryOutcome
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
+import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryOutcome
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowRecognitionOutcome
+import com.zhenghuaizhi.flashskip.domain.model.TraversalLimitReason
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -45,6 +53,51 @@ object RuleCaptureCodec {
         .putNullable("targetEnteredAtElapsedMs", targetEnteredAtElapsedMs)
         .putNullable("pendingSample", pendingSample?.toJson())
         .putNullable("failure", failure?.name)
+        .putNullable("failureDiagnostics", failureDiagnostics?.toJson())
+        .putNullable("targetWindowDiagnostics", targetWindowDiagnostics?.toJson())
+
+    private fun CaptureFailureDiagnostics.toJson() = JSONObject()
+        .put("sourceAvailable", sourceAvailable)
+        .put("eventTextCount", eventTextCount)
+        .put("eventHasContentDescription", eventHasContentDescription)
+        .put("copiedNodeCount", copiedNodeCount)
+        .put("selectorCandidateCount", selectorCandidateCount)
+        .putNullable("immediateRecovery", immediateRecovery?.toJson())
+        .putNullable("preClickProbe", preClickProbe?.toJson())
+        .putNullable("snapshotRecovery", snapshotRecovery?.toJson())
+        .putNullable("lastWindowVerifiedAgeMs", lastWindowVerifiedAgeMs)
+        .putNullable("lastContentChangedAgeMs", lastContentChangedAgeMs)
+
+    private fun ClickRecoveryDiagnostics.toJson() = JSONObject()
+        .put("outcome", outcome.name)
+        .put("visitedNodeCount", visitedNodeCount)
+        .put("maxDepth", maxDepth)
+        .put("elapsedMs", elapsedMs)
+        .put("semanticNodeCount", semanticNodeCount)
+        .put("matchedNodeCount", matchedNodeCount)
+        .put("knownDismissNodeCount", knownDismissNodeCount)
+        .put("selectorCandidateNodeCount", selectorCandidateNodeCount)
+        .putNullable("traversalLimitReason", traversalLimitReason?.name)
+
+    private fun SnapshotRecoveryDiagnostics.toJson() = JSONObject()
+        .put("outcome", outcome.name)
+        .putNullable("ageMs", ageMs)
+
+    private fun TargetWindowDiagnostics.toJson() = JSONObject()
+        .put("windowStateEventCount", windowStateEventCount)
+        .put("contentChangedEventCount", contentChangedEventCount)
+        .put("viewClickedEventCount", viewClickedEventCount)
+        .put("ignoredPackageEventCount", ignoredPackageEventCount)
+        .put("missingPackageEventCount", missingPackageEventCount)
+        .putNullable("lastPackageName", lastPackageName)
+        .putNullable("lastClassName", lastClassName)
+        .putNullable("lastEventWindowId", lastEventWindowId)
+        .putNullable("lastWindowCount", lastWindowCount)
+        .putNullable("lastMatchingWindowCount", lastMatchingWindowCount)
+        .putNullable("lastMatchingWindowType", lastMatchingWindowType)
+        .putNullable("lastMatchingWindowActive", lastMatchingWindowActive)
+        .put("lastOutcome", lastOutcome.name)
+        .putNullable("lastEventAgeMs", lastEventAgeMs)
 
     private fun CaptureSample.toJson() = JSONObject()
         .put("id", id)
@@ -88,6 +141,57 @@ object RuleCaptureCodec {
         targetEnteredAtElapsedMs = nullableLong("targetEnteredAtElapsedMs"),
         pendingSample = optJSONObject("pendingSample")?.toSample(),
         failure = nullableString("failure")?.let(CaptureFailure::valueOf),
+        failureDiagnostics = optJSONObject("failureDiagnostics")?.toFailureDiagnostics(),
+        targetWindowDiagnostics = optJSONObject("targetWindowDiagnostics")
+            ?.toTargetWindowDiagnostics(),
+    )
+
+    private fun JSONObject.toFailureDiagnostics() = CaptureFailureDiagnostics(
+        sourceAvailable = getBoolean("sourceAvailable"),
+        eventTextCount = getInt("eventTextCount"),
+        eventHasContentDescription = getBoolean("eventHasContentDescription"),
+        copiedNodeCount = getInt("copiedNodeCount"),
+        selectorCandidateCount = getInt("selectorCandidateCount"),
+        immediateRecovery = optJSONObject("immediateRecovery")?.toRecoveryDiagnostics(),
+        preClickProbe = optJSONObject("preClickProbe")?.toRecoveryDiagnostics(),
+        snapshotRecovery = optJSONObject("snapshotRecovery")?.toSnapshotDiagnostics(),
+        lastWindowVerifiedAgeMs = nullableLong("lastWindowVerifiedAgeMs"),
+        lastContentChangedAgeMs = nullableLong("lastContentChangedAgeMs"),
+    )
+
+    private fun JSONObject.toRecoveryDiagnostics() = ClickRecoveryDiagnostics(
+        outcome = ClickRecoveryOutcome.valueOf(getString("outcome")),
+        visitedNodeCount = getInt("visitedNodeCount"),
+        maxDepth = getInt("maxDepth"),
+        elapsedMs = getLong("elapsedMs"),
+        semanticNodeCount = getInt("semanticNodeCount"),
+        matchedNodeCount = getInt("matchedNodeCount"),
+        knownDismissNodeCount = getInt("knownDismissNodeCount"),
+        selectorCandidateNodeCount = getInt("selectorCandidateNodeCount"),
+        traversalLimitReason = nullableString("traversalLimitReason")
+            ?.let(TraversalLimitReason::valueOf),
+    )
+
+    private fun JSONObject.toSnapshotDiagnostics() = SnapshotRecoveryDiagnostics(
+        outcome = SnapshotRecoveryOutcome.valueOf(getString("outcome")),
+        ageMs = nullableLong("ageMs"),
+    )
+
+    private fun JSONObject.toTargetWindowDiagnostics() = TargetWindowDiagnostics(
+        windowStateEventCount = getInt("windowStateEventCount"),
+        contentChangedEventCount = getInt("contentChangedEventCount"),
+        viewClickedEventCount = getInt("viewClickedEventCount"),
+        ignoredPackageEventCount = getInt("ignoredPackageEventCount"),
+        missingPackageEventCount = getInt("missingPackageEventCount"),
+        lastPackageName = nullableString("lastPackageName"),
+        lastClassName = nullableString("lastClassName"),
+        lastEventWindowId = nullableInt("lastEventWindowId"),
+        lastWindowCount = nullableInt("lastWindowCount"),
+        lastMatchingWindowCount = nullableInt("lastMatchingWindowCount"),
+        lastMatchingWindowType = nullableInt("lastMatchingWindowType"),
+        lastMatchingWindowActive = nullableBoolean("lastMatchingWindowActive"),
+        lastOutcome = TargetWindowRecognitionOutcome.valueOf(getString("lastOutcome")),
+        lastEventAgeMs = nullableLong("lastEventAgeMs"),
     )
 
     private fun JSONObject.toSample() = CaptureSample(
@@ -131,6 +235,9 @@ object RuleCaptureCodec {
 
     private fun JSONObject.nullableInt(key: String): Int? =
         if (isNull(key)) null else getInt(key)
+
+    private fun JSONObject.nullableBoolean(key: String): Boolean? =
+        if (isNull(key)) null else getBoolean(key)
 
     private fun <T> JSONArray.mapObjects(mapper: (JSONObject) -> T): List<T> =
         List(length()) { index -> mapper(getJSONObject(index)) }

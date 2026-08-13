@@ -138,6 +138,40 @@ internal fun CaptureControls(
             MaterialTheme.colorScheme.onSurfaceVariant
         },
     )
+    if (phase == CapturePhase.FAILED &&
+        (state.failureDiagnostics != null || state.targetWindowDiagnostics != null)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(12.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(FlashSkipTokens.Space12),
+                verticalArrangement = Arrangement.spacedBy(FlashSkipTokens.Space4),
+            ) {
+                Text(
+                    text = "本地诊断",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                state.targetWindowDiagnostics?.let { diagnostics ->
+                    Text(
+                        text = "目标窗口\n${formatTargetWindowDiagnostics(diagnostics)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                state.failureDiagnostics?.let { diagnostics ->
+                    Text(
+                        text = "点击恢复\n${formatCaptureFailureDiagnostics(diagnostics)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(FlashSkipTokens.Space8),

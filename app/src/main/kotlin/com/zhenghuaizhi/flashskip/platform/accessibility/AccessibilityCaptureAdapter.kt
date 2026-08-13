@@ -4,12 +4,17 @@ import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityEvent
 import com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCoordinator
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
+import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
+import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryOutcome
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.rulecapture.ClickSemanticHint
 import com.zhenghuaizhi.flashskip.domain.rulecapture.ClickSourceRecoveryMatcher
@@ -22,6 +27,7 @@ internal class AccessibilityCaptureAdapter(
     private val coordinator: RuleCaptureCoordinator,
     private val scope: CoroutineScope,
     private val stateProvider: () -> RuleCaptureState,
+    private val targetWindowDiagnosticsProvider: (Long) -> TargetWindowDiagnostics?,
 ) {
     private var currentIdentity: PageIdentity? = null
     private var latestUniqueSelectors: Set<CapturedSelector> = emptySet()
@@ -31,6 +37,9 @@ internal class AccessibilityCaptureAdapter(
     private var currentTargetAppName: String? = null
     private var preClickRecoverySnapshot: PreClickRecoverySnapshot? = null
     private var lastRecoveryProbeAtElapsedMs: Long? = null
+    private var latestPreClickProbeDiagnostics: ClickRecoveryDiagnostics? = null
+    private var lastWindowVerifiedAtElapsedMs: Long? = null
+    private var lastContentChangedAtElapsedMs: Long? = null
     private val semanticSnapshotter = AccessibilitySemanticSnapshotter(service)
     private val probe = AccessibilityCaptureProbe(
         service = service,
@@ -52,6 +61,8 @@ internal class AccessibilityCaptureAdapter(
             verifiedTargetEnteredAtElapsedMs = null
             currentTargetAppName = null
             latestUniqueSelectors = emptySet()
+            lastWindowVerifiedAtElapsedMs = null
+            lastContentChangedAtElapsedMs = null
             clearPreClickRecoverySnapshot()
         }
         if (session == null || session.phase in setOf(
@@ -64,6 +75,8 @@ internal class AccessibilityCaptureAdapter(
             verifiedTargetEnteredAtElapsedMs = null
             currentTargetAppName = null
             latestUniqueSelectors = emptySet()
+            lastWindowVerifiedAtElapsedMs = null
+            lastContentChangedAtElapsedMs = null
             clearPreClickRecoverySnapshot()
         }
     }
@@ -84,7 +97,8 @@ internal class AccessibilityCaptureAdapter(
         if (session.phase !in setOf(CapturePhase.WAITING_FOR_TARGET, CapturePhase.OBSERVING_CLICK)) {
             return
         }
-        val enteredAt = session.targetEnteredAtElapsedMs ?: coordinator.elapsedRealtimeMs()
+        val now = coordinator.elapsedRealtimeMs()
+        val enteredAt = session.targetEnteredAtElapsedMs ?: now
         val identity = PageIdentity(
             packageName = packageName,
             activityName = activityName,
@@ -94,6 +108,8 @@ internal class AccessibilityCaptureAdapter(
         currentIdentity = identity
         currentTargetAppName = targetAppName
         verifiedTargetEnteredAtElapsedMs = enteredAt
+        lastWindowVerifiedAtElapsedMs = now
+        lastContentChangedAtElapsedMs = null
         refreshPreClickRecoverySnapshot(identity)
         refreshUniqueEvidence(state, identity)
         scope.launch {
@@ -119,6 +135,7 @@ internal class AccessibilityCaptureAdapter(
                 it.packageName == packageName &&
                 it.windowId == event.windowId
         } ?: return
+        lastContentChangedAtElapsedMs = coordinator.elapsedRealtimeMs()
         refreshPreClickRecoverySnapshot(identity)
         refreshUniqueEvidence(state, identity)
     }
@@ -146,30 +163,52 @@ internal class AccessibilityCaptureAdapter(
         }
 
         lockedSessionId = session.id
+        val hint = ClickSemanticHint(
+            texts = event.text.mapNotNull { value ->
+                semanticSnapshotter.sanitizeSemantic(value.toString())
+            }.toSet(),
+            contentDescription = semanticSnapshotter.sanitizeSemantic(
+                event.contentDescription?.toString(),
+            ),
+        )
         val source = event.source
         val nodes = if (source != null) {
             semanticSnapshotter.copySemanticChain(source, packageName)
         } else {
-            val hint = ClickSemanticHint(
-                texts = event.text.mapNotNull { value ->
-                    semanticSnapshotter.sanitizeSemantic(value.toString())
-                }.toSet(),
-                contentDescription = semanticSnapshotter.sanitizeSemantic(
-                    event.contentDescription?.toString(),
-                ),
-            )
             // 点击回调到达时按钮可能已经消失；即时恢复失败后仅使用同窗口的近期唯一快照。
             val immediate = probe.recoverClickedSemanticChain(identity, hint)
-            (immediate as? AccessibilityCaptureProbe.RecoveryResult.Success)?.nodes
-                ?: recoverFromPreClickSnapshot(identity, hint)
-                ?: run {
-                    fail(session.id, CaptureFailure.CLICK_SOURCE_UNAVAILABLE)
+            val immediateSuccess = immediate as? AccessibilityCaptureProbe.RecoveryResult.Success
+            if (immediateSuccess != null) {
+                immediateSuccess.nodes
+            } else {
+                val snapshot = recoverFromPreClickSnapshot(identity, hint)
+                snapshot.nodes ?: run {
+                    fail(
+                        sessionId = session.id,
+                        failure = CaptureFailure.CLICK_SOURCE_UNAVAILABLE,
+                        diagnostics = clickFailureDiagnostics(
+                            sourceAvailable = false,
+                            hint = hint,
+                            immediateRecovery = immediate.diagnostics,
+                            snapshotRecovery = snapshot.diagnostics,
+                        ),
+                    )
                     return
                 }
+            }
         }
         val candidates = RuleCandidateAnalyzer.selectorCandidates(nodes)
         if (candidates.isEmpty()) {
-            fail(session.id, CaptureFailure.CLICK_SEMANTICS_UNAVAILABLE)
+            fail(
+                sessionId = session.id,
+                failure = CaptureFailure.CLICK_SEMANTICS_UNAVAILABLE,
+                diagnostics = clickFailureDiagnostics(
+                    sourceAvailable = source != null,
+                    hint = hint,
+                    copiedNodeCount = nodes.size,
+                    selectorCandidateCount = candidates.size,
+                ),
+            )
             return
         }
         // 窗口已同步验证但状态仍在异步落盘时，也必须接住用户的首次快速点击。
@@ -205,6 +244,7 @@ internal class AccessibilityCaptureAdapter(
         }
         lastRecoveryProbeAtElapsedMs = now
         val recovery = probe.recoverClickedSemanticChain(identity, ClickSemanticHint())
+        latestPreClickProbeDiagnostics = recovery.diagnostics
         if (recovery is AccessibilityCaptureProbe.RecoveryResult.Success) {
             preClickRecoverySnapshot = PreClickRecoverySnapshot(
                 identity = identity,
@@ -217,29 +257,63 @@ internal class AccessibilityCaptureAdapter(
     private fun recoverFromPreClickSnapshot(
         identity: PageIdentity,
         hint: ClickSemanticHint,
-    ): List<CapturedNode>? {
-        val snapshot = preClickRecoverySnapshot?.takeIf {
-            it.identity == identity &&
-                coordinator.elapsedRealtimeMs() - it.capturedAtElapsedMs in 0..SNAPSHOT_MAX_AGE_MS
-        } ?: return null
-        val semanticNode = snapshot.nodes.firstOrNull() ?: return null
+    ): SnapshotRecoveryResult {
+        val snapshot = preClickRecoverySnapshot ?: return SnapshotRecoveryResult(
+            diagnostics = SnapshotRecoveryDiagnostics(SnapshotRecoveryOutcome.NOT_AVAILABLE),
+        )
+        if (snapshot.identity != identity) {
+            return SnapshotRecoveryResult(
+                diagnostics = SnapshotRecoveryDiagnostics(
+                    SnapshotRecoveryOutcome.IDENTITY_MISMATCH,
+                ),
+            )
+        }
+        val ageMs = coordinator.elapsedRealtimeMs() - snapshot.capturedAtElapsedMs
+        if (ageMs !in 0..SNAPSHOT_MAX_AGE_MS) {
+            return SnapshotRecoveryResult(
+                diagnostics = SnapshotRecoveryDiagnostics(
+                    outcome = SnapshotRecoveryOutcome.STALE,
+                    ageMs = ageMs,
+                ),
+            )
+        }
+        val semanticNode = snapshot.nodes.firstOrNull() ?: return SnapshotRecoveryResult(
+            diagnostics = SnapshotRecoveryDiagnostics(
+                outcome = SnapshotRecoveryOutcome.EMPTY,
+                ageMs = ageMs,
+            ),
+        )
         val matchesEvent = ClickSourceRecoveryMatcher.matches(semanticNode, hint)
         val matchesKnownDismiss = ClickSourceRecoveryMatcher.matches(
             semanticNode,
             ClickSemanticHint(),
         )
-        return snapshot.nodes.takeIf { matchesEvent || matchesKnownDismiss }
+        val outcome = when {
+            matchesEvent -> SnapshotRecoveryOutcome.MATCHED_EVENT
+            matchesKnownDismiss -> SnapshotRecoveryOutcome.MATCHED_DISMISS
+            else -> SnapshotRecoveryOutcome.NO_MATCH
+        }
+        return SnapshotRecoveryResult(
+            nodes = snapshot.nodes.takeIf { matchesEvent || matchesKnownDismiss },
+            diagnostics = SnapshotRecoveryDiagnostics(outcome = outcome, ageMs = ageMs),
+        )
     }
 
     private fun clearPreClickRecoverySnapshot() {
         preClickRecoverySnapshot = null
         lastRecoveryProbeAtElapsedMs = null
+        latestPreClickProbeDiagnostics = null
     }
 
     private data class PreClickRecoverySnapshot(
         val identity: PageIdentity,
         val capturedAtElapsedMs: Long,
         val nodes: List<CapturedNode>,
+    )
+
+    private data class SnapshotRecoveryResult(
+        val nodes: List<CapturedNode>? = null,
+        val diagnostics: SnapshotRecoveryDiagnostics,
     )
 
     private fun refreshUniqueEvidence(state: RuleCaptureState, identity: PageIdentity) {
@@ -264,8 +338,46 @@ internal class AccessibilityCaptureAdapter(
         fail(sessionId, failure)
     }
 
-    private fun fail(sessionId: Long, failure: CaptureFailure) {
-        scope.launch { coordinator.fail(sessionId, failure) }
+    private fun clickFailureDiagnostics(
+        sourceAvailable: Boolean,
+        hint: ClickSemanticHint,
+        copiedNodeCount: Int = 0,
+        selectorCandidateCount: Int = 0,
+        immediateRecovery: ClickRecoveryDiagnostics? = null,
+        snapshotRecovery: SnapshotRecoveryDiagnostics? = null,
+    ): CaptureFailureDiagnostics {
+        val now = coordinator.elapsedRealtimeMs()
+        return CaptureFailureDiagnostics(
+            sourceAvailable = sourceAvailable,
+            eventTextCount = hint.texts.size,
+            eventHasContentDescription = hint.contentDescription != null,
+            copiedNodeCount = copiedNodeCount,
+            selectorCandidateCount = selectorCandidateCount,
+            immediateRecovery = immediateRecovery,
+            preClickProbe = latestPreClickProbeDiagnostics,
+            snapshotRecovery = snapshotRecovery,
+            lastWindowVerifiedAgeMs = elapsedSince(now, lastWindowVerifiedAtElapsedMs),
+            lastContentChangedAgeMs = elapsedSince(now, lastContentChangedAtElapsedMs),
+        )
+    }
+
+    private fun elapsedSince(now: Long, timestamp: Long?): Long? = timestamp?.let {
+        (now - it).coerceAtLeast(0)
+    }
+
+    private fun fail(
+        sessionId: Long,
+        failure: CaptureFailure,
+        diagnostics: CaptureFailureDiagnostics? = null,
+    ) {
+        scope.launch {
+            coordinator.fail(
+                sessionId = sessionId,
+                failure = failure,
+                diagnostics = diagnostics,
+                targetWindowDiagnostics = targetWindowDiagnosticsProvider(sessionId),
+            )
+        }
     }
 
     private companion object {
