@@ -2,6 +2,7 @@ package com.zhenghuaizhi.flashskip.data.preferences
 
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.CaptureEvidence
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
@@ -9,6 +10,7 @@ import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryOutcome
+import com.zhenghuaizhi.flashskip.domain.model.ObservedDismissCandidate
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryOutcome
@@ -61,6 +63,16 @@ class RuleCaptureCodecTest {
         val encoded = RuleCaptureCodec.encode(RuleCaptureState(samples = listOf(sample(7))))
 
         assertFalse(encoded.contains("\"appVersion\""))
+    }
+
+    @Test
+    fun sampleWithoutEvidenceDecodesAsAccessibilityClick() {
+        val legacy = RuleCaptureCodec.encode(RuleCaptureState(samples = listOf(sample(7))))
+            .replace(",\"evidence\":\"ACCESSIBILITY_CLICK\"", "")
+
+        val decoded = RuleCaptureCodec.decodeOrEmpty(legacy)
+
+        assertEquals(CaptureEvidence.ACCESSIBILITY_CLICK, decoded.samples.single().evidence)
     }
 
     @Test
@@ -120,6 +132,39 @@ class RuleCaptureCodecTest {
         )
 
         assertEquals(state, RuleCaptureCodec.decodeOrEmpty(RuleCaptureCodec.encode(state)))
+    }
+
+    @Test
+    fun roundTripPreservesUnconfirmedCandidateWithoutPublishingSample() {
+        val sourceSample = sample(10)
+        val candidate = ObservedDismissCandidate(
+            id = 10,
+            targetAppId = sourceSample.targetAppId,
+            targetAppName = "示例地图",
+            activityName = sourceSample.activityName,
+            observedAfterTargetMs = 700,
+            observedAtEpochMs = 20_000,
+            nodes = sourceSample.nodes,
+            preClickUniqueSelectors = sourceSample.preClickUniqueSelectors,
+        )
+        val state = RuleCaptureState(
+            activeSession = CaptureSession(
+                id = 10,
+                targetAppId = candidate.targetAppId,
+                targetAppName = candidate.targetAppName,
+                packageName = candidate.targetAppId.packageName,
+                phase = CapturePhase.AWAITING_CONFIRMATION,
+                phaseStartedAtEpochMs = 20_000,
+                deadlineAtEpochMs = 620_000,
+                activityName = candidate.activityName,
+                pendingObservedCandidate = candidate,
+            ),
+        )
+
+        val decoded = RuleCaptureCodec.decodeOrEmpty(RuleCaptureCodec.encode(state))
+
+        assertEquals(state, decoded)
+        assertEquals(emptyList<CaptureSample>(), decoded.samples)
     }
 
     private fun sample(id: Long) = CaptureSample(

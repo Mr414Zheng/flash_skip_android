@@ -120,7 +120,10 @@ class HomeViewModel(
     fun finishCapture() {
         viewModelScope.launch {
             val session = captureCoordinator.state.first().activeSession?.takeIf {
-                it.phase == CapturePhase.CAPTURED
+                it.phase in setOf(
+                    CapturePhase.AWAITING_CONFIRMATION,
+                    CapturePhase.CAPTURED,
+                )
             } ?: return@launch
             captureCoordinator.finish(session.id)
         }

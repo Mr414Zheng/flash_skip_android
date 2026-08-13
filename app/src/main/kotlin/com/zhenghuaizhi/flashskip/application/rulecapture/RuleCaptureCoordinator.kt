@@ -2,9 +2,11 @@ package com.zhenghuaizhi.flashskip.application.rulecapture
 
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.CaptureEvidence
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
+import com.zhenghuaizhi.flashskip.domain.model.ObservedDismissCandidate
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
@@ -135,18 +137,54 @@ class RuleCaptureCoordinator(
                         ?: (monotonicClock.elapsedRealtimeMs() - sample.clickedAfterTargetMs)
                             .coerceAtLeast(0),
                     pendingSample = sample,
+                    pendingObservedCandidate = null,
+                ),
+            )
+        }
+    }
+
+    suspend fun recordObservedCandidate(
+        sessionId: Long,
+        candidate: ObservedDismissCandidate,
+    ) {
+        captureStore.update { state ->
+            val session = state.activeSession?.takeIf {
+                it.id == sessionId && it.phase in setOf(
+                    CapturePhase.WAITING_FOR_TARGET,
+                    CapturePhase.OBSERVING_CLICK,
+                )
+            } ?: return@update state
+            if (session.targetAppId != null && candidate.targetAppId != session.targetAppId) {
+                return@update state
+            }
+            val now = wallClock.currentTimeMillis()
+            state.copy(
+                activeSession = session.copy(
+                    targetAppId = candidate.targetAppId,
+                    targetAppName = candidate.targetAppName,
+                    packageName = candidate.targetAppId.packageName,
+                    phase = CapturePhase.AWAITING_CONFIRMATION,
+                    phaseStartedAtEpochMs = now,
+                    deadlineAtEpochMs = now + COMPLETION_TIMEOUT_MS,
+                    activityName = candidate.activityName,
+                    pendingSample = null,
+                    pendingObservedCandidate = candidate,
                 ),
             )
         }
     }
 
     suspend fun finish(sessionId: Long) {
-        val sample = captureStore.state.first().activeSession?.takeIf {
-            it.id == sessionId && it.phase == CapturePhase.CAPTURED
-        }?.pendingSample ?: return
+        val active = captureStore.state.first().activeSession?.takeIf { it.id == sessionId }
+            ?: return
+        val sample = when (active.phase) {
+            CapturePhase.CAPTURED -> active.pendingSample
+            CapturePhase.AWAITING_CONFIRMATION -> active.pendingObservedCandidate?.toSample()
+            else -> null
+        } ?: return
         captureStore.update { state ->
             val session = state.activeSession?.takeIf {
-                it.id == sessionId && it.phase == CapturePhase.CAPTURED
+                it.id == sessionId && it.phase == active.phase
             } ?: return@update state
             state.copy(samples = state.samples + sample, activeSession = null)
         }
@@ -190,6 +228,7 @@ class RuleCaptureCoordinator(
                 CapturePhase.CONFIGURING -> CaptureFailure.CONFIGURATION_TIMEOUT
                 CapturePhase.WAITING_FOR_TARGET -> CaptureFailure.TARGET_TIMEOUT
                 CapturePhase.OBSERVING_CLICK -> CaptureFailure.CLICK_TIMEOUT
+                CapturePhase.AWAITING_CONFIRMATION -> CaptureFailure.COMPLETION_TIMEOUT
                 CapturePhase.CAPTURED -> CaptureFailure.COMPLETION_TIMEOUT
                 CapturePhase.FAILED -> return@update state
             }
@@ -256,6 +295,7 @@ class RuleCaptureCoordinator(
             phaseStartedAtEpochMs = now,
             deadlineAtEpochMs = now,
             pendingSample = null,
+            pendingObservedCandidate = null,
             failure = failure,
             failureDiagnostics = diagnostics,
             targetWindowDiagnostics = targetWindowDiagnostics,
@@ -269,4 +309,16 @@ class RuleCaptureCoordinator(
         const val COMPLETION_TIMEOUT_MS = 10 * 60_000L
         private const val CONFIGURATION_WAIT_MS = CONFIGURATION_TIMEOUT_MS + 500L
     }
+
+    private fun ObservedDismissCandidate.toSample() = CaptureSample(
+        id = id,
+        targetAppId = targetAppId,
+        targetAppName = targetAppName,
+        activityName = activityName,
+        clickedAfterTargetMs = observedAfterTargetMs,
+        capturedAtEpochMs = observedAtEpochMs,
+        nodes = nodes,
+        preClickUniqueSelectors = preClickUniqueSelectors,
+        evidence = CaptureEvidence.USER_CONFIRMED_UNREPORTED_CLICK,
+    )
 }

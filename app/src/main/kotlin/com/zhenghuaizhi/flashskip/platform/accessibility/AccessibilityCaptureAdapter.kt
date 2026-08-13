@@ -10,6 +10,7 @@ import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.ObservedDismissCandidate
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryOutcome
@@ -40,6 +41,7 @@ internal class AccessibilityCaptureAdapter(
     private var latestPreClickProbeDiagnostics: ClickRecoveryDiagnostics? = null
     private var lastWindowVerifiedAtElapsedMs: Long? = null
     private var lastContentChangedAtElapsedMs: Long? = null
+    private var currentWindowAllowsObservedCandidate = false
     private val semanticSnapshotter = AccessibilitySemanticSnapshotter(service)
     private val probe = AccessibilityCaptureProbe(
         service = service,
@@ -63,6 +65,7 @@ internal class AccessibilityCaptureAdapter(
             latestUniqueSelectors = emptySet()
             lastWindowVerifiedAtElapsedMs = null
             lastContentChangedAtElapsedMs = null
+            currentWindowAllowsObservedCandidate = false
             clearPreClickRecoverySnapshot()
         }
         if (session == null || session.phase in setOf(
@@ -77,6 +80,7 @@ internal class AccessibilityCaptureAdapter(
             latestUniqueSelectors = emptySet()
             lastWindowVerifiedAtElapsedMs = null
             lastContentChangedAtElapsedMs = null
+            currentWindowAllowsObservedCandidate = false
             clearPreClickRecoverySnapshot()
         }
     }
@@ -107,6 +111,7 @@ internal class AccessibilityCaptureAdapter(
         )
         currentIdentity = identity
         currentTargetAppName = targetAppName
+        currentWindowAllowsObservedCandidate = false
         verifiedTargetEnteredAtElapsedMs = enteredAt
         lastWindowVerifiedAtElapsedMs = now
         lastContentChangedAtElapsedMs = null
@@ -125,6 +130,31 @@ internal class AccessibilityCaptureAdapter(
         }
     }
 
+    fun onActiveTargetChildWindow(event: AccessibilityEvent): Boolean {
+        val state = stateProvider()
+        val session = state.activeSession ?: return false
+        if (session.phase !in setOf(CapturePhase.WAITING_FOR_TARGET, CapturePhase.OBSERVING_CLICK) ||
+            lockedSessionId == session.id
+        ) {
+            return false
+        }
+        val packageName = event.packageName?.toString() ?: return false
+        if (session.packageName != null && packageName != session.packageName) return false
+        val ownerIdentity = currentIdentity?.takeIf {
+            it.packageName == packageName && it.activityName?.isNotBlank() == true
+        } ?: return false
+        val now = coordinator.elapsedRealtimeMs()
+        val childIdentity = ownerIdentity.copy(windowId = event.windowId)
+        currentIdentity = childIdentity
+        currentWindowAllowsObservedCandidate = true
+        lastWindowVerifiedAtElapsedMs = now
+        lastContentChangedAtElapsedMs = null
+        refreshPreClickRecoverySnapshot(childIdentity)
+        refreshUniqueEvidence(state, childIdentity)
+        tryRecordObservedDismissCandidate(state, childIdentity)
+        return true
+    }
+
     fun onContentChanged(event: AccessibilityEvent) {
         val state = stateProvider()
         val session = state.activeSession ?: return
@@ -138,6 +168,7 @@ internal class AccessibilityCaptureAdapter(
         lastContentChangedAtElapsedMs = coordinator.elapsedRealtimeMs()
         refreshPreClickRecoverySnapshot(identity)
         refreshUniqueEvidence(state, identity)
+        tryRecordObservedDismissCandidate(state, identity)
     }
 
     fun onClicked(event: AccessibilityEvent) {
@@ -297,6 +328,38 @@ internal class AccessibilityCaptureAdapter(
             nodes = snapshot.nodes.takeIf { matchesEvent || matchesKnownDismiss },
             diagnostics = SnapshotRecoveryDiagnostics(outcome = outcome, ageMs = ageMs),
         )
+    }
+
+    private fun tryRecordObservedDismissCandidate(
+        state: RuleCaptureState,
+        identity: PageIdentity,
+    ) {
+        val session = state.activeSession ?: return
+        if (!currentWindowAllowsObservedCandidate || lockedSessionId == session.id) return
+        val snapshot = preClickRecoverySnapshot?.takeIf {
+            it.identity == identity &&
+                coordinator.elapsedRealtimeMs() - it.capturedAtElapsedMs in 0..SNAPSHOT_MAX_AGE_MS
+        } ?: return
+        val candidates = RuleCandidateAnalyzer.selectorCandidates(snapshot.nodes)
+        if (candidates.isEmpty()) return
+        val enteredAt = session.targetEnteredAtElapsedMs ?: verifiedTargetEnteredAtElapsedMs
+            ?: return
+        val activityName = identity.activityName?.takeIf(String::isNotBlank) ?: return
+        val packageName = identity.packageName
+        val candidate = ObservedDismissCandidate(
+            id = session.id,
+            targetAppId = session.targetAppId ?: TargetAppId(packageName),
+            targetAppName = session.targetAppName ?: currentTargetAppName ?: packageName,
+            activityName = activityName.take(MAX_ACTIVITY_LENGTH),
+            observedAfterTargetMs =
+                (coordinator.elapsedRealtimeMs() - enteredAt).coerceAtLeast(0),
+            observedAtEpochMs = coordinator.currentTimeMillis(),
+            nodes = snapshot.nodes,
+            preClickUniqueSelectors = candidates.filter { it in latestUniqueSelectors },
+        )
+        // 候选只进入待确认状态；只有用户回到 FlashSkip 显式确认后才会转换为规则样本。
+        lockedSessionId = session.id
+        scope.launch { coordinator.recordObservedCandidate(session.id, candidate) }
     }
 
     private fun clearPreClickRecoverySnapshot() {

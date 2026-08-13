@@ -3,9 +3,11 @@ package com.zhenghuaizhi.flashskip.application.rulecapture
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.CaptureEvidence
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
+import com.zhenghuaizhi.flashskip.domain.model.ObservedDismissCandidate
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
@@ -118,6 +120,50 @@ class RuleCaptureCoordinatorTest {
         assertEquals(diagnostics, failed.targetWindowDiagnostics)
     }
 
+    @Test
+    fun observedCandidateBecomesSampleOnlyAfterExplicitConfirmation() = runTest {
+        val fixture = Fixture(this)
+        val sessionId = fixture.coordinator.requestStart()
+        fixture.coordinator.markConfigured(sessionId)
+        fixture.coordinator.observeTarget(
+            sessionId,
+            TARGET,
+            "示例地图",
+            TARGET.packageName,
+            ACTIVITY,
+            5,
+            100,
+        )
+        val candidate = observedCandidate(sessionId)
+
+        fixture.coordinator.recordObservedCandidate(sessionId, candidate)
+
+        val awaiting = requireNotNull(fixture.captureStore.state.value.activeSession)
+        assertEquals(CapturePhase.AWAITING_CONFIRMATION, awaiting.phase)
+        assertEquals(candidate, awaiting.pendingObservedCandidate)
+        assertEquals(emptyList<CaptureSample>(), fixture.captureStore.state.value.samples)
+
+        fixture.coordinator.finish(sessionId)
+
+        val captured = fixture.captureStore.state.value.samples.single()
+        assertEquals(CaptureEvidence.USER_CONFIRMED_UNREPORTED_CLICK, captured.evidence)
+        assertEquals(candidate.nodes, captured.nodes)
+        assertNull(fixture.captureStore.state.value.activeSession)
+    }
+
+    @Test
+    fun cancellingObservedCandidateDoesNotPublishSample() = runTest {
+        val fixture = Fixture(this)
+        val sessionId = fixture.coordinator.requestStart()
+        fixture.coordinator.markConfigured(sessionId)
+        fixture.coordinator.recordObservedCandidate(sessionId, observedCandidate(sessionId))
+
+        fixture.coordinator.cancel(sessionId)
+
+        assertEquals(emptyList<CaptureSample>(), fixture.captureStore.state.value.samples)
+        assertNull(fixture.captureStore.state.value.activeSession)
+    }
+
     private class Fixture(scope: kotlinx.coroutines.CoroutineScope) {
         val captureStore = FakeCaptureStore()
         val flashStore = FakeFlashStore()
@@ -168,6 +214,17 @@ class RuleCaptureCoordinatorTest {
                     hasUsableBounds = true,
                 ),
             ),
+            preClickUniqueSelectors = emptyList(),
+        )
+
+        fun observedCandidate(id: Long) = ObservedDismissCandidate(
+            id = id,
+            targetAppId = TARGET,
+            targetAppName = "示例地图",
+            activityName = ACTIVITY,
+            observedAfterTargetMs = 800,
+            observedAtEpochMs = 2_000,
+            nodes = sample(id).nodes,
             preClickUniqueSelectors = emptyList(),
         )
     }

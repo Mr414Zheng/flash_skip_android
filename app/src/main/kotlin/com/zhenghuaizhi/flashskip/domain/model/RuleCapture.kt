@@ -4,8 +4,14 @@ enum class CapturePhase {
     CONFIGURING,
     WAITING_FOR_TARGET,
     OBSERVING_CLICK,
+    AWAITING_CONFIRMATION,
     CAPTURED,
     FAILED,
+}
+
+enum class CaptureEvidence {
+    ACCESSIBILITY_CLICK,
+    USER_CONFIRMED_UNREPORTED_CLICK,
 }
 
 enum class CaptureFailure {
@@ -84,6 +90,7 @@ enum class TargetWindowRecognitionOutcome {
     WINDOW_NOT_ACTIVE,
     NON_APPLICATION_WINDOW,
     ACTIVITY_UNVERIFIED,
+    OWNED_CHILD_WINDOW,
     VERIFIED,
 }
 
@@ -151,6 +158,18 @@ data class CaptureSample(
     val capturedAtEpochMs: Long,
     val nodes: List<CapturedNode>,
     val preClickUniqueSelectors: List<CapturedSelector>,
+    val evidence: CaptureEvidence = CaptureEvidence.ACCESSIBILITY_CLICK,
+)
+
+data class ObservedDismissCandidate(
+    val id: Long,
+    val targetAppId: TargetAppId,
+    val targetAppName: String,
+    val activityName: String,
+    val observedAfterTargetMs: Long,
+    val observedAtEpochMs: Long,
+    val nodes: List<CapturedNode>,
+    val preClickUniqueSelectors: List<CapturedSelector>,
 )
 
 data class CaptureSession(
@@ -165,6 +184,7 @@ data class CaptureSession(
     val windowId: Int? = null,
     val targetEnteredAtElapsedMs: Long? = null,
     val pendingSample: CaptureSample? = null,
+    val pendingObservedCandidate: ObservedDismissCandidate? = null,
     val failure: CaptureFailure? = null,
     val failureDiagnostics: CaptureFailureDiagnostics? = null,
     val targetWindowDiagnostics: TargetWindowDiagnostics? = null,

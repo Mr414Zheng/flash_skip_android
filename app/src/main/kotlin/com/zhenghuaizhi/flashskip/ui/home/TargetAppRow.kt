@@ -122,6 +122,9 @@ internal fun CaptureControls(
         CapturePhase.CONFIGURING -> "正在暂停自动关闭并准备点击监听…"
         CapturePhase.WAITING_FOR_TARGET -> "请从 Home 手动启动任意应用，广告出现后只点击一次关闭按钮。"
         CapturePhase.OBSERVING_CLICK -> "正在等待首次点击；请只点击广告关闭按钮。"
+        CapturePhase.AWAITING_CONFIRMATION ->
+            "已记住${targetAppName ?: "目标应用"}弹窗中的唯一关闭按钮。" +
+                "确认你刚才已手动关闭广告后，再保存规则。"
         CapturePhase.CAPTURED -> "已采集${targetAppName ?: "目标应用"}的点击信息，请确认完成。"
         CapturePhase.FAILED -> failureMessage(state.failure)
         null -> when {
@@ -201,6 +204,21 @@ internal fun CaptureControls(
                     modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
                 ) {
                     Text("放弃本次")
+                }
+            }
+
+            CapturePhase.AWAITING_CONFIRMATION -> {
+                Button(
+                    onClick = onFinishCapture,
+                    modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
+                ) {
+                    Text("确认已手动关闭")
+                }
+                TextButton(
+                    onClick = onCancelCapture,
+                    modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
+                ) {
+                    Text("不是这个按钮")
                 }
             }
 

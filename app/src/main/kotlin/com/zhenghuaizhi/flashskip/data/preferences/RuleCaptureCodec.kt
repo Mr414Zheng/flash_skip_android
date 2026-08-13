@@ -2,6 +2,7 @@ package com.zhenghuaizhi.flashskip.data.preferences
 
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.CaptureEvidence
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
@@ -9,6 +10,7 @@ import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryOutcome
+import com.zhenghuaizhi.flashskip.domain.model.ObservedDismissCandidate
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryOutcome
@@ -52,6 +54,7 @@ object RuleCaptureCodec {
         .putNullable("windowId", windowId)
         .putNullable("targetEnteredAtElapsedMs", targetEnteredAtElapsedMs)
         .putNullable("pendingSample", pendingSample?.toJson())
+        .putNullable("pendingObservedCandidate", pendingObservedCandidate?.toJson())
         .putNullable("failure", failure?.name)
         .putNullable("failureDiagnostics", failureDiagnostics?.toJson())
         .putNullable("targetWindowDiagnostics", targetWindowDiagnostics?.toJson())
@@ -106,6 +109,20 @@ object RuleCaptureCodec {
         .put("activityName", activityName)
         .put("clickedAfterTargetMs", clickedAfterTargetMs)
         .put("capturedAtEpochMs", capturedAtEpochMs)
+        .put("evidence", evidence.name)
+        .put("nodes", JSONArray().apply { nodes.forEach { put(it.toJson()) } })
+        .put(
+            "preClickUniqueSelectors",
+            JSONArray().apply { preClickUniqueSelectors.forEach { put(it.toJson()) } },
+        )
+
+    private fun ObservedDismissCandidate.toJson() = JSONObject()
+        .put("id", id)
+        .put("targetPackageName", targetAppId.packageName)
+        .put("targetAppName", targetAppName)
+        .put("activityName", activityName)
+        .put("observedAfterTargetMs", observedAfterTargetMs)
+        .put("observedAtEpochMs", observedAtEpochMs)
         .put("nodes", JSONArray().apply { nodes.forEach { put(it.toJson()) } })
         .put(
             "preClickUniqueSelectors",
@@ -140,6 +157,8 @@ object RuleCaptureCodec {
         windowId = nullableInt("windowId"),
         targetEnteredAtElapsedMs = nullableLong("targetEnteredAtElapsedMs"),
         pendingSample = optJSONObject("pendingSample")?.toSample(),
+        pendingObservedCandidate = optJSONObject("pendingObservedCandidate")
+            ?.toObservedDismissCandidate(),
         failure = nullableString("failure")?.let(CaptureFailure::valueOf),
         failureDiagnostics = optJSONObject("failureDiagnostics")?.toFailureDiagnostics(),
         targetWindowDiagnostics = optJSONObject("targetWindowDiagnostics")
@@ -201,6 +220,20 @@ object RuleCaptureCodec {
         activityName = getString("activityName"),
         clickedAfterTargetMs = getLong("clickedAfterTargetMs"),
         capturedAtEpochMs = getLong("capturedAtEpochMs"),
+        nodes = getJSONArray("nodes").mapObjects { it.toCapturedNode() },
+        preClickUniqueSelectors = getJSONArray("preClickUniqueSelectors")
+            .mapObjects { it.toCapturedSelector() },
+        evidence = nullableString("evidence")?.let(CaptureEvidence::valueOf)
+            ?: CaptureEvidence.ACCESSIBILITY_CLICK,
+    )
+
+    private fun JSONObject.toObservedDismissCandidate() = ObservedDismissCandidate(
+        id = getLong("id"),
+        targetAppId = TargetAppId(getString("targetPackageName")),
+        targetAppName = getString("targetAppName"),
+        activityName = getString("activityName"),
+        observedAfterTargetMs = getLong("observedAfterTargetMs"),
+        observedAtEpochMs = getLong("observedAtEpochMs"),
         nodes = getJSONArray("nodes").mapObjects { it.toCapturedNode() },
         preClickUniqueSelectors = getJSONArray("preClickUniqueSelectors")
             .mapObjects { it.toCapturedSelector() },

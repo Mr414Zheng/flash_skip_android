@@ -156,6 +156,8 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     packageName = packageName,
                     className = className,
                 )
+                val childWindowAccepted = activityName == null &&
+                    captureAdapter?.onActiveTargetChildWindow(event) == true
                 targetWindowDiagnosticsTracker.recordWindowState(
                     packageName = packageName,
                     className = className,
@@ -164,10 +166,10 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     matchingWindowCount = matchingWindows.size,
                     matchingWindowType = activeWindow?.type,
                     matchingWindowActive = activeWindow?.isActive,
-                    outcome = if (activityName == null) {
-                        TargetWindowRecognitionOutcome.ACTIVITY_UNVERIFIED
-                    } else {
-                        TargetWindowRecognitionOutcome.VERIFIED
+                    outcome = when {
+                        activityName != null -> TargetWindowRecognitionOutcome.VERIFIED
+                        childWindowAccepted -> TargetWindowRecognitionOutcome.OWNED_CHILD_WINDOW
+                        else -> TargetWindowRecognitionOutcome.ACTIVITY_UNVERIFIED
                     },
                     occurredAtElapsedMs = occurredAt,
                 )
@@ -243,6 +245,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                 if (firstEmission && session?.phase in setOf(
                         CapturePhase.WAITING_FOR_TARGET,
                         CapturePhase.OBSERVING_CLICK,
+                        CapturePhase.AWAITING_CONFIRMATION,
                         CapturePhase.CAPTURED,
                     )
                 ) {
@@ -280,6 +283,11 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     }
 
                     CapturePhase.CAPTURED -> {
+                        restoreDefaultEventConfiguration()
+                        setAutomationPaused(true)
+                    }
+
+                    CapturePhase.AWAITING_CONFIRMATION -> {
                         restoreDefaultEventConfiguration()
                         setAutomationPaused(true)
                     }

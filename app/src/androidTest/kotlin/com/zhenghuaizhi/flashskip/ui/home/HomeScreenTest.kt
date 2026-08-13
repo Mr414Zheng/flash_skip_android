@@ -104,6 +104,26 @@ class HomeScreenTest {
     }
 
     @Test
+    fun observedCandidateRequiresExplicitManualCloseConfirmation() {
+        composeRule.setContent {
+            FlashSkipTheme {
+                CaptureControls(
+                    state = CaptureUiState(phase = CapturePhase.AWAITING_CONFIRMATION),
+                    targetAppName = "示例地图",
+                    onStartCapture = {},
+                    onFinishCapture = {},
+                    onCancelCapture = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("已记住示例地图弹窗中的唯一关闭按钮", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("确认已手动关闭").assertIsEnabled()
+        composeRule.onNodeWithText("不是这个按钮").assertIsEnabled()
+    }
+
+    @Test
     fun captureControlsRemainReachableAtTwoHundredPercentFontScale() {
         composeRule.setContent {
             val density = LocalDensity.current

@@ -102,6 +102,7 @@ private fun TargetWindowRecognitionOutcome.label(): String = when (this) {
     TargetWindowRecognitionOutcome.WINDOW_NOT_ACTIVE -> "事件窗口不是活动窗口"
     TargetWindowRecognitionOutcome.NON_APPLICATION_WINDOW -> "事件窗口不是应用窗口"
     TargetWindowRecognitionOutcome.ACTIVITY_UNVERIFIED -> "className 无法验证为目标 Activity"
+    TargetWindowRecognitionOutcome.OWNED_CHILD_WINDOW -> "同包弹窗由已验证 Activity 承载"
     TargetWindowRecognitionOutcome.VERIFIED -> "目标窗口验证通过"
 }
 
