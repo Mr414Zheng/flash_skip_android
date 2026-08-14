@@ -209,6 +209,7 @@ internal fun AccessibilityCaptureWindowResolver.Request.toRetryKey() = WindowRet
     sessionId = sessionId,
     packageName = eventPackageName,
     windowId = eventWindowId,
+    allowActiveHostRootFallback = allowActiveHostRootFallback,
 )
 
 private fun CaptureWindowResolutionSource.toRecognitionOutcome() = when (this) {

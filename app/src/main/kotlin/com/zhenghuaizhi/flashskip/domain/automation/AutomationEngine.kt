@@ -241,9 +241,11 @@ class AutomationEngine(
         val readyRules = active.rules.filter { rule ->
             isRuleReady(rule, active, now)
         }
+        var retryAfterTraversalLimit = false
         readyRules.forEach { rule ->
             when (evaluateRule(active, rule, command)) {
                 Evaluation.NO_MATCH -> Unit
+                Evaluation.RETRY -> retryAfterTraversalLimit = true
                 Evaluation.PENDING -> return
                 Evaluation.TERMINAL -> return
             }
@@ -252,8 +254,16 @@ class AutomationEngine(
             .map { active.enteredAtElapsedMs + it.startupDelayMs }
             .filter { it > now && it < active.deadlineElapsedMs }
             .minOrNull()
-        if (nextStartup != null && !active.terminal) {
-            scheduleQueryAt(active, nextStartup)
+        val traversalRetry = if (retryAfterTraversalLimit) {
+            monotonicClock.elapsedRealtimeMs() + TRAVERSAL_RETRY_MS
+        } else {
+            null
+        }
+        val nextQuery = listOfNotNull(nextStartup, traversalRetry)
+            .filter { it < active.deadlineElapsedMs }
+            .minOrNull()
+        if (nextQuery != null && !active.terminal) {
+            scheduleQueryAt(active, nextQuery)
         }
     }
 
@@ -272,6 +282,7 @@ class AutomationEngine(
         rule: AdRule,
         command: Command.QueryDue,
     ): Evaluation {
+        var traversalLimited = false
         for (selector in rule.selectors) {
             val queriedAt = monotonicClock.elapsedRealtimeMs()
             if (active.firstQueryAtElapsedMs == null) active.firstQueryAtElapsedMs = queriedAt
@@ -286,10 +297,12 @@ class AutomationEngine(
                 }
                 QueryResult.Ambiguous -> return abandon(active, rule, ActionReason.AMBIGUOUS_MATCH)
                 QueryResult.PageChanged -> return abandon(active, rule, ActionReason.PAGE_CHANGED)
-                QueryResult.TraversalLimit -> return abandon(active, rule, ActionReason.TRAVERSAL_LIMIT)
+                // 单个索引失效后的兜底遍历可能在复杂启动页超限；继续尝试其他稳定选择器，
+                // 并在会话期限内短暂重试，不能在广告节点出现前终止整个规则。
+                QueryResult.TraversalLimit -> traversalLimited = true
             }
         }
-        return Evaluation.NO_MATCH
+        return if (traversalLimited) Evaluation.RETRY else Evaluation.NO_MATCH
     }
 
     private suspend fun executeUnique(
@@ -548,11 +561,12 @@ class AutomationEngine(
         data class Target(val packageName: String) : ForegroundState
     }
 
-    private enum class Evaluation { NO_MATCH, PENDING, TERMINAL }
+    private enum class Evaluation { NO_MATCH, RETRY, PENDING, TERMINAL }
 
     private companion object {
         const val SESSION_WINDOW_MS = 10_000L
         const val DEBOUNCE_MS = 120L
+        const val TRAVERSAL_RETRY_MS = 250L
         const val MAILBOX_CAPACITY = 64
     }
 }

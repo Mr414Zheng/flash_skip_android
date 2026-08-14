@@ -4,6 +4,8 @@ import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryOutcome
 import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryOutcome
+import com.zhenghuaizhi.flashskip.domain.model.SemanticDiffDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.SemanticDiffOutcome
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowRecognitionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.TraversalLimitReason
@@ -28,6 +30,7 @@ internal fun formatCaptureFailureDiagnostics(
         val age = snapshot.ageMs?.let { "，年龄 ${it}ms" }.orEmpty()
         add("点击前快照：${snapshot.outcome.label()}$age")
     }
+    diagnostics.semanticDiff?.let { add(it.summary()) }
     add(
         "时序：窗口验证 ${diagnostics.lastWindowVerifiedAgeMs.ageLabel()}，" +
             "内容变化 ${diagnostics.lastContentChangedAgeMs.ageLabel()}",
@@ -38,6 +41,7 @@ internal fun formatCaptureTimeoutDiagnostics(
     diagnostics: CaptureFailureDiagnostics,
 ): String = buildList {
     diagnostics.preClickProbe?.let { add(it.summary("弹窗扫描")) }
+    diagnostics.semanticDiff?.let { add(it.summary()) }
     add(
         "时序：窗口验证 ${diagnostics.lastWindowVerifiedAgeMs.ageLabel()}，" +
             "内容变化 ${diagnostics.lastContentChangedAgeMs.ageLabel()}",
@@ -80,6 +84,20 @@ private fun ClickRecoveryDiagnostics.summary(prefix: String): String {
         "关闭语义 $knownDismissNodeCount，匹配 $matchedNodeCount，" +
         "有效候选 $selectorCandidateNodeCount，倒计时语义 $countdownSemanticNodeCount，" +
         "可执行链 $countdownActionChainCount"
+}
+
+private fun SemanticDiffDiagnostics.summary(): String =
+    "无文案差分：${outcome.label()}；快照 $observationCount，" +
+        "当前候选 $currentCandidateCount，稳定 $stableCandidateCount，" +
+        "消失 $disappearedCandidateCount，访问 $visitedNodeCount 节点，" +
+        "窗口转换${if (transitionSignal) "存在" else "未发现"}"
+
+private fun SemanticDiffOutcome.label(): String = when (this) {
+    SemanticDiffOutcome.BASELINE -> "已建立基线"
+    SemanticDiffOutcome.TRACKING -> "正在比较"
+    SemanticDiffOutcome.INSUFFICIENT_COVERAGE -> "新快照覆盖不足"
+    SemanticDiffOutcome.AMBIGUOUS -> "消失候选不唯一"
+    SemanticDiffOutcome.CANDIDATE -> "找到唯一消失节点"
 }
 
 private fun ClickRecoveryOutcome.label(): String = when (this) {

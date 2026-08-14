@@ -71,6 +71,24 @@ data class SnapshotRecoveryDiagnostics(
     val ageMs: Long? = null,
 )
 
+enum class SemanticDiffOutcome {
+    BASELINE,
+    TRACKING,
+    INSUFFICIENT_COVERAGE,
+    AMBIGUOUS,
+    CANDIDATE,
+}
+
+data class SemanticDiffDiagnostics(
+    val outcome: SemanticDiffOutcome,
+    val observationCount: Int = 0,
+    val currentCandidateCount: Int = 0,
+    val stableCandidateCount: Int = 0,
+    val disappearedCandidateCount: Int = 0,
+    val visitedNodeCount: Int = 0,
+    val transitionSignal: Boolean = false,
+)
+
 data class CaptureFailureDiagnostics(
     val sourceAvailable: Boolean,
     val eventTextCount: Int,
@@ -80,6 +98,7 @@ data class CaptureFailureDiagnostics(
     val immediateRecovery: ClickRecoveryDiagnostics? = null,
     val preClickProbe: ClickRecoveryDiagnostics? = null,
     val snapshotRecovery: SnapshotRecoveryDiagnostics? = null,
+    val semanticDiff: SemanticDiffDiagnostics? = null,
     val lastWindowVerifiedAgeMs: Long? = null,
     val lastContentChangedAgeMs: Long? = null,
 )
@@ -193,6 +212,13 @@ data class ObservedDismissCandidate(
     val preClickUniqueSelectors: List<CapturedSelector>,
 )
 
+data class SemanticDiffEvidence(
+    val targetAppId: TargetAppId,
+    val activityName: String,
+    val selectors: List<CapturedSelector>,
+    val capturedAtEpochMs: Long,
+)
+
 data class CaptureSession(
     val id: Long,
     val targetAppId: TargetAppId? = null,
@@ -217,6 +243,7 @@ data class CaptureSession(
 data class RuleCaptureState(
     val samples: List<CaptureSample> = emptyList(),
     val activeSession: CaptureSession? = null,
+    val semanticDiffEvidence: List<SemanticDiffEvidence> = emptyList(),
 )
 
 enum class RuleCardStatus {

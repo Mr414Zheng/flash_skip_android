@@ -79,6 +79,21 @@ object RuleCandidateAnalyzer {
         }
     }
 
+    /** 差分路径只保留能够在下次窗口中重新查询的稳定结构，拒绝纯文本猜测。 */
+    internal fun stableDiffSelectorCandidates(nodes: List<CapturedNode>): List<CapturedSelector> =
+        selectorCandidates(nodes)
+            .filter { selector ->
+                selector.isStrongEnough() &&
+                    (selector.hasStableResourceId() || selector.hasStableAncestor())
+            }
+            .sortedWith(
+                compareByDescending<CapturedSelector> {
+                    DismissSemantics.isKnownResourceId(it.resourceId)
+                }.thenByDescending { it.hasStableResourceId() }
+                    .thenByDescending { it.hasStableAncestor() }
+                    .thenBy { it.conditionCount },
+            )
+
     private fun scopedSelectors(
         nodes: List<CapturedNode>,
         targetIndex: Int,
@@ -148,6 +163,8 @@ object RuleCandidateAnalyzer {
             )
         }.sortedWith(
             compareByDescending<SelectorRank> { it.ready }
+                .thenByDescending { it.selector.hasStableResourceId() }
+                .thenByDescending { it.selector.hasStableAncestor() }
                 .thenByDescending { it.samples.size }
                 .thenByDescending { it.uniqueEvidenceCount }
                 .thenByDescending { it.selector.conditionCount }
@@ -203,12 +220,18 @@ object RuleCandidateAnalyzer {
     )
 
     private fun CapturedSelector.isStrongEnough(): Boolean {
-        if (DismissSemantics.isBareNumericCountdown(text)) {
+        val hasGenericDismissSemantic = listOf(text, contentDescription).any { semantic ->
+            DismissSemantics.isKnown(semantic) ||
+                DismissSemantics.isBareNumericCountdown(semantic)
+        }
+        if (hasGenericDismissSemantic) {
             return hasStableResourceId() || hasStableAncestor()
         }
-        if (conditionCount >= 2 || resourceId != null) return true
+        if (hasStableResourceId()) return true
+        if (hasStableAncestor() && (text != null || contentDescription != null)) return true
+        if (text != null && contentDescription != null) return true
         val semantic = text ?: contentDescription ?: return false
-        return !DismissSemantics.isKnown(semantic)
+        return semantic.isNotBlank()
     }
 
     private fun MutableList<CapturedSelector>.addIfUsable(selector: CapturedSelector) {

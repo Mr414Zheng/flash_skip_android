@@ -12,6 +12,9 @@ import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryOutcome
 import com.zhenghuaizhi.flashskip.domain.model.ObservedDismissCandidate
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
+import com.zhenghuaizhi.flashskip.domain.model.SemanticDiffDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.SemanticDiffEvidence
+import com.zhenghuaizhi.flashskip.domain.model.SemanticDiffOutcome
 import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryOutcome
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
@@ -27,6 +30,10 @@ object RuleCaptureCodec {
     fun encode(state: RuleCaptureState): String = JSONObject()
         .put("version", VERSION)
         .put("samples", JSONArray().apply { state.samples.forEach { put(it.toJson()) } })
+        .put(
+            "semanticDiffEvidence",
+            JSONArray().apply { state.semanticDiffEvidence.forEach { put(it.toJson()) } },
+        )
         .putNullable("activeSession", state.activeSession?.toJson())
         .toString()
 
@@ -38,6 +45,9 @@ object RuleCaptureCodec {
             RuleCaptureState(
                 samples = json.getJSONArray("samples").mapObjects { it.toSample() },
                 activeSession = json.optJSONObject("activeSession")?.toSession(),
+                semanticDiffEvidence = json.optJSONArray("semanticDiffEvidence")
+                    ?.mapObjects { it.toSemanticDiffEvidence() }
+                    .orEmpty(),
             )
         }.getOrDefault(RuleCaptureState())
     }
@@ -68,6 +78,7 @@ object RuleCaptureCodec {
         .putNullable("immediateRecovery", immediateRecovery?.toJson())
         .putNullable("preClickProbe", preClickProbe?.toJson())
         .putNullable("snapshotRecovery", snapshotRecovery?.toJson())
+        .putNullable("semanticDiff", semanticDiff?.toJson())
         .putNullable("lastWindowVerifiedAgeMs", lastWindowVerifiedAgeMs)
         .putNullable("lastContentChangedAgeMs", lastContentChangedAgeMs)
 
@@ -87,6 +98,24 @@ object RuleCaptureCodec {
     private fun SnapshotRecoveryDiagnostics.toJson() = JSONObject()
         .put("outcome", outcome.name)
         .putNullable("ageMs", ageMs)
+
+    private fun SemanticDiffDiagnostics.toJson() = JSONObject()
+        .put("outcome", outcome.name)
+        .put("observationCount", observationCount)
+        .put("currentCandidateCount", currentCandidateCount)
+        .put("stableCandidateCount", stableCandidateCount)
+        .put("disappearedCandidateCount", disappearedCandidateCount)
+        .put("visitedNodeCount", visitedNodeCount)
+        .put("transitionSignal", transitionSignal)
+
+    private fun SemanticDiffEvidence.toJson() = JSONObject()
+        .put("targetPackageName", targetAppId.packageName)
+        .put("activityName", activityName)
+        .put("capturedAtEpochMs", capturedAtEpochMs)
+        .put(
+            "selectors",
+            JSONArray().apply { selectors.forEach { put(it.toJson()) } },
+        )
 
     private fun TargetWindowDiagnostics.toJson() = JSONObject()
         .put("windowStateEventCount", windowStateEventCount)
@@ -179,6 +208,7 @@ object RuleCaptureCodec {
         immediateRecovery = optJSONObject("immediateRecovery")?.toRecoveryDiagnostics(),
         preClickProbe = optJSONObject("preClickProbe")?.toRecoveryDiagnostics(),
         snapshotRecovery = optJSONObject("snapshotRecovery")?.toSnapshotDiagnostics(),
+        semanticDiff = optJSONObject("semanticDiff")?.toSemanticDiffDiagnostics(),
         lastWindowVerifiedAgeMs = nullableLong("lastWindowVerifiedAgeMs"),
         lastContentChangedAgeMs = nullableLong("lastContentChangedAgeMs"),
     )
@@ -201,6 +231,23 @@ object RuleCaptureCodec {
     private fun JSONObject.toSnapshotDiagnostics() = SnapshotRecoveryDiagnostics(
         outcome = SnapshotRecoveryOutcome.valueOf(getString("outcome")),
         ageMs = nullableLong("ageMs"),
+    )
+
+    private fun JSONObject.toSemanticDiffDiagnostics() = SemanticDiffDiagnostics(
+        outcome = SemanticDiffOutcome.valueOf(getString("outcome")),
+        observationCount = optInt("observationCount", 0),
+        currentCandidateCount = optInt("currentCandidateCount", 0),
+        stableCandidateCount = optInt("stableCandidateCount", 0),
+        disappearedCandidateCount = optInt("disappearedCandidateCount", 0),
+        visitedNodeCount = optInt("visitedNodeCount", 0),
+        transitionSignal = optBoolean("transitionSignal", false),
+    )
+
+    private fun JSONObject.toSemanticDiffEvidence() = SemanticDiffEvidence(
+        targetAppId = TargetAppId(getString("targetPackageName")),
+        activityName = getString("activityName"),
+        selectors = getJSONArray("selectors").mapObjects { it.toCapturedSelector() },
+        capturedAtEpochMs = getLong("capturedAtEpochMs"),
     )
 
     private fun JSONObject.toTargetWindowDiagnostics() = TargetWindowDiagnostics(

@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
+import com.zhenghuaizhi.flashskip.domain.model.SemanticDiffOutcome
 import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
 import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.rulecapture.RuleCandidateAnalyzer
@@ -126,7 +127,13 @@ internal fun CaptureControls(
             "已记住${targetAppName ?: "目标应用"}弹窗中的唯一关闭按钮。" +
                 "确认你刚才已手动关闭广告后，再保存规则。"
         CapturePhase.CAPTURED -> "已采集${targetAppName ?: "目标应用"}的点击信息，请确认完成。"
-        CapturePhase.FAILED -> failureMessage(state.failure)
+        CapturePhase.FAILED -> if (
+            state.failureDiagnostics?.semanticDiff?.outcome == SemanticDiffOutcome.AMBIGUOUS
+        ) {
+            "采集到多个可能的关闭节点，请再次采集；FlashSkip 会取两次结果的交集。"
+        } else {
+            failureMessage(state.failure)
+        }
         null -> when {
             !state.canStart -> "开启并保持 FlashSkip 无障碍服务运行后可采集。"
             else -> "无需预先添加应用；从 Home 启动任意应用并采集一次关闭按钮。"

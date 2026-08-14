@@ -112,7 +112,13 @@ internal class AccessibilityCaptureWindowResolver(
                 sourceWindowType = sourceWindow?.type,
                 sourceWindowActive = sourceWindow?.isActive,
             )
-            return when (val decision = CaptureWindowBoundaryPolicy.decide(request.host, evidence)) {
+            val decision = CaptureWindowBoundaryPolicy.decide(
+                host = request.host,
+                evidence = evidence,
+                allowActiveHostRootFallback = request.allowActiveHostRootFallback,
+            )
+            CaptureTraceLog.windowBoundary(request, evidence, decision, deadlineAtElapsedMs)
+            return when (decision) {
                 is Decision.AcceptPrimary -> {
                     val root = rootFor(decision.source, matchingRoot, activeRoot, sourceRoot)
                         ?: return Result.Retryable
@@ -212,6 +218,7 @@ internal class AccessibilityCaptureWindowResolver(
         val eventPackageName: String,
         val eventWindowId: Int,
         val host: VerifiedCaptureHost,
+        val allowActiveHostRootFallback: Boolean = false,
     )
 
     data class ResolvedRoot(

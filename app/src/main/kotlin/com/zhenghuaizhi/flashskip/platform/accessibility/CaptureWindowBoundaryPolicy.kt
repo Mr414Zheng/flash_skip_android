@@ -4,6 +4,7 @@ internal object CaptureWindowBoundaryPolicy {
     fun decide(
         host: VerifiedCaptureHost?,
         evidence: CaptureWindowBoundaryEvidence,
+        allowActiveHostRootFallback: Boolean = false,
     ): Decision {
         if (host == null || host.activityName.isBlank()) {
             return Decision.Reject(RejectReason.HOST_UNVERIFIED)
@@ -23,25 +24,41 @@ internal object CaptureWindowBoundaryPolicy {
                 Decision.AcceptPrimary(source)
             }
 
-        when {
-            evidence.matchingWindowCount > 1 ->
-                return Decision.Reject(RejectReason.EVENT_WINDOW_AMBIGUOUS)
+        if (evidence.matchingWindowCount > 1) {
+            return Decision.Reject(RejectReason.EVENT_WINDOW_AMBIGUOUS)
+        }
+        if (evidence.matchingWindowCount == 1 &&
+            evidence.matchingWindowActive == true &&
+            evidence.matchingWindowType == APPLICATION_WINDOW_TYPE &&
+            evidence.matchingRootAvailable
+        ) {
+            if (evidence.matchingRootPackageName != host.packageName ||
+                evidence.matchingRootWindowId != evidence.eventWindowId
+            ) {
+                return Decision.Reject(RejectReason.WINDOW_ROOT_MISMATCH)
+            }
+            return accept(CaptureWindowResolutionSource.WINDOW_LIST)
+        }
 
-            evidence.matchingWindowCount == 1 -> {
-                if (evidence.matchingWindowActive != true) {
-                    return Decision.Reject(RejectReason.WINDOW_NOT_ACTIVE)
-                }
-                if (evidence.matchingWindowType != APPLICATION_WINDOW_TYPE) {
-                    return Decision.Reject(RejectReason.NON_APPLICATION_WINDOW)
-                }
-                if (evidence.matchingRootAvailable) {
-                    if (evidence.matchingRootPackageName != host.packageName ||
-                        evidence.matchingRootWindowId != evidence.eventWindowId
-                    ) {
-                        return Decision.Reject(RejectReason.WINDOW_ROOT_MISMATCH)
-                    }
-                    return accept(CaptureWindowResolutionSource.WINDOW_LIST)
-                }
+        val activeRootProvesVerifiedHost =
+            evidence.activeRootPackageName == host.packageName &&
+                evidence.activeRootWindowId == host.windowId &&
+                evidence.activeRootWindowAvailable &&
+                evidence.activeRootWindowObjectId == evidence.activeRootWindowId &&
+                evidence.activeRootWindowActive == true &&
+                evidence.activeRootWindowType == APPLICATION_WINDOW_TYPE
+        // 内容变化可能来自已销毁的广告子窗口。仅回退到仍处于前台的已验证宿主根节点，
+        // 点击事件不会开启此门禁，避免把失效窗口中的点击归到其他节点。
+        if (allowActiveHostRootFallback && activeRootProvesVerifiedHost) {
+            return Decision.AcceptPrimary(CaptureWindowResolutionSource.ACTIVE_ROOT)
+        }
+
+        if (evidence.matchingWindowCount == 1) {
+            if (evidence.matchingWindowActive != true) {
+                return Decision.Reject(RejectReason.WINDOW_NOT_ACTIVE)
+            }
+            if (evidence.matchingWindowType != APPLICATION_WINDOW_TYPE) {
+                return Decision.Reject(RejectReason.NON_APPLICATION_WINDOW)
             }
         }
 

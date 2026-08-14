@@ -30,16 +30,16 @@ internal class AccessibilityPreClickRecovery(
         verifiedRoot: AccessibilityNodeInfo,
         allowBareNumericCountdown: Boolean,
         deadlineAtElapsedMs: Long? = null,
-    ) {
+    ): RefreshResult? {
         val now = elapsedRealtimeMs()
-        if (deadlineAtElapsedMs != null && now >= deadlineAtElapsedMs) return
+        if (deadlineAtElapsedMs != null && now >= deadlineAtElapsedMs) return null
         val existing = snapshot
         if (existing != null && existing.identity != identity) {
             clear()
         } else if (existing != null && now - existing.capturedAtElapsedMs <= MAX_AGE_MS) {
-            return
+            return null
         }
-        if (lastProbeAtElapsedMs?.let { now - it < PROBE_INTERVAL_MS } == true) return
+        if (lastProbeAtElapsedMs?.let { now - it < PROBE_INTERVAL_MS } == true) return null
         lastProbeAtElapsedMs = now
         val recovery = probe.recoverClickedSemanticChainOnVerifiedRoot(
             expected = identity,
@@ -57,6 +57,10 @@ internal class AccessibilityPreClickRecovery(
                 nodes = recovery.nodes,
             )
         }
+        return RefreshResult(
+            diagnostics = recovery.diagnostics,
+            semanticCandidates = recovery.semanticCandidates,
+        )
     }
 
     fun recover(
@@ -112,6 +116,11 @@ internal class AccessibilityPreClickRecovery(
     data class Result(
         val nodes: List<CapturedNode>? = null,
         val diagnostics: SnapshotRecoveryDiagnostics,
+    )
+
+    data class RefreshResult(
+        val diagnostics: ClickRecoveryDiagnostics,
+        val semanticCandidates: List<AccessibilityCaptureProbe.SemanticCandidate>,
     )
 
     private data class Snapshot(

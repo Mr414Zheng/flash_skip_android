@@ -17,6 +17,12 @@ internal object DismissSemantics {
     fun isBareNumericCountdown(value: String?): Boolean =
         TextCondition.NumericCountdown.matches(value)
 
+    /** 资源 ID 仅用于差分候选排序，不能单独绕过稳定结构和唯一性门禁。 */
+    fun isKnownResourceId(value: String?): Boolean {
+        val name = value?.substringAfterLast('/')?.lowercase(Locale.ROOT) ?: return false
+        return DISMISS_RESOURCE_TOKEN.containsMatchIn(name)
+    }
+
     private fun normalized(value: String?): String? = value
         ?.trim()
         ?.lowercase(Locale.ROOT)
@@ -34,6 +40,10 @@ internal object DismissSemantics {
     private val COUNTDOWN_VALUE = Regex("^(跳过(?:广告)?|skip)\\s*\\d+\\s*(?:秒|s)?$")
     private val SKIP_VALUE = Regex(
         pattern = "^(跳过(?:广告)?|skip)(?:\\s*\\d+\\s*(?:秒|s)?)?$",
+        option = RegexOption.IGNORE_CASE,
+    )
+    private val DISMISS_RESOURCE_TOKEN = Regex(
+        pattern = "(?:^|_)(?:skip|close|dismiss)(?:_|$)",
         option = RegexOption.IGNORE_CASE,
     )
 }

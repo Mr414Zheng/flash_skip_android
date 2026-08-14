@@ -83,6 +83,15 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     isRetry = isRetry,
                     occurredAtElapsedMs = occurredAt,
                 )
+                CaptureTraceLog.stage(
+                    latestCaptureState.activeSession?.id,
+                    "window_resolution",
+                    "package" to packageName,
+                    "windowId" to windowId,
+                    "outcome" to outcome,
+                    "retry" to isRetry,
+                    "occurredAt" to occurredAt,
+                )
             },
         )
         restoreDefaultEventConfiguration()
@@ -92,7 +101,13 @@ class FlashSkipAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val safeEvent = event ?: return
-        if (latestCaptureState.activeSession?.blocksAutomation == true) {
+        val captureSession = latestCaptureState.activeSession
+        if (captureSession?.blocksAutomation == true) {
+            CaptureTraceLog.event(
+                session = captureSession,
+                event = safeEvent,
+                verifiedHostPackage = captureAdapter?.verifiedHostPackageName(),
+            )
             handleCaptureEvent(safeEvent)
             return
         }
@@ -108,12 +123,19 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         val occurredAt = AndroidMonotonicClock.elapsedRealtimeMs()
         val reportedPackageName = event.packageName?.toString() ?: run {
             targetWindowDiagnosticsTracker.recordMissingPackage()
+            CaptureTraceLog.stage(session.id, "event_ignored", "reason" to "missing_package")
             return
         }
         val verifiedHostPackage = captureAdapter?.verifiedHostPackageName()
         val packageName = if (reportedPackageName == SYSTEM_UI_PACKAGE) {
             verifiedHostPackage ?: run {
                 targetWindowDiagnosticsTracker.recordIgnoredPackage()
+                CaptureTraceLog.stage(
+                    session.id,
+                    "event_ignored",
+                    "reason" to "system_ui_without_verified_host",
+                    "type" to AccessibilityEvent.eventTypeToString(event.eventType),
+                )
                 return
             }
         } else {
@@ -122,10 +144,24 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         val lockedPackage = session.packageName ?: verifiedHostPackage
         if (lockedPackage != null && packageName != lockedPackage) {
             targetWindowDiagnosticsTracker.recordIgnoredPackage()
+            CaptureTraceLog.stage(
+                session.id,
+                "event_ignored",
+                "reason" to "locked_package_mismatch",
+                "reportedPackage" to reportedPackageName,
+                "effectivePackage" to packageName,
+                "lockedPackage" to lockedPackage,
+            )
             return
         }
         if (lockedPackage == null && packageName in captureIgnoredPackages()) {
             targetWindowDiagnosticsTracker.recordIgnoredPackage()
+            CaptureTraceLog.stage(
+                session.id,
+                "event_ignored",
+                "reason" to "package_ignored_before_target",
+                "package" to packageName,
+            )
             return
         }
         // 未建立经验证宿主前，内容和点击事件不能触发任何节点读取。
@@ -133,6 +169,13 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         ) {
             targetWindowDiagnosticsTracker.recordIgnoredPackage()
+            CaptureTraceLog.stage(
+                session.id,
+                "event_ignored",
+                "reason" to "host_not_verified",
+                "package" to packageName,
+                "type" to AccessibilityEvent.eventTypeToString(event.eventType),
+            )
             return
         }
         when (event.eventType) {
@@ -140,6 +183,14 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                 val className = event.className?.toString()
                 val metadata = snapshotWindowMetadata()
                 if (metadata == null) {
+                    CaptureTraceLog.stage(
+                        session.id,
+                        "window_state",
+                        "outcome" to TargetWindowRecognitionOutcome.WINDOW_METADATA_UNAVAILABLE,
+                        "package" to packageName,
+                        "class" to className,
+                        "windowId" to event.windowId,
+                    )
                     targetWindowDiagnosticsTracker.recordWindowState(
                         packageName = packageName,
                         className = className,
@@ -170,6 +221,18 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     else -> null
                 }
                 if (boundaryOutcome != null) {
+                    CaptureTraceLog.stage(
+                        session.id,
+                        "window_state",
+                        "outcome" to boundaryOutcome,
+                        "package" to packageName,
+                        "class" to className,
+                        "windowId" to event.windowId,
+                        "windows" to metadata.size,
+                        "matching" to matchingWindows.size,
+                        "type" to activeWindow?.type,
+                        "active" to activeWindow?.isActive,
+                    )
                     targetWindowDiagnosticsTracker.recordWindowState(
                         packageName = packageName,
                         className = className,
@@ -205,6 +268,20 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     },
                     occurredAtElapsedMs = occurredAt,
                 )
+                CaptureTraceLog.stage(
+                    session.id,
+                    "window_state",
+                    "outcome" to if (activityName != null) {
+                        TargetWindowRecognitionOutcome.VERIFIED
+                    } else {
+                        TargetWindowRecognitionOutcome.ACTIVITY_UNVERIFIED
+                    },
+                    "package" to packageName,
+                    "class" to className,
+                    "verifiedActivity" to activityName,
+                    "windowId" to event.windowId,
+                    "windows" to metadata.size,
+                )
                 if (activityName == null) {
                     if (verifiedHostPackage == packageName) {
                         captureAdapter?.onTransientTargetWindow(event, packageName)
@@ -223,14 +300,34 @@ class FlashSkipAccessibilityService : AccessibilityService() {
 
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 targetWindowDiagnosticsTracker.recordContentChanged(packageName, occurredAt)
+                CaptureTraceLog.stage(
+                    session.id,
+                    "event_dispatched",
+                    "handler" to "content_changed",
+                    "package" to packageName,
+                    "windowId" to event.windowId,
+                )
                 captureAdapter?.onContentChanged(event, packageName)
             }
 
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
                 targetWindowDiagnosticsTracker.recordViewClicked(packageName, occurredAt)
+                CaptureTraceLog.stage(
+                    session.id,
+                    "event_dispatched",
+                    "handler" to "view_clicked",
+                    "package" to packageName,
+                    "windowId" to event.windowId,
+                )
                 captureAdapter?.onClicked(event, packageName)
             }
-            else -> Unit
+            else -> CaptureTraceLog.stage(
+                session.id,
+                "event_observed_only",
+                "type" to AccessibilityEvent.eventTypeToString(event.eventType),
+                "package" to packageName,
+                "windowId" to event.windowId,
+            )
         }
     }
 
@@ -284,6 +381,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         scope.launch {
             container.ruleCaptureCoordinator.state.collect { state ->
                 latestCaptureState = state
+                CaptureTraceLog.state(state.activeSession)
                 targetWindowDiagnosticsTracker.onSessionChanged(state.activeSession?.id)
                 captureAdapter?.onStateChanged(state)
                 scheduleExpiry(state)
@@ -358,11 +456,20 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         if (captureConfigured && captureConfigurationPackage == packageName) return true
         return runCatching {
             val info = serviceInfo
-            info.eventTypes = DEFAULT_EVENT_TYPES or AccessibilityEvent.TYPE_VIEW_CLICKED
-            info.packageNames = packageName?.let { arrayOf(it) }
+            // 诊断期订阅全部无障碍事件且不按包名过滤，确认点击前后是否有系统层或宿主层信号。
+            // 非目标包只会写入脱敏后的事件外壳，不会读取节点或参与规则采集。
+            info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK
+            info.packageNames = null
             setServiceInfo(info)
             captureConfigurationPackage = packageName
             captureConfigured = true
+            CaptureTraceLog.stage(
+                latestCaptureState.activeSession?.id,
+                "capture_configuration",
+                "eventTypes" to "TYPES_ALL_MASK",
+                "packageFilter" to null,
+                "lockedPackage" to packageName,
+            )
         }.isSuccess
     }
 
@@ -375,6 +482,11 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             setServiceInfo(info)
             captureConfigurationPackage = null
             captureConfigured = false
+            CaptureTraceLog.stage(
+                latestCaptureState.activeSession?.id,
+                "capture_configuration_restored",
+                "eventTypes" to DEFAULT_EVENT_TYPES,
+            )
         }
     }
 

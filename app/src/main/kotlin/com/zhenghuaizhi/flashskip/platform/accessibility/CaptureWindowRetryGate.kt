@@ -44,4 +44,5 @@ internal data class WindowRetryKey(
     val sessionId: Long,
     val packageName: String,
     val windowId: Int,
+    val allowActiveHostRootFallback: Boolean = false,
 )

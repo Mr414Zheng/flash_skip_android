@@ -8,6 +8,7 @@ import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
 import com.zhenghuaizhi.flashskip.domain.model.ObservedDismissCandidate
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
+import com.zhenghuaizhi.flashskip.domain.model.SemanticDiffEvidence
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
@@ -174,6 +175,37 @@ class RuleCaptureCoordinator(
         }
     }
 
+    suspend fun recordSemanticDiffEvidence(
+        sessionId: Long,
+        evidence: SemanticDiffEvidence,
+    ) {
+        captureStore.update { state ->
+            val session = state.activeSession?.takeIf {
+                it.id == sessionId && it.phase in setOf(
+                    CapturePhase.WAITING_FOR_TARGET,
+                    CapturePhase.OBSERVING_CLICK,
+                )
+            } ?: return@update state
+            if (session.targetAppId != null && session.targetAppId != evidence.targetAppId) {
+                return@update state
+            }
+            val sanitized = evidence.copy(
+                activityName = evidence.activityName.take(MAX_ACTIVITY_LENGTH),
+                selectors = evidence.selectors.distinct().take(MAX_DIFF_EVIDENCE_SELECTORS),
+            )
+            if (sanitized.activityName.isBlank() || sanitized.selectors.isEmpty()) {
+                return@update state
+            }
+            val retained = state.semanticDiffEvidence.filterNot {
+                it.targetAppId == sanitized.targetAppId &&
+                    it.activityName == sanitized.activityName
+            }
+            state.copy(
+                semanticDiffEvidence = (retained + sanitized).takeLast(MAX_DIFF_EVIDENCE_TARGETS),
+            )
+        }
+    }
+
     suspend fun finish(sessionId: Long) {
         val active = captureStore.state.first().activeSession?.takeIf { it.id == sessionId }
             ?: return
@@ -186,7 +218,13 @@ class RuleCaptureCoordinator(
             val session = state.activeSession?.takeIf {
                 it.id == sessionId && it.phase == active.phase
             } ?: return@update state
-            state.copy(samples = state.samples + sample, activeSession = null)
+            state.copy(
+                samples = state.samples + sample,
+                activeSession = null,
+                semanticDiffEvidence = state.semanticDiffEvidence.filterNot {
+                    it.targetAppId == sample.targetAppId
+                },
+            )
         }
         flashSkipStore.setAppEnabled(sample.targetAppId, false)
     }
@@ -254,6 +292,9 @@ class RuleCaptureCoordinator(
             state.copy(
                 samples = state.samples.filterNot { it.targetAppId == targetAppId },
                 activeSession = state.activeSession?.takeUnless { it.targetAppId == targetAppId },
+                semanticDiffEvidence = state.semanticDiffEvidence.filterNot {
+                    it.targetAppId == targetAppId
+                },
             )
         }
     }
@@ -314,6 +355,9 @@ class RuleCaptureCoordinator(
         const val CLICK_TIMEOUT_MS = 15_000L
         const val COMPLETION_TIMEOUT_MS = 10 * 60_000L
         private const val CONFIGURATION_WAIT_MS = CONFIGURATION_TIMEOUT_MS + 500L
+        private const val MAX_ACTIVITY_LENGTH = 240
+        private const val MAX_DIFF_EVIDENCE_SELECTORS = 64
+        private const val MAX_DIFF_EVIDENCE_TARGETS = 10
     }
 
     private fun ObservedDismissCandidate.toSample() = CaptureSample(
