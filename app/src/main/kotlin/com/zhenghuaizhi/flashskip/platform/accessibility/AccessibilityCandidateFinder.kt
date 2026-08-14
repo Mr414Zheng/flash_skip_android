@@ -48,16 +48,17 @@ internal class AccessibilityCandidateFinder(
             root.findAccessibilityNodeInfosByViewId(selector.resourceId)
         }.getOrNull()
 
-        selector.text != null -> runCatching {
-            root.findAccessibilityNodeInfosByText(selector.text.queryValue())
+        selector.text?.queryValue() != null -> runCatching {
+            root.findAccessibilityNodeInfosByText(requireNotNull(selector.text.queryValue()))
         }.getOrNull()
 
         else -> null
     }
 
-    private fun TextCondition.queryValue(): String = when (this) {
+    private fun TextCondition.queryValue(): String? = when (this) {
         is TextCondition.Exact -> value
         is TextCondition.Prefix -> value
+        TextCondition.NumericCountdown -> null
     }
 
     @Suppress("DEPRECATION")

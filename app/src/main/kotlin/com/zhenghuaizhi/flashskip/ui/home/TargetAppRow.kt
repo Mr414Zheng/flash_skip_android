@@ -166,8 +166,13 @@ internal fun CaptureControls(
                     )
                 }
                 state.failureDiagnostics?.let { diagnostics ->
+                    val isClickTimeout = state.failure == CaptureFailure.CLICK_TIMEOUT
                     Text(
-                        text = "点击恢复\n${formatCaptureFailureDiagnostics(diagnostics)}",
+                        text = if (isClickTimeout) {
+                            "关闭按钮探测\n${formatCaptureTimeoutDiagnostics(diagnostics)}"
+                        } else {
+                            "点击恢复\n${formatCaptureFailureDiagnostics(diagnostics)}"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

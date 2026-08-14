@@ -10,6 +10,8 @@ internal class TargetWindowDiagnosticsTracker {
     private var viewClickedEventCount = 0
     private var ignoredPackageEventCount = 0
     private var missingPackageEventCount = 0
+    private var windowResolutionAttemptCount = 0
+    private var windowRetryAttemptCount = 0
     private var lastPackageName: String? = null
     private var lastClassName: String? = null
     private var lastEventWindowId: Int? = null
@@ -37,6 +39,8 @@ internal class TargetWindowDiagnosticsTracker {
         viewClickedEventCount = 0
         ignoredPackageEventCount = 0
         missingPackageEventCount = 0
+        windowResolutionAttemptCount = 0
+        windowRetryAttemptCount = 0
         lastPackageName = null
         lastClassName = null
         lastEventWindowId = null
@@ -89,6 +93,23 @@ internal class TargetWindowDiagnosticsTracker {
         lastEventAtElapsedMs = occurredAtElapsedMs
     }
 
+    fun recordResolution(
+        packageName: String,
+        windowId: Int,
+        outcome: TargetWindowRecognitionOutcome,
+        isRetry: Boolean,
+        occurredAtElapsedMs: Long,
+    ) {
+        if (outcome != TargetWindowRecognitionOutcome.RETRY_EXHAUSTED) {
+            windowResolutionAttemptCount++
+            if (isRetry) windowRetryAttemptCount++
+        }
+        lastPackageName = sanitize(packageName, MAX_PACKAGE_LENGTH)
+        lastEventWindowId = windowId
+        lastOutcome = outcome
+        lastEventAtElapsedMs = occurredAtElapsedMs
+    }
+
     fun snapshot(expectedSessionId: Long, nowElapsedMs: Long): TargetWindowDiagnostics? {
         if (sessionId != expectedSessionId) return null
         return TargetWindowDiagnostics(
@@ -97,6 +118,8 @@ internal class TargetWindowDiagnosticsTracker {
             viewClickedEventCount = viewClickedEventCount,
             ignoredPackageEventCount = ignoredPackageEventCount,
             missingPackageEventCount = missingPackageEventCount,
+            windowResolutionAttemptCount = windowResolutionAttemptCount,
+            windowRetryAttemptCount = windowRetryAttemptCount,
             lastPackageName = lastPackageName,
             lastClassName = lastClassName,
             lastEventWindowId = lastEventWindowId,

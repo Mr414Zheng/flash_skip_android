@@ -34,6 +34,16 @@ internal fun formatCaptureFailureDiagnostics(
     )
 }.joinToString(separator = "\n")
 
+internal fun formatCaptureTimeoutDiagnostics(
+    diagnostics: CaptureFailureDiagnostics,
+): String = buildList {
+    diagnostics.preClickProbe?.let { add(it.summary("弹窗扫描")) }
+    add(
+        "时序：窗口验证 ${diagnostics.lastWindowVerifiedAgeMs.ageLabel()}，" +
+            "内容变化 ${diagnostics.lastContentChangedAgeMs.ageLabel()}",
+    )
+}.joinToString(separator = "\n")
+
 internal fun formatTargetWindowDiagnostics(
     diagnostics: TargetWindowDiagnostics,
 ): String = buildList {
@@ -43,6 +53,10 @@ internal fun formatTargetWindowDiagnostics(
             "点击 ${diagnostics.viewClickedEventCount}，" +
             "忽略包 ${diagnostics.ignoredPackageEventCount}，" +
             "缺少包名 ${diagnostics.missingPackageEventCount}",
+    )
+    add(
+        "窗口解析：尝试 ${diagnostics.windowResolutionAttemptCount}，" +
+            "重试 ${diagnostics.windowRetryAttemptCount}",
     )
     add("最后结果：${diagnostics.lastOutcome.label()}")
     diagnostics.lastPackageName?.let { add("包名：$it") }
@@ -64,7 +78,8 @@ private fun ClickRecoveryDiagnostics.summary(prefix: String): String {
     return "$prefix：${outcome.label()}$limit；访问 $visitedNodeCount 节点，" +
         "最深 $maxDepth 层，耗时 ${elapsedMs}ms，语义 $semanticNodeCount，" +
         "关闭语义 $knownDismissNodeCount，匹配 $matchedNodeCount，" +
-        "有效候选 $selectorCandidateNodeCount"
+        "有效候选 $selectorCandidateNodeCount，倒计时语义 $countdownSemanticNodeCount，" +
+        "可执行链 $countdownActionChainCount"
 }
 
 private fun ClickRecoveryOutcome.label(): String = when (this) {
@@ -104,6 +119,14 @@ private fun TargetWindowRecognitionOutcome.label(): String = when (this) {
     TargetWindowRecognitionOutcome.ACTIVITY_UNVERIFIED -> "className 无法验证为目标 Activity"
     TargetWindowRecognitionOutcome.OWNED_CHILD_WINDOW -> "同包弹窗由已验证 Activity 承载"
     TargetWindowRecognitionOutcome.VERIFIED -> "目标窗口验证通过"
+    TargetWindowRecognitionOutcome.CHILD_WINDOW_PENDING -> "瞬态子窗口等待补认"
+    TargetWindowRecognitionOutcome.RESOLVED_FROM_WINDOW_LIST -> "从窗口列表补认成功"
+    TargetWindowRecognitionOutcome.RESOLVED_FROM_ACTIVE_ROOT -> "从活动根节点补认成功"
+    TargetWindowRecognitionOutcome.RESOLVED_FROM_EVENT_SOURCE -> "从事件节点补认成功"
+    TargetWindowRecognitionOutcome.WINDOW_ROOT_MISMATCH -> "事件窗口根节点不匹配"
+    TargetWindowRecognitionOutcome.ACTIVE_ROOT_MISMATCH -> "活动根节点已离开目标宿主"
+    TargetWindowRecognitionOutcome.SOURCE_MISMATCH -> "事件节点与目标窗口不匹配"
+    TargetWindowRecognitionOutcome.RETRY_EXHAUSTED -> "瞬态子窗口补认重试耗尽"
 }
 
 private fun Int?.windowTypeLabel(): String = when (this) {

@@ -33,6 +33,7 @@ object SelectorMatcher {
         val textMatches = when (val condition = selector.text) {
             is TextCondition.Exact -> node.text == condition.value
             is TextCondition.Prefix -> node.text?.startsWith(condition.value) == true
+            TextCondition.NumericCountdown -> TextCondition.NumericCountdown.matches(node.text)
             null -> true
         }
         return textMatches

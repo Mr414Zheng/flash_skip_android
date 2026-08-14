@@ -20,6 +20,7 @@ class AccessibilityPageGateway(
 ) : PageGateway {
     private val selectorMatcher = AccessibilityNodeSelectorMatcher(service)
     private val candidateFinder = AccessibilityCandidateFinder(selectorMatcher)
+    private val rootResolver = AccessibilityWindowRootResolver(service, targetPackages)
 
     override suspend fun query(identity: PageIdentity, selector: NodeSelector): QueryResult =
         when (scan(identity, selector) { Unit }) {
@@ -32,13 +33,16 @@ class AccessibilityPageGateway(
 
     override suspend fun click(identity: PageIdentity, selector: NodeSelector): ClickResult =
         when (val result = scan(identity, selector) { node ->
-            val actionable = node.isClickable || node.actionList.any {
-                it.id == AccessibilityNodeInfo.ACTION_CLICK
-            }
-            when {
-                !actionable -> ActionClickResult.NotActionable
-                node.performAction(AccessibilityNodeInfo.ACTION_CLICK) -> ActionClickResult.Clicked
-                else -> ActionClickResult.NotSupported
+            withActionTarget(node, selector, ActionClickResult.NotActionable) { actionNode ->
+                val actionable = actionNode.isClickable || actionNode.actionList.any {
+                    it.id == AccessibilityNodeInfo.ACTION_CLICK
+                }
+                when {
+                    !actionable -> ActionClickResult.NotActionable
+                    actionNode.performAction(AccessibilityNodeInfo.ACTION_CLICK) ->
+                        ActionClickResult.Clicked
+                    else -> ActionClickResult.NotSupported
+                }
             }
         }) {
             CandidateSearchResult.None -> ClickResult.NodeDisappeared
@@ -58,24 +62,35 @@ class AccessibilityPageGateway(
     ): GestureResult {
         val completion = CompletableDeferred<GestureResult>()
         val scan = scan(identity, selector) { node ->
-            val bounds = Rect().also(node::getBoundsInScreen)
-            val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
-            val gesture = GestureDescription.Builder()
-                .addStroke(GestureDescription.StrokeDescription(path, 0, GESTURE_DURATION_MS))
-                .build()
-            service.dispatchGesture(
-                gesture,
-                object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription) {
-                        completion.complete(GestureResult.Completed)
-                    }
+            withActionTarget(node, selector, false) { actionNode ->
+                val bounds = Rect().also(actionNode::getBoundsInScreen)
+                val metrics = service.resources.displayMetrics
+                if (!actionNode.isVisibleToUser ||
+                    bounds.width() <= 0 ||
+                    bounds.height() <= 0 ||
+                    bounds.centerX() !in 0 until metrics.widthPixels ||
+                    bounds.centerY() !in 0 until metrics.heightPixels
+                ) {
+                    return@withActionTarget false
+                }
+                val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, GESTURE_DURATION_MS))
+                    .build()
+                service.dispatchGesture(
+                    gesture,
+                    object : AccessibilityService.GestureResultCallback() {
+                        override fun onCompleted(gestureDescription: GestureDescription) {
+                            completion.complete(GestureResult.Completed)
+                        }
 
-                    override fun onCancelled(gestureDescription: GestureDescription) {
-                        completion.complete(GestureResult.Cancelled)
-                    }
-                },
-                null,
-            )
+                        override fun onCancelled(gestureDescription: GestureDescription) {
+                            completion.complete(GestureResult.Cancelled)
+                        }
+                    },
+                    null,
+                )
+            }
         }
         return when (scan) {
             CandidateSearchResult.None -> GestureResult.NodeDisappeared
@@ -96,10 +111,12 @@ class AccessibilityPageGateway(
         // 包白名单必须先于身份、根节点及任何节点读取，避免上层误调用扩大数据访问范围。
         if (expected.packageName !in targetPackages()) return CandidateSearchResult.PageChanged
         if (currentIdentity() != expected) return CandidateSearchResult.PageChanged
-        val root = service.rootInActiveWindow ?: return CandidateSearchResult.None
-        if (root.packageName?.toString() != expected.packageName || root.windowId != expected.windowId) {
-            root.recycle()
-            return CandidateSearchResult.PageChanged
+        val root = when (val resolved = rootResolver.resolve(expected)) {
+            is AccessibilityWindowRootResolver.Result.Success -> resolved.root
+            AccessibilityWindowRootResolver.Result.NoRoot -> return CandidateSearchResult.None
+            AccessibilityWindowRootResolver.Result.OutsideTargets,
+            AccessibilityWindowRootResolver.Result.PageChanged,
+            -> return CandidateSearchResult.PageChanged
         }
         try {
             return candidateFinder.findUnique(
@@ -110,6 +127,32 @@ class AccessibilityPageGateway(
             )
         } finally {
             root.recycle()
+        }
+    }
+
+    /** selector 可以用子节点语义定位，但动作必须落在采集时验证过的可执行祖先上。 */
+    @Suppress("DEPRECATION")
+    private fun <T> withActionTarget(
+        matchedNode: AccessibilityNodeInfo,
+        selector: NodeSelector,
+        unavailable: T,
+        action: (AccessibilityNodeInfo) -> T,
+    ): T {
+        val distance = selector.actionAncestorDistance ?: return action(matchedNode)
+        if (distance !in 1..NodeSelector.MAX_ANCESTOR_DISTANCE) return unavailable
+        val expectedPackage = matchedNode.packageName?.toString() ?: return unavailable
+        var ownedAncestor: AccessibilityNodeInfo? = null
+        try {
+            repeat(distance) {
+                val parent = runCatching { (ownedAncestor ?: matchedNode).parent }.getOrNull()
+                    ?: return unavailable
+                ownedAncestor?.recycle()
+                ownedAncestor = parent
+                if (parent.packageName?.toString() != expectedPackage) return unavailable
+            }
+            return action(requireNotNull(ownedAncestor))
+        } finally {
+            ownedAncestor?.recycle()
         }
     }
 

@@ -217,7 +217,10 @@ class RuleCaptureCoordinator(
         }
     }
 
-    suspend fun expireActive(targetWindowDiagnostics: TargetWindowDiagnostics? = null) {
+    suspend fun expireActive(
+        targetWindowDiagnostics: TargetWindowDiagnostics? = null,
+        failureDiagnostics: CaptureFailureDiagnostics? = null,
+    ) {
         val now = wallClock.currentTimeMillis()
         captureStore.update { state ->
             val session = state.activeSession ?: return@update state
@@ -236,6 +239,9 @@ class RuleCaptureCoordinator(
                 activeSession = failed(
                     session = session,
                     failure = failure,
+                    diagnostics = failureDiagnostics.takeIf {
+                        session.phase == CapturePhase.OBSERVING_CLICK
+                    },
                     targetWindowDiagnostics = targetWindowDiagnostics,
                 ),
             )

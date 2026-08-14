@@ -61,9 +61,34 @@ object RuleCandidateAnalyzer {
                 (node.clickable || node.supportsActionClick)
         }
         if (actionTargetIndex < 0) return emptyList()
-        val targetSelectors = selectorsForTarget(nodes[actionTargetIndex])
+        return buildList {
+            if (actionTargetIndex > 0) {
+                addAll(
+                    scopedSelectors(
+                        nodes = nodes,
+                        targetIndex = 0,
+                        actionAncestorDistance = actionTargetIndex,
+                    ),
+                )
+            }
+            addAll(scopedSelectors(nodes, actionTargetIndex))
+        }.distinct().filter { selector ->
+            !DismissSemantics.isBareNumericCountdown(selector.text) ||
+                selector.hasStableResourceId() ||
+                selector.hasStableAncestor()
+        }
+    }
+
+    private fun scopedSelectors(
+        nodes: List<CapturedNode>,
+        targetIndex: Int,
+        actionAncestorDistance: Int? = null,
+    ): List<CapturedSelector> {
+        val targetSelectors = selectorsForTarget(nodes[targetIndex]).map { selector ->
+            selector.copy(actionAncestorDistance = actionAncestorDistance)
+        }
         val ancestorSelectors = nodes
-            .drop(actionTargetIndex + 1)
+            .drop(targetIndex + 1)
             .take(NodeSelector.MAX_ANCESTOR_DISTANCE)
             .mapIndexedNotNull { index, ancestor ->
                 ancestor.resourceId?.takeIf { resourceId ->
@@ -178,6 +203,9 @@ object RuleCandidateAnalyzer {
     )
 
     private fun CapturedSelector.isStrongEnough(): Boolean {
+        if (DismissSemantics.isBareNumericCountdown(text)) {
+            return hasStableResourceId() || hasStableAncestor()
+        }
         if (conditionCount >= 2 || resourceId != null) return true
         val semantic = text ?: contentDescription ?: return false
         return !DismissSemantics.isKnown(semantic)

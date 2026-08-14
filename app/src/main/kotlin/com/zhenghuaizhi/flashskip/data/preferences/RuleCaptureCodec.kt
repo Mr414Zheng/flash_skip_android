@@ -80,6 +80,8 @@ object RuleCaptureCodec {
         .put("matchedNodeCount", matchedNodeCount)
         .put("knownDismissNodeCount", knownDismissNodeCount)
         .put("selectorCandidateNodeCount", selectorCandidateNodeCount)
+        .put("countdownSemanticNodeCount", countdownSemanticNodeCount)
+        .put("countdownActionChainCount", countdownActionChainCount)
         .putNullable("traversalLimitReason", traversalLimitReason?.name)
 
     private fun SnapshotRecoveryDiagnostics.toJson() = JSONObject()
@@ -92,6 +94,8 @@ object RuleCaptureCodec {
         .put("viewClickedEventCount", viewClickedEventCount)
         .put("ignoredPackageEventCount", ignoredPackageEventCount)
         .put("missingPackageEventCount", missingPackageEventCount)
+        .put("windowResolutionAttemptCount", windowResolutionAttemptCount)
+        .put("windowRetryAttemptCount", windowRetryAttemptCount)
         .putNullable("lastPackageName", lastPackageName)
         .putNullable("lastClassName", lastClassName)
         .putNullable("lastEventWindowId", lastEventWindowId)
@@ -144,6 +148,7 @@ object RuleCaptureCodec {
         .putNullable("contentDescription", contentDescription)
         .putNullable("ancestorResourceId", ancestorResourceId)
         .putNullable("ancestorDistance", ancestorDistance)
+        .putNullable("actionAncestorDistance", actionAncestorDistance)
 
     private fun JSONObject.toSession() = CaptureSession(
         id = getLong("id"),
@@ -187,6 +192,8 @@ object RuleCaptureCodec {
         matchedNodeCount = getInt("matchedNodeCount"),
         knownDismissNodeCount = getInt("knownDismissNodeCount"),
         selectorCandidateNodeCount = getInt("selectorCandidateNodeCount"),
+        countdownSemanticNodeCount = optInt("countdownSemanticNodeCount", 0),
+        countdownActionChainCount = optInt("countdownActionChainCount", 0),
         traversalLimitReason = nullableString("traversalLimitReason")
             ?.let(TraversalLimitReason::valueOf),
     )
@@ -202,6 +209,8 @@ object RuleCaptureCodec {
         viewClickedEventCount = getInt("viewClickedEventCount"),
         ignoredPackageEventCount = getInt("ignoredPackageEventCount"),
         missingPackageEventCount = getInt("missingPackageEventCount"),
+        windowResolutionAttemptCount = optInt("windowResolutionAttemptCount", 0),
+        windowRetryAttemptCount = optInt("windowRetryAttemptCount", 0),
         lastPackageName = nullableString("lastPackageName"),
         lastClassName = nullableString("lastClassName"),
         lastEventWindowId = nullableInt("lastEventWindowId"),
@@ -255,6 +264,7 @@ object RuleCaptureCodec {
         contentDescription = nullableString("contentDescription"),
         ancestorResourceId = nullableString("ancestorResourceId"),
         ancestorDistance = nullableInt("ancestorDistance"),
+        actionAncestorDistance = nullableInt("actionAncestorDistance"),
     )
 
     private fun JSONObject.putNullable(key: String, value: Any?): JSONObject =

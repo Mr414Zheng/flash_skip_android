@@ -18,6 +18,7 @@ data class NodeSelector(
     val contentDescription: String? = null,
     val ancestorResourceId: String? = null,
     val ancestorDistance: Int? = null,
+    val actionAncestorDistance: Int? = null,
 ) {
     val hasConditions: Boolean
         get() = resourceId != null || text != null || contentDescription != null
@@ -33,6 +34,15 @@ data class NodeSelector(
 sealed interface TextCondition {
     data class Exact(val value: String) : TextCondition
     data class Prefix(val value: String) : TextCondition
+
+    data object NumericCountdown : TextCondition {
+        fun matches(value: String?): Boolean = value
+            ?.trim()
+            ?.let(PATTERN::matches)
+            ?: false
+
+        private val PATTERN = Regex("^[0-9０-９]{1,2}\\s*(?:秒|[sS])?$")
+    }
 }
 
 data class NodeSnapshot(

@@ -1,5 +1,6 @@
 package com.zhenghuaizhi.flashskip.domain.rulecapture
 
+import com.zhenghuaizhi.flashskip.domain.model.TextCondition
 import java.util.Locale
 
 internal object DismissSemantics {
@@ -12,6 +13,9 @@ internal object DismissSemantics {
         val trimmed = value?.trim()?.takeIf(String::isNotEmpty) ?: return null
         return SKIP_VALUE.matchEntire(trimmed)?.groupValues?.get(1)
     }
+
+    fun isBareNumericCountdown(value: String?): Boolean =
+        TextCondition.NumericCountdown.matches(value)
 
     private fun normalized(value: String?): String? = value
         ?.trim()

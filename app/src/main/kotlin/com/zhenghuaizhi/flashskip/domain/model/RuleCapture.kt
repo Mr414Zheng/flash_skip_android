@@ -51,6 +51,8 @@ data class ClickRecoveryDiagnostics(
     val matchedNodeCount: Int = 0,
     val knownDismissNodeCount: Int = 0,
     val selectorCandidateNodeCount: Int = 0,
+    val countdownSemanticNodeCount: Int = 0,
+    val countdownActionChainCount: Int = 0,
     val traversalLimitReason: TraversalLimitReason? = null,
 )
 
@@ -92,6 +94,14 @@ enum class TargetWindowRecognitionOutcome {
     ACTIVITY_UNVERIFIED,
     OWNED_CHILD_WINDOW,
     VERIFIED,
+    CHILD_WINDOW_PENDING,
+    RESOLVED_FROM_WINDOW_LIST,
+    RESOLVED_FROM_ACTIVE_ROOT,
+    RESOLVED_FROM_EVENT_SOURCE,
+    WINDOW_ROOT_MISMATCH,
+    ACTIVE_ROOT_MISMATCH,
+    SOURCE_MISMATCH,
+    RETRY_EXHAUSTED,
 }
 
 data class TargetWindowDiagnostics(
@@ -100,6 +110,8 @@ data class TargetWindowDiagnostics(
     val viewClickedEventCount: Int = 0,
     val ignoredPackageEventCount: Int = 0,
     val missingPackageEventCount: Int = 0,
+    val windowResolutionAttemptCount: Int = 0,
+    val windowRetryAttemptCount: Int = 0,
     val lastPackageName: String? = null,
     val lastClassName: String? = null,
     val lastEventWindowId: Int? = null,
@@ -128,6 +140,7 @@ data class CapturedSelector(
     val contentDescription: String? = null,
     val ancestorResourceId: String? = null,
     val ancestorDistance: Int? = null,
+    val actionAncestorDistance: Int? = null,
 ) {
     val conditionCount: Int
         get() = listOf(resourceId, text, contentDescription, ancestorResourceId).count { it != null }
@@ -138,15 +151,23 @@ data class CapturedSelector(
         contentDescription = contentDescription,
         ancestorResourceId = ancestorResourceId,
         ancestorDistance = ancestorDistance,
+        actionAncestorDistance = actionAncestorDistance,
     )
 
-    fun stableKey(): String = listOf(
-        resourceId.orEmpty(),
-        text.orEmpty(),
-        contentDescription.orEmpty(),
-        ancestorResourceId.orEmpty(),
-        ancestorDistance?.toString().orEmpty(),
-    ).joinToString("\u001f")
+    fun stableKey(): String {
+        val legacyFields = listOf(
+            resourceId.orEmpty(),
+            text.orEmpty(),
+            contentDescription.orEmpty(),
+            ancestorResourceId.orEmpty(),
+            ancestorDistance?.toString().orEmpty(),
+        )
+        return if (actionAncestorDistance == null) {
+            legacyFields.joinToString("\u001f")
+        } else {
+            (legacyFields + actionAncestorDistance.toString()).joinToString("\u001f")
+        }
+    }
 }
 
 data class CaptureSample(

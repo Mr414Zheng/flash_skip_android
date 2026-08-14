@@ -11,7 +11,9 @@ enum class RuleValidationIssue {
     NO_ACTIVITY,
     NO_SELECTOR,
     EMPTY_SELECTOR,
+    UNSAFE_DYNAMIC_TEXT,
     INVALID_ANCESTOR,
+    INVALID_ACTION_TARGET,
     NEGATIVE_DELAY,
     NEGATIVE_COOLDOWN,
 }
@@ -38,11 +40,19 @@ object RuleValidator {
                         when (val text = selector.text) {
                             is TextCondition.Exact -> text.value.isBlank()
                             is TextCondition.Prefix -> text.value.isBlank()
+                            TextCondition.NumericCountdown -> false
                             null -> false
                         }
                 }
             ) {
                 issues += RuleValidationIssue.EMPTY_SELECTOR
+            }
+            if (rule.selectors.any { selector ->
+                    selector.text == TextCondition.NumericCountdown &&
+                        !selector.hasAppSpecificResourceConstraint()
+                }
+            ) {
+                issues += RuleValidationIssue.UNSAFE_DYNAMIC_TEXT
             }
             if (rule.selectors.any { selector ->
                     selector.ancestorResourceId?.isBlank() == true ||
@@ -55,9 +65,24 @@ object RuleValidator {
             ) {
                 issues += RuleValidationIssue.INVALID_ANCESTOR
             }
+            if (rule.selectors.any { selector ->
+                    selector.actionAncestorDistance?.let {
+                        it !in 1..NodeSelector.MAX_ANCESTOR_DISTANCE
+                    } == true
+                }
+            ) {
+                issues += RuleValidationIssue.INVALID_ACTION_TARGET
+            }
             if (rule.startupDelayMs < 0) issues += RuleValidationIssue.NEGATIVE_DELAY
             if (rule.cooldownMs < 0) issues += RuleValidationIssue.NEGATIVE_COOLDOWN
         }
         return issues
     }
 }
+
+private fun NodeSelector.hasAppSpecificResourceConstraint(): Boolean =
+    resourceId?.startsWith(ANDROID_RESOURCE_PREFIX) == false ||
+        (ancestorResourceId?.startsWith(ANDROID_RESOURCE_PREFIX) == false &&
+            ancestorDistance?.let { it in 1..NodeSelector.MAX_ANCESTOR_DISTANCE } == true)
+
+private const val ANDROID_RESOURCE_PREFIX = "android:"
