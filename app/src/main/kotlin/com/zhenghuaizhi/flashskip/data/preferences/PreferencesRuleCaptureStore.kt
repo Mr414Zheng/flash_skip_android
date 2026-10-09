@@ -1,6 +1,8 @@
 package com.zhenghuaizhi.flashskip.data.preferences
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -16,24 +18,27 @@ import kotlinx.coroutines.launch
 
 private val Context.ruleCaptureDataStore by preferencesDataStore(name = "flashskip_rule_capture")
 
-class PreferencesRuleCaptureStore(
-    private val context: Context,
+class PreferencesRuleCaptureStore internal constructor(
+    private val dataStore: DataStore<Preferences>,
     cleanupScope: CoroutineScope,
 ) : RuleCaptureStore {
+    constructor(context: Context, cleanupScope: CoroutineScope) :
+        this(context.ruleCaptureDataStore, cleanupScope)
+
     init {
         cleanupScope.launch {
-            context.ruleCaptureDataStore.edit { values -> values.remove(LEGACY_STATE) }
+            dataStore.edit { values -> values.remove(LEGACY_STATE) }
         }
     }
 
-    override val state: Flow<RuleCaptureState> = context.ruleCaptureDataStore.data
+    override val state: Flow<RuleCaptureState> = dataStore.data
         .catch { error ->
             if (error is IOException) emit(emptyPreferences()) else throw error
         }
         .map { values -> RuleCaptureCodec.decodeOrEmpty(values[STATE]) }
 
     override suspend fun update(transform: (RuleCaptureState) -> RuleCaptureState) {
-        context.ruleCaptureDataStore.edit { values ->
+        dataStore.edit { values ->
             val current = RuleCaptureCodec.decodeOrEmpty(values[STATE])
             values[STATE] = RuleCaptureCodec.encode(transform(current))
         }

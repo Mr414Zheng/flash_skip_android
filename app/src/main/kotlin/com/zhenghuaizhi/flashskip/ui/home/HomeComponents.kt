@@ -272,6 +272,7 @@ internal fun EmptyExecutionState() {
 internal fun PrivacyFooter(
     hasCapturedRules: Boolean = false,
     onClearAllCapturedRules: () -> Unit = {},
+    actionsEnabled: Boolean = true,
 ) {
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Column(
@@ -298,6 +299,7 @@ internal fun PrivacyFooter(
         if (hasCapturedRules) {
             androidx.compose.material3.TextButton(
                 onClick = onClearAllCapturedRules,
+                enabled = actionsEnabled,
                 modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
             ) {
                 Text("清除全部采集数据")

@@ -39,6 +39,7 @@ class AppContainer(context: Context) {
         monotonicClock = AndroidMonotonicClock,
         wallClock = AndroidWallClock,
         applicationScope = applicationScope,
+        ruleCatalog = ruleCatalog,
     )
     val serviceConnections = ServiceConnectionRegistry()
 

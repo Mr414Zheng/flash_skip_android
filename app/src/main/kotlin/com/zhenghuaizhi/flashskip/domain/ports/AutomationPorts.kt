@@ -40,6 +40,7 @@ sealed interface GestureResult {
     data object Completed : GestureResult
     data object Rejected : GestureResult
     data object Cancelled : GestureResult
+    data object TimedOut : GestureResult
     data object NodeDisappeared : GestureResult
     data object Ambiguous : GestureResult
     data object PageChanged : GestureResult
@@ -51,5 +52,13 @@ interface PageGateway {
 
     suspend fun click(identity: PageIdentity, selector: NodeSelector): ClickResult
 
-    suspend fun gestureAtCenter(identity: PageIdentity, selector: NodeSelector): GestureResult
+    /**
+     * deadlineElapsedMs 使用单调时钟；平台必须在实际提交手势前复核期限与协程取消状态。
+     * 调用方同时限制回调等待时长，取消后迟到回调不得恢复该次等待。
+     */
+    suspend fun gestureAtCenter(
+        identity: PageIdentity,
+        selector: NodeSelector,
+        deadlineElapsedMs: Long,
+    ): GestureResult
 }

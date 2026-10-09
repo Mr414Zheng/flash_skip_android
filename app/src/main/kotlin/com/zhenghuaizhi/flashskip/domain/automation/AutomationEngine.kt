@@ -20,12 +20,14 @@ import com.zhenghuaizhi.flashskip.domain.ports.QueryResult
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalog
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 class AutomationEngine(
     private val catalog: RuleCatalog,
@@ -37,13 +39,18 @@ class AutomationEngine(
 ) {
     private val mailbox = Channel<Command>(capacity = MAILBOX_CAPACITY)
     private val overflowEpoch = AtomicLong(0)
-    private val actorJob = scope.launch { consumeCommands() }
     private var nextSessionId = 0L
     private var session: Session? = null
     private var foregroundState: ForegroundState = ForegroundState.Unknown
     private var capturePaused = false
     private val lastSuccessByRule = mutableMapOf<String, Long>()
     private val nodeClickVerifier = NodeClickVerifier(pageGateway)
+    private val actorJob: Job = scope.launch { consumeCommands() }.also { job ->
+        job.invokeOnCompletion { cause ->
+            // 包括 actor 尚未启动便被取消的情况，发送方也必须立即结束等待。
+            mailbox.cancel(CancellationException("Automation engine stopped", cause))
+        }
+    }
 
     fun onForegroundSignal(signal: ForegroundSignal) {
         offer(Command.Foreground(signal))
@@ -53,24 +60,31 @@ class AutomationEngine(
         offer(Command.Content(identity, occurredAtElapsedMs))
     }
 
+    /** 等待此前已入队的命令；引擎停止或失败时抛出取消异常。 */
     suspend fun awaitIdle() {
-        val barrier = CompletableDeferred<Unit>()
-        mailbox.send(Command.Barrier(barrier))
-        barrier.await()
+        val barrier = CompletableDeferred<Unit>(actorJob)
+        try {
+            mailbox.send(Command.Barrier(barrier))
+            barrier.await()
+        } finally {
+            barrier.cancel()
+        }
     }
 
+    /** 暂停状态在命令执行后生效；引擎停止或失败时抛出取消异常。 */
     suspend fun setCapturePaused(paused: Boolean) {
-        val completion = CompletableDeferred<Unit>()
-        mailbox.send(Command.CapturePause(paused, completion))
-        completion.await()
+        val completion = CompletableDeferred<Unit>(actorJob)
+        try {
+            mailbox.send(Command.CapturePause(paused, completion))
+            completion.await()
+        } finally {
+            completion.cancel()
+        }
     }
 
     fun close() {
+        mailbox.cancel(CancellationException("Automation engine closed"))
         actorJob.cancel()
-        session?.let(::invalidate)
-        session = null
-        foregroundState = ForegroundState.Unknown
-        mailbox.close()
     }
 
     private fun offer(command: Command) {
@@ -81,15 +95,21 @@ class AutomationEngine(
     }
 
     private suspend fun consumeCommands() {
-        for (command in mailbox) {
-            when (command) {
-                is Command.Foreground -> handleForeground(command.signal)
-                is Command.Content -> handleContent(command)
-                is Command.QueryDue -> handleQueryDue(command)
-                is Command.VerifyClick -> handleVerifyClick(command)
-                is Command.CapturePause -> handleCapturePause(command)
-                is Command.Barrier -> command.deferred.complete(Unit)
+        try {
+            for (command in mailbox) {
+                when (command) {
+                    is Command.Foreground -> handleForeground(command.signal)
+                    is Command.Content -> handleContent(command)
+                    is Command.QueryDue -> handleQueryDue(command)
+                    is Command.VerifyClick -> handleVerifyClick(command)
+                    is Command.CapturePause -> handleCapturePause(command)
+                    is Command.Barrier -> command.deferred.complete(Unit)
+                }
             }
+        } finally {
+            session?.let(::invalidate)
+            session = null
+            foregroundState = ForegroundState.Unknown
         }
     }
 
@@ -216,7 +236,7 @@ class AutomationEngine(
         if (dueAt >= active.deadlineElapsedMs) return
         active.queryJob?.cancel()
         val generation = ++active.generation
-        active.queryJob = scope.launch {
+        active.queryJob = scope.launch(actorJob) {
             delay((dueAt - monotonicClock.elapsedRealtimeMs()).coerceAtLeast(0))
             mailbox.send(Command.QueryDue(active.id, generation, active.overflowEpochAtStart))
         }
@@ -349,7 +369,7 @@ class AutomationEngine(
 
     private fun scheduleClickVerification(active: Session, pending: PendingNodeClick) {
         active.clickVerificationJob?.cancel()
-        active.clickVerificationJob = scope.launch {
+        active.clickVerificationJob = scope.launch(actorJob) {
             delay(NodeClickVerifier.VERIFY_DELAY_MS)
             mailbox.send(
                 Command.VerifyClick(
@@ -406,13 +426,19 @@ class AutomationEngine(
         if (!canAct(active, command)) {
             return abandon(active, rule, ActionReason.QUERY_STALE)
         }
-        return when (pageGateway.gestureAtCenter(active.identity, selector)) {
+        val startedAt = monotonicClock.elapsedRealtimeMs()
+        val gestureDeadline = minOf(active.deadlineElapsedMs, startedAt + GESTURE_TIMEOUT_MS)
+        val result = withTimeoutOrNull(gestureDeadline - startedAt) {
+            pageGateway.gestureAtCenter(active.identity, selector, gestureDeadline)
+        } ?: GestureResult.TimedOut
+        return when (result) {
             GestureResult.Completed -> {
                 markActionTime(active)
                 succeed(active, rule, ActionMethod.CENTER_GESTURE)
             }
             GestureResult.Rejected -> fail(active, rule, ActionReason.GESTURE_REJECTED)
             GestureResult.Cancelled -> fail(active, rule, ActionReason.GESTURE_CANCELLED)
+            GestureResult.TimedOut -> fail(active, rule, ActionReason.GESTURE_TIMED_OUT)
             GestureResult.NodeDisappeared -> abandon(active, rule, ActionReason.NODE_DISAPPEARED)
             GestureResult.Ambiguous -> abandon(active, rule, ActionReason.AMBIGUOUS_MATCH)
             GestureResult.PageChanged -> abandon(active, rule, ActionReason.PAGE_CHANGED)
@@ -460,7 +486,7 @@ class AutomationEngine(
         active.queryJob?.cancel()
         active.clickVerificationJob?.cancel()
         active.pendingClick = null
-        runCatching {
+        try {
             store.appendRecord(
                 ActionRecord(
                     timestampEpochMs = wallClock.currentTimeMillis(),
@@ -473,6 +499,10 @@ class AutomationEngine(
                     timing = active.toExecutionTiming(completedAt),
                 ),
             )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // 记录写入失败不能重新武装已结束的动作；协程取消仍由上层正常处理。
         }
         return Evaluation.TERMINAL
     }
@@ -568,5 +598,6 @@ class AutomationEngine(
         const val DEBOUNCE_MS = 120L
         const val TRAVERSAL_RETRY_MS = 250L
         const val MAILBOX_CAPACITY = 64
+        const val GESTURE_TIMEOUT_MS = 1_000L
     }
 }

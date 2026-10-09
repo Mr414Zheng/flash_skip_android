@@ -40,6 +40,7 @@ enum class ActionReason {
     CLICK_UNCONFIRMED,
     GESTURE_REJECTED,
     GESTURE_CANCELLED,
+    GESTURE_TIMED_OUT,
 }
 
 enum class ServiceStatus {

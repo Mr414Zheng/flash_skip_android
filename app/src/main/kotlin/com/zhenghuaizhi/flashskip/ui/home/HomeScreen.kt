@@ -23,6 +23,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zhenghuaizhi.flashskip.ui.theme.FlashSkipTokens
 
@@ -106,6 +109,19 @@ fun FlashSkipScreen(
                     onFinishCapture = onFinishCapture,
                     onCancelCapture = onCancelCapture,
                 )
+                if (state.operationInProgress || state.operationMessage != null) {
+                    Spacer(Modifier.height(FlashSkipTokens.Space8))
+                    Text(
+                        text = state.operationMessage ?: "正在处理，请稍候…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (state.operationMessage != null) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
                 Spacer(Modifier.height(FlashSkipTokens.Space20))
                 if (state.targetApps.isEmpty()) {
                     Text(
@@ -120,6 +136,7 @@ fun FlashSkipScreen(
                 item(key = app.target.id.packageName) {
                     TargetAppRow(
                         state = app,
+                        actionsEnabled = !state.operationInProgress && state.ruleActionsEnabled,
                         compactIcon = maxWidth < 360.dp,
                         onToggle = { onToggleApp(app.target.id, it) },
                         onClearCapturedRules = { onClearCapturedRules(app.target.id) },
@@ -150,6 +167,7 @@ fun FlashSkipScreen(
                 Spacer(Modifier.height(FlashSkipTokens.Space28))
                 PrivacyFooter(
                     hasCapturedRules = state.hasCapturedRules,
+                    actionsEnabled = !state.operationInProgress,
                     onClearAllCapturedRules = onClearAllCapturedRules,
                 )
             }

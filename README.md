@@ -117,13 +117,15 @@ FlashSkip 的采集数据仅包含生成本机规则所需的有限字段：
 - 剪贴板、外部存储或网络访问
 - `QUERY_ALL_PACKAGES` 权限
 
+Debug 采集日志仅记录状态、计数和耗时，不读取或输出页面文本、描述及节点内容；Release 构建关闭采集调试日志。
+
 ## 本地开发
 
 ### 环境要求
 
 - Android Studio
 - Android SDK 36.1
-- JDK 17
+- JDK 21（运行 Gradle 与 Robolectric；Java 源码兼容级别为 17）
 - Android 8.0（API 26）或更高版本的设备/模拟器
 
 项目已包含 Gradle Wrapper，核心版本如下：
@@ -149,10 +151,13 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ```bash
 ./gradlew :app:testDebugUnitTest
-./gradlew :app:compileDebugAndroidTestKotlin
 ./gradlew :app:lintDebug
 ./gradlew :app:assembleRelease
 ```
+
+本地测试位于 `app/src/test/`：JUnit 4 与协程虚拟时钟验证状态竞争、超时和执行安全；Robolectric 4.17 在 API 26、36 上验证 Android 存储、v2 编解码、服务配置、日志脱敏及手势回调适配。Robolectric 首次运行需要下载对应 Android 测试运行库。
+
+每项修复应附带回归测试。真实目标应用的无障碍事件、厂商后台策略和实际手势效果仍需连接设备验收；本地测试通过不代表真机验收完成。
 
 ## 项目结构
 

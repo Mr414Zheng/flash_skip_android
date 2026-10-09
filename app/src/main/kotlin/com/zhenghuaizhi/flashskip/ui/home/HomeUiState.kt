@@ -21,6 +21,9 @@ data class HomeUiState(
     val latestSuccess: ActionRecord? = null,
     val hasCapturedRules: Boolean = false,
     val currentTimeEpochMs: Long = System.currentTimeMillis(),
+    val operationInProgress: Boolean = false,
+    val operationMessage: String? = null,
+    val ruleActionsEnabled: Boolean = true,
 )
 
 data class TargetAppUiState(
@@ -31,6 +34,8 @@ data class TargetAppUiState(
 )
 
 data class CaptureUiState(
+    val sessionId: Long? = null,
+    val operationInProgress: Boolean = false,
     val phase: CapturePhase? = null,
     val failure: CaptureFailure? = null,
     val failureDiagnostics: CaptureFailureDiagnostics? = null,

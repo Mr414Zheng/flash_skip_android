@@ -41,6 +41,7 @@ internal class AccessibilityCaptureAdapter(
     private var verifiedHostIdentity: PageIdentity? = null
     private var currentScanIdentity: PageIdentity? = null
     private var latestUniqueSelectors: Set<CapturedSelector> = emptySet()
+    private val probeSelectorCache = CaptureProbeSelectorCache()
     private var lockedSessionId: Long? = null
     private var observedSessionId: Long? = null
     private var verifiedTargetEnteredAtElapsedMs: Long? = null
@@ -96,6 +97,7 @@ internal class AccessibilityCaptureAdapter(
             verifiedTargetEnteredAtElapsedMs = null
             currentTargetAppName = null
             latestUniqueSelectors = emptySet()
+            probeSelectorCache.clear()
             lastWindowVerifiedAtElapsedMs = null
             lastContentChangedAtElapsedMs = null
             currentWindowAllowsObservedCandidate = false
@@ -115,6 +117,7 @@ internal class AccessibilityCaptureAdapter(
             verifiedTargetEnteredAtElapsedMs = null
             currentTargetAppName = null
             latestUniqueSelectors = emptySet()
+            probeSelectorCache.clear()
             lastWindowVerifiedAtElapsedMs = null
             lastContentChangedAtElapsedMs = null
             currentWindowAllowsObservedCandidate = false
@@ -184,10 +187,6 @@ internal class AccessibilityCaptureAdapter(
         CaptureTraceLog.stage(
             session.id,
             "verified_host",
-            "package" to packageName,
-            "activity" to activityName,
-            "windowId" to event.windowId,
-            "enteredAt" to enteredAt,
         )
         resolveEventWindow(state, event, packageName, CaptureEventKind.WINDOW_STATE)
         scope.launch {
@@ -280,10 +279,7 @@ internal class AccessibilityCaptureAdapter(
         CaptureTraceLog.stage(
             session.id,
             "click_capture",
-            "windowId" to identity.windowId,
             "sourceAvailable" to (source != null),
-            "eventText" to hint.texts,
-            "eventDescription" to hint.contentDescription,
             "allowBareNumeric" to hint.allowBareNumericCountdown,
         )
         val nodes = if (source != null) {
@@ -361,9 +357,6 @@ internal class AccessibilityCaptureAdapter(
         CaptureTraceLog.stage(
             session.id,
             "sample_captured",
-            "package" to packageName,
-            "activity" to activityName,
-            "windowId" to identity.windowId,
             "nodes" to nodes.size,
             "selectors" to candidates.size,
             "clickedAfterTargetMs" to sample.clickedAfterTargetMs,
@@ -427,8 +420,7 @@ internal class AccessibilityCaptureAdapter(
         )
         refresh?.diagnostics?.let { diagnostics ->
             CaptureTraceLog.probe(
-                sessionId = state.activeSession?.id ?: return@let,
-                windowId = identity.windowId,
+                sessionId = session.id,
                 allowBareNumericCountdown = currentWindowAllowsObservedCandidate,
                 diagnostics = diagnostics,
             )
@@ -554,8 +546,11 @@ internal class AccessibilityCaptureAdapter(
             CaptureTraceLog.stage(
                 session.id,
                 "observed_candidate_skipped",
-                "reason" to if (lockedSessionId == session.id) "session_locked" else "window_policy",
-                "windowId" to identity.windowId,
+                "reason" to if (lockedSessionId == session.id) {
+                    CaptureTraceReason.SESSION_LOCKED
+                } else {
+                    CaptureTraceReason.WINDOW_POLICY
+                },
             )
             return
         }
@@ -563,8 +558,7 @@ internal class AccessibilityCaptureAdapter(
             CaptureTraceLog.stage(
                 session.id,
                 "observed_candidate_skipped",
-                "reason" to "no_fresh_snapshot",
-                "windowId" to identity.windowId,
+                "reason" to CaptureTraceReason.NO_FRESH_SNAPSHOT,
             )
             return
         }
@@ -573,8 +567,7 @@ internal class AccessibilityCaptureAdapter(
             CaptureTraceLog.stage(
                 session.id,
                 "observed_candidate_skipped",
-                "reason" to "no_selector_candidate",
-                "windowId" to identity.windowId,
+                "reason" to CaptureTraceReason.NO_SELECTOR_CANDIDATE,
                 "snapshotNodes" to snapshotNodes.size,
             )
             return
@@ -599,9 +592,6 @@ internal class AccessibilityCaptureAdapter(
         CaptureTraceLog.stage(
             session.id,
             "observed_candidate",
-            "package" to packageName,
-            "activity" to activityName,
-            "windowId" to identity.windowId,
             "nodes" to snapshotNodes.size,
             "selectors" to candidates.size,
             "observedAfterTargetMs" to candidate.observedAfterTargetMs,
@@ -648,8 +638,6 @@ internal class AccessibilityCaptureAdapter(
             CaptureTraceLog.stage(
                 session.id,
                 "semantic_diff_evidence",
-                "package" to identity.packageName,
-                "activity" to identity.activityName,
                 "candidates" to result.candidates.size,
                 "selectors" to selectors.size,
             )
@@ -688,11 +676,6 @@ internal class AccessibilityCaptureAdapter(
         CaptureTraceLog.stage(
             session.id,
             "semantic_diff_candidate",
-            "package" to packageName,
-            "activity" to activityName,
-            "windowId" to identity.windowId,
-            "resourceId" to selected.selectors.firstOrNull()?.resourceId,
-            "ancestorResourceId" to selected.selectors.firstOrNull()?.ancestorResourceId,
             "nodes" to selected.nodes.size,
             "selectors" to selected.selectors.size,
         )
@@ -707,10 +690,7 @@ internal class AccessibilityCaptureAdapter(
     ) {
         val session = state.activeSession ?: return
         val targetAppId = session.targetAppId ?: TargetAppId(identity.packageName)
-        val selectors = RuleCandidateAnalyzer.analyze(
-            samples = state.samples,
-            targetAppId = targetAppId,
-        ).probeSelectors
+        val selectors = probeSelectorCache.selectorsFor(state.samples, targetAppId)
         latestUniqueSelectors = when (
             val result = probe.uniqueSelectorsOnVerifiedRoot(
                 expected = identity,
@@ -728,7 +708,6 @@ internal class AccessibilityCaptureAdapter(
         CaptureTraceLog.stage(
             session.id,
             "unique_selector_probe",
-            "windowId" to identity.windowId,
             "requested" to selectors.size,
             "unique" to latestUniqueSelectors.size,
         )

@@ -1,6 +1,8 @@
 package com.zhenghuaizhi.flashskip.data.preferences
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -20,13 +22,16 @@ import kotlinx.coroutines.launch
 
 private val Context.flashSkipDataStore by preferencesDataStore(name = "flashskip_preferences")
 
-class PreferencesFlashSkipStore(
-    private val context: Context,
+class PreferencesFlashSkipStore internal constructor(
+    private val dataStore: DataStore<Preferences>,
     cleanupScope: CoroutineScope,
 ) : FlashSkipStore {
+    constructor(context: Context, cleanupScope: CoroutineScope) :
+        this(context.flashSkipDataStore, cleanupScope)
+
     init {
         cleanupScope.launch {
-            context.flashSkipDataStore.edit { values ->
+            dataStore.edit { values ->
                 values.remove(LEGACY_QQ_MUSIC_ENABLED)
                 values.remove(LEGACY_TAOBAO_ENABLED)
                 values.remove(LEGACY_JD_ENABLED)
@@ -35,25 +40,29 @@ class PreferencesFlashSkipStore(
         }
     }
 
-    override val preferences: Flow<FlashSkipPreferences> = context.flashSkipDataStore.data
+    override val preferences: Flow<FlashSkipPreferences> = dataStore.data
         .catch { error ->
             if (error is IOException) emit(emptyPreferences()) else throw error
         }
         .map(::toDomain)
 
     override suspend fun setAppEnabled(targetAppId: TargetAppId, enabled: Boolean) {
-        context.flashSkipDataStore.edit { values ->
+        dataStore.edit { values ->
             val enabledPackages = decodeEnabledPackages(values[ENABLED_PACKAGES]).toMutableSet()
             if (enabled) enabledPackages += targetAppId.packageName else enabledPackages -= targetAppId.packageName
             values[ENABLED_PACKAGES] = enabledPackages.sorted().joinToString("\n")
         }
     }
 
-    override suspend fun isAppEnabled(targetAppId: TargetAppId): Boolean =
-        preferences.first().enabledApps[targetAppId] == true
+    override suspend fun isAppEnabled(targetAppId: TargetAppId): Boolean = try {
+        // 动作安全检查只读取当前开关，避免每个无障碍事件重复解码执行记录。
+        targetAppId.packageName in decodeEnabledPackages(dataStore.data.first()[ENABLED_PACKAGES])
+    } catch (_: IOException) {
+        false
+    }
 
     override suspend fun appendRecord(record: ActionRecord) {
-        context.flashSkipDataStore.edit { values ->
+        dataStore.edit { values ->
             val existing = ActionRecordCodec.decodeOrEmpty(values[RECORDS])
             values[RECORDS] = ActionRecordCodec.encode(
                 (listOf(record) + existing).take(ActionRecordCodec.MAX_RECORDS),

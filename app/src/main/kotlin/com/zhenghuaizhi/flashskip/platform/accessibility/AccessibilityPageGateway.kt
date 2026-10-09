@@ -8,14 +8,18 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
 import com.zhenghuaizhi.flashskip.domain.ports.ClickResult
 import com.zhenghuaizhi.flashskip.domain.ports.GestureResult
+import com.zhenghuaizhi.flashskip.domain.ports.MonotonicClock
 import com.zhenghuaizhi.flashskip.domain.ports.PageGateway
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.ports.QueryResult
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 class AccessibilityPageGateway(
     private val service: AccessibilityService,
     private val targetPackages: () -> Set<String>,
+    private val monotonicClock: MonotonicClock = AndroidMonotonicClock,
     private val currentIdentity: () -> PageIdentity?,
 ) : PageGateway {
     private val selectorMatcher = AccessibilityNodeSelectorMatcher(service)
@@ -59,46 +63,64 @@ class AccessibilityPageGateway(
     override suspend fun gestureAtCenter(
         identity: PageIdentity,
         selector: NodeSelector,
+        deadlineElapsedMs: Long,
     ): GestureResult {
+        val coroutineContext = currentCoroutineContext()
+        coroutineContext.ensureActive()
+        if (monotonicClock.elapsedRealtimeMs() >= deadlineElapsedMs) return GestureResult.TimedOut
         val completion = CompletableDeferred<GestureResult>()
-        val scan = scan(identity, selector) { node ->
-            withActionTarget(node, selector, false) { actionNode ->
-                val bounds = Rect().also(actionNode::getBoundsInScreen)
-                val metrics = service.resources.displayMetrics
-                if (!actionNode.isVisibleToUser ||
-                    bounds.width() <= 0 ||
-                    bounds.height() <= 0 ||
-                    bounds.centerX() !in 0 until metrics.widthPixels ||
-                    bounds.centerY() !in 0 until metrics.heightPixels
-                ) {
-                    return@withActionTarget false
-                }
-                val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
-                val gesture = GestureDescription.Builder()
-                    .addStroke(GestureDescription.StrokeDescription(path, 0, GESTURE_DURATION_MS))
-                    .build()
-                service.dispatchGesture(
-                    gesture,
-                    object : AccessibilityService.GestureResultCallback() {
-                        override fun onCompleted(gestureDescription: GestureDescription) {
-                            completion.complete(GestureResult.Completed)
-                        }
+        try {
+            val scan = scan(identity, selector) { node ->
+                withActionTarget(node, selector, GestureDispatchResult.Rejected) { actionNode ->
+                    val bounds = Rect().also(actionNode::getBoundsInScreen)
+                    val metrics = service.resources.displayMetrics
+                    if (!actionNode.isVisibleToUser ||
+                        bounds.width() <= 0 ||
+                        bounds.height() <= 0 ||
+                        bounds.centerX() !in 0 until metrics.widthPixels ||
+                        bounds.centerY() !in 0 until metrics.heightPixels
+                    ) {
+                        return@withActionTarget GestureDispatchResult.Rejected
+                    }
+                    val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
+                    val gesture = GestureDescription.Builder()
+                        .addStroke(GestureDescription.StrokeDescription(path, 0, GESTURE_DURATION_MS))
+                        .build()
+                    // 主线程同步扫描期间，协程超时任务可能无法调度，必须在提交前复核绝对期限。
+                    coroutineContext.ensureActive()
+                    if (monotonicClock.elapsedRealtimeMs() >= deadlineElapsedMs) {
+                        return@withActionTarget GestureDispatchResult.TimedOut
+                    }
+                    val accepted = service.dispatchGesture(
+                        gesture,
+                        object : AccessibilityService.GestureResultCallback() {
+                            override fun onCompleted(gestureDescription: GestureDescription) {
+                                completion.complete(GestureResult.Completed)
+                            }
 
-                        override fun onCancelled(gestureDescription: GestureDescription) {
-                            completion.complete(GestureResult.Cancelled)
-                        }
-                    },
-                    null,
-                )
+                            override fun onCancelled(gestureDescription: GestureDescription) {
+                                completion.complete(GestureResult.Cancelled)
+                            }
+                        },
+                        null,
+                    )
+                    if (accepted) GestureDispatchResult.Accepted else GestureDispatchResult.Rejected
+                }
             }
-        }
-        return when (scan) {
-            CandidateSearchResult.None -> GestureResult.NodeDisappeared
-            CandidateSearchResult.Ambiguous -> GestureResult.Ambiguous
-            CandidateSearchResult.PageChanged -> GestureResult.PageChanged
-            CandidateSearchResult.TraversalLimit -> GestureResult.TraversalLimit
-            is CandidateSearchResult.Value ->
-                if (scan.value) completion.await() else GestureResult.Rejected
+            return when (scan) {
+                CandidateSearchResult.None -> GestureResult.NodeDisappeared
+                CandidateSearchResult.Ambiguous -> GestureResult.Ambiguous
+                CandidateSearchResult.PageChanged -> GestureResult.PageChanged
+                CandidateSearchResult.TraversalLimit -> GestureResult.TraversalLimit
+                is CandidateSearchResult.Value -> when (scan.value) {
+                    GestureDispatchResult.Accepted -> completion.await()
+                    GestureDispatchResult.Rejected -> GestureResult.Rejected
+                    GestureDispatchResult.TimedOut -> GestureResult.TimedOut
+                }
+            }
+        } finally {
+            // 超时、关闭或调用方取消后，平台的迟到回调只能被忽略，不能恢复等待。
+            completion.cancel()
         }
     }
 
@@ -161,4 +183,6 @@ class AccessibilityPageGateway(
     }
 
     private enum class ActionClickResult { Clicked, NotActionable, NotSupported }
+
+    private enum class GestureDispatchResult { Accepted, Rejected, TimedOut }
 }

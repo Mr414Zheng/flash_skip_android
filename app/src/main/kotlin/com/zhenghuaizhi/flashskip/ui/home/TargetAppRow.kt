@@ -42,6 +42,7 @@ internal fun TargetAppRow(
     compactIcon: Boolean,
     onToggle: (Boolean) -> Unit,
     onClearCapturedRules: () -> Unit = {},
+    actionsEnabled: Boolean = true,
 ) {
     val ruleCount = (state.target.ruleAvailability as? RuleAvailability.Available)?.ruleCount
     val switchEnabled = ruleCount != null
@@ -88,7 +89,7 @@ internal fun TargetAppRow(
             Switch(
                 checked = checked,
                 onCheckedChange = if (switchEnabled) onToggle else null,
-                enabled = switchEnabled,
+                enabled = switchEnabled && actionsEnabled,
                 modifier = Modifier.semantics {
                     contentDescription = "${state.target.displayName}自动关闭开关"
                     stateDescription = if (!switchEnabled) "规则不可用" else if (checked) "已开启" else "已关闭"
@@ -105,6 +106,7 @@ internal fun TargetAppRow(
                 appName = state.target.displayName,
                 card = card,
                 onClear = onClearCapturedRules,
+                actionsEnabled = actionsEnabled,
             )
         }
     }
@@ -198,6 +200,7 @@ internal fun CaptureControls(
             -> {
                 OutlinedButton(
                     onClick = onCancelCapture,
+                    enabled = !state.operationInProgress,
                     modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
                 ) {
                     Text("取消采集")
@@ -207,12 +210,14 @@ internal fun CaptureControls(
             CapturePhase.CAPTURED -> {
                 Button(
                     onClick = onFinishCapture,
+                    enabled = !state.operationInProgress,
                     modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
                 ) {
                     Text("采集完成")
                 }
                 TextButton(
                     onClick = onCancelCapture,
+                    enabled = !state.operationInProgress,
                     modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
                 ) {
                     Text("放弃本次")
@@ -222,12 +227,14 @@ internal fun CaptureControls(
             CapturePhase.AWAITING_CONFIRMATION -> {
                 Button(
                     onClick = onFinishCapture,
+                    enabled = !state.operationInProgress,
                     modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
                 ) {
                     Text("确认已手动关闭")
                 }
                 TextButton(
                     onClick = onCancelCapture,
+                    enabled = !state.operationInProgress,
                     modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
                 ) {
                     Text("不是这个按钮")
@@ -245,6 +252,7 @@ internal fun CaptureControls(
                 if (phase == CapturePhase.FAILED) {
                     TextButton(
                         onClick = onCancelCapture,
+                        enabled = !state.operationInProgress,
                         modifier = Modifier.heightIn(min = FlashSkipTokens.TouchMin),
                     ) {
                         Text("关闭提示")
@@ -260,6 +268,7 @@ private fun RuleCard(
     appName: String,
     card: RuleCardUiState,
     onClear: () -> Unit,
+    actionsEnabled: Boolean,
 ) {
     Surface(
         modifier = Modifier
@@ -289,7 +298,7 @@ private fun RuleCard(
                         RuleCardStatus.CANDIDATE -> MaterialTheme.colorScheme.onSurface
                     },
                 )
-                TextButton(onClick = onClear) { Text("清除") }
+                TextButton(onClick = onClear, enabled = actionsEnabled) { Text("清除") }
             }
             Text(
                 text = "成功采集 ${card.sampleCount} 次 · 累计规则 ${card.ruleCount} 条 · " +

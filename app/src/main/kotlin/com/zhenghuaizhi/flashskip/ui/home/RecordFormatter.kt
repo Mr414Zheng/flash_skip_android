@@ -43,6 +43,7 @@ private fun reasonLabel(reason: ActionReason?): String = when (reason) {
     ActionReason.CLICK_UNCONFIRMED -> "点击后广告仍存在"
     ActionReason.GESTURE_REJECTED -> "手势未被接受"
     ActionReason.GESTURE_CANCELLED -> "手势已取消"
+    ActionReason.GESTURE_TIMED_OUT -> "手势等待超时"
     null -> "未执行"
 }
 
