@@ -60,14 +60,8 @@ object FlashSkipTokens {
     val Space32 = 32.dp
     val Space40 = 40.dp
     val TouchMin = 48.dp
-    val AppIcon = 56.dp
-    val AppIconCompact = 48.dp
     val MaxContentWidth = 560.dp
 }
-
-val SuccessIndicatorColor = Color(0xFF12B76A)
-val WarningColor = Color(0xFFB54708)
-val TimelineNeutralColor = Color(0xFF667085)
 
 @Composable
 fun FlashSkipTheme(content: @Composable () -> Unit) {

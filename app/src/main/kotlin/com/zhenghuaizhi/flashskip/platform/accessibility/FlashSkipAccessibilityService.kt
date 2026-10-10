@@ -24,6 +24,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureExpiryKey
+import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationResult
 
 class FlashSkipAccessibilityService : AccessibilityService() {
     private var serviceScope: CoroutineScope? = null
@@ -37,6 +39,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     private var captureConfigured = false
     private var automationPaused = false
     private val targetWindowDiagnosticsTracker = TargetWindowDiagnosticsTracker()
+    private val pendingForegroundWindow = PendingForegroundWindow()
 
     @Volatile
     private var latestIdentity: PageIdentity? = null
@@ -59,6 +62,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         engine?.close()
         serviceScope?.cancel()
         latestIdentity = null
+        pendingForegroundWindow.clear()
         latestCaptureState = RuleCaptureState()
         targetWindowDiagnosticsTracker.reset()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -109,6 +113,11 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             }
         restoreDefaultEventConfiguration()
         observeCaptureState(scope)
+        scope.launch {
+            container.ruleCatalog.snapshot.collect { snapshot ->
+                if (snapshot.targetPackages.isNotEmpty()) replayPendingForegroundWindow()
+            }
+        }
         container.serviceConnections.setConnected(true)
     }
 
@@ -116,6 +125,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         val safeEvent = event ?: return
         val captureSession = latestCaptureState.activeSession
         if (captureSession?.blocksAutomation == true) {
+            pendingForegroundWindow.clear()
             // 配置或等待用户确认时没有采集工作，避免每个事件都访问系统窗口和包信息。
             if (captureSession.listensForCandidateClick) {
                 if (safeEvent.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
@@ -325,6 +335,15 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         val packageName = effectiveSystemReportedPackageName(reportedPackageName, windowId)
         val occurredAt = AndroidMonotonicClock.elapsedRealtimeMs()
         val metadata = snapshotWindowMetadata() ?: return
+        val activeApplication = metadata.singleOrNull { it.id == windowId }?.let {
+            it.isActive && it.type == AccessibilityWindowInfo.TYPE_APPLICATION
+        } == true
+        if (activeApplication) {
+            pendingForegroundWindow.clear()
+            if (currentTargetPackages().isEmpty()) pendingForegroundWindow.remember(
+                PendingForegroundWindow.Entry(packageName, windowId, event.className?.toString(), occurredAt),
+            )
+        }
         when (windowClassifier?.classify(packageName, windowId, metadata)) {
             BoundaryClassification.Target -> {
                 if (container.ruleCatalog.snapshot.value.rulesForPackage(packageName).isEmpty()) return
@@ -353,6 +372,33 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun replayPendingForegroundWindow() {
+        if (latestCaptureState.activeSession?.blocksAutomation == true || automationPaused) {
+            pendingForegroundWindow.clear()
+            return
+        }
+        val pending = pendingForegroundWindow.takeIfFresh(
+            AndroidMonotonicClock.elapsedRealtimeMs(), currentTargetPackages(),
+        ) ?: return
+        val currentWindows = runCatching { windows }.getOrNull() ?: return
+        val matches = try {
+            val window = currentWindows.singleOrNull {
+                it.id == pending.windowId && it.isActive && it.type == AccessibilityWindowInfo.TYPE_APPLICATION
+            } ?: return
+            val root = runCatching { window.root }.getOrNull() ?: return
+            try { root.packageName?.toString() == pending.packageName } finally { root.recycle() }
+        } finally { currentWindows.forEach(AccessibilityWindowInfo::recycle) }
+        if (!matches || container.ruleCatalog.snapshot.value.rulesForPackage(pending.packageName).isEmpty()) return
+        val activity = container.targetAppVersionReader.verifiedActivity(pending.packageName, pending.className)
+        val identity = TargetWindowIdentityResolver.resolve(
+            pending.packageName, pending.windowId, activity, null,
+            container.targetAppVersionReader.versionFor(pending.packageName),
+        ) ?: return
+        latestIdentity = identity
+        engine?.onForegroundSignal(ForegroundSignal.TargetActive(identity, pending.occurredAtElapsedMs))
+    }
+
     private fun observeCaptureState(scope: CoroutineScope) {
         var firstEmission = true
         scope.launch {
@@ -373,6 +419,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     )
                 ) {
                     firstEmission = false
+                    setAutomationPaused(true)
                     container.ruleCaptureCoordinator.fail(
                         requireNotNull(session).id,
                         CaptureFailure.SERVICE_UNAVAILABLE,
@@ -484,7 +531,10 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         if (paused == automationPaused) return
         engine?.setCapturePaused(paused)
         automationPaused = paused
-        if (paused) latestIdentity = null
+        if (paused) {
+            latestIdentity = null
+            pendingForegroundWindow.clear()
+        }
     }
 
     private fun configureForCapture(packageName: String?): Boolean {
@@ -550,16 +600,22 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         captureExpiryJob?.cancel()
         val session = state.activeSession?.takeUnless { it.phase == CapturePhase.FAILED } ?: return
         captureExpiryJob = serviceScope?.launch {
-            delay((session.deadlineAtEpochMs - AndroidWallClock.currentTimeMillis()).coerceAtLeast(0))
-            val targetWindowDiagnostics = targetWindowDiagnosticsTracker.snapshot(
-                expectedSessionId = session.id,
-                nowElapsedMs = AndroidMonotonicClock.elapsedRealtimeMs(),
-            )
-            val failureDiagnostics = captureAdapter?.timeoutDiagnostics(session.id)
-            container.ruleCaptureCoordinator.expireActive(
-                targetWindowDiagnostics = targetWindowDiagnostics,
-                failureDiagnostics = failureDiagnostics,
-            )
+            val key = CaptureExpiryKey.from(session)
+            while (true) {
+                val plan = container.ruleCaptureCoordinator.expiryPlan(key) ?: return@launch
+                delay((plan.deadlineAtElapsedMs - AndroidMonotonicClock.elapsedRealtimeMs()).coerceAtLeast(0))
+                val targetWindowDiagnostics = targetWindowDiagnosticsTracker.snapshot(
+                    expectedSessionId = session.id,
+                    nowElapsedMs = AndroidMonotonicClock.elapsedRealtimeMs(),
+                )
+                val failureDiagnostics = captureAdapter?.timeoutDiagnostics(session.id)
+                val result = container.ruleCaptureCoordinator.expireExpected(
+                    key,
+                    targetWindowDiagnostics = targetWindowDiagnostics,
+                    failureDiagnostics = failureDiagnostics,
+                )
+                if (result != CaptureOperationResult.Pending) return@launch
+            }
         }
     }
 
@@ -608,6 +664,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         captureAdapter = null
         eventPackageResolver = null
         latestIdentity = null
+        pendingForegroundWindow.clear()
         latestCaptureState = RuleCaptureState()
         captureConfigurationPackage = null
         captureConfigured = false
@@ -618,6 +675,8 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     }
 
     private fun disconnectCaptureWithDiagnostics() {
+        pendingForegroundWindow.clear()
+        latestIdentity = null
         val sessionId = latestCaptureState.activeSession?.id ?: return
         val now = AndroidMonotonicClock.elapsedRealtimeMs()
         val diagnostics = CaptureDiagnosticSnapshot(

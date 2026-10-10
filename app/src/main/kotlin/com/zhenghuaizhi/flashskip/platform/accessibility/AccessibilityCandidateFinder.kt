@@ -150,25 +150,32 @@ internal class AccessibilityCandidateFinder(
                     node.recycle()
                     return limited(limit, diagnostics)
                 }
-                val match = if (node.packageName?.toString() == expectedPackage) {
-                    checkCandidate(node, selector, expectedPackage, trace)
-                } else {
-                    CandidateMatchResult.NO_MATCH
-                }
-                if (match == CandidateMatchResult.UNAVAILABLE) unavailable = true
-                if (match == CandidateMatchResult.MATCH) {
-                    if (firstMatch != null) {
-                        node.recycle()
-                        return CandidateSearchResult.Ambiguous
+                try {
+                    val match = if (node.packageName?.toString() == expectedPackage) {
+                        checkCandidate(node, selector, expectedPackage, trace)
+                    } else {
+                        CandidateMatchResult.NO_MATCH
                     }
-                    firstMatch = node
-                }
-                repeat(node.childCount) { index ->
-                    node.getChild(index)?.let { child ->
+                    if (match == CandidateMatchResult.UNAVAILABLE) unavailable = true
+                    if (match == CandidateMatchResult.MATCH) {
+                        if (firstMatch != null) return CandidateSearchResult.Ambiguous
+                        firstMatch = node
+                    }
+                    repeat(node.childCount) { index ->
+                        val childLimit = when {
+                            visited + queue.size >= MAX_NODES -> SearchLimit.NODE_COUNT
+                            item.depth >= MAX_DEPTH -> SearchLimit.DEPTH
+                            hasTimedOut(startedAt) -> SearchLimit.TIME
+                            else -> null
+                        }
+                        if (childLimit != null) return limited(childLimit, diagnostics)
+                        // 系统声明的子树不可读时，不能证明已找到的目标是唯一目标。
+                        val child = node.getChild(index) ?: return CandidateSearchResult.Unavailable
                         queue.add(NodeAtDepth(child, item.depth + 1))
                     }
+                } finally {
+                    if (node !== firstMatch) node.recycle()
                 }
-                if (node !== firstMatch) node.recycle()
             }
             if (unavailable) return CandidateSearchResult.Unavailable
             if (hasTimedOut(startedAt)) return limited(SearchLimit.TIME, diagnostics)

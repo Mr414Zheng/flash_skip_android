@@ -88,21 +88,31 @@ internal class AccessibilityCaptureProbe(
                     node.recycle()
                     return ProbeResult.TraversalLimit
                 }
-                selectors.forEach { selector ->
-                    if (counts.getValue(selector) < 2 &&
-                        selectorMatcher.matches(node, selector.toNodeSelector())
-                    ) {
-                        counts[selector] = counts.getValue(selector) + 1
+                try {
+                    selectors.forEach { selector ->
+                        if (counts.getValue(selector) < 2) {
+                            when (selectorMatcher.check(node, selector.toNodeSelector())) {
+                                CandidateMatchResult.MATCH -> counts[selector] = counts.getValue(selector) + 1
+                                CandidateMatchResult.UNAVAILABLE -> return ProbeResult.Unavailable
+                                CandidateMatchResult.NO_MATCH -> Unit
+                            }
+                        }
                     }
-                }
-                repeat(node.childCount) { index ->
-                    node.getChild(index)?.let { child ->
+                    repeat(node.childCount) { index ->
+                        if (visited + queue.size >= MAX_NODES ||
+                            item.depth >= MAX_DEPTH ||
+                            traversalExpired(startedAt, deadlineAtElapsedMs, MAX_UNIQUE_TRAVERSAL_MS)
+                        ) {
+                            return ProbeResult.TraversalLimit
+                        }
+                        val child = node.getChild(index) ?: return ProbeResult.Unavailable
                         queue.add(NodeAtDepth(child, item.depth + 1))
                     }
+                } finally {
+                    node.recycle()
                 }
-                node.recycle()
             }
-            if (absoluteDeadlineExpired(deadlineAtElapsedMs)) {
+            if (traversalExpired(startedAt, deadlineAtElapsedMs, MAX_UNIQUE_TRAVERSAL_MS)) {
                 return ProbeResult.TraversalLimit
             }
             return ProbeResult.Success(
@@ -200,6 +210,7 @@ internal class AccessibilityCaptureProbe(
         var countdownActionChains = 0
         val semanticCandidates = mutableListOf<SemanticCandidate>()
         var semanticCandidateOverflow = false
+        var unreadableChildren = false
         fun uniqueSemanticCandidates(): SemanticCandidateSnapshot {
             if (semanticCandidateOverflow) {
                 return SemanticCandidateSnapshot(emptyList(), complete = false)
@@ -227,7 +238,8 @@ internal class AccessibilityCaptureProbe(
         fun traversalLimitResult(reason: TraversalLimitReason): RecoveryResult {
             // 候选选择器必须带稳定结构，且自动执行前仍会重新做全窗口唯一性校验；因此有界扫描
             // 已确认一个可执行候选时可以保留采集证据，无需因未遍历无关的复杂页面尾部而丢弃。
-            val canKeepCandidate = recovered != null && selectorCandidateNodes == 1 && !ambiguous
+            val canKeepCandidate = recovered != null && selectorCandidateNodes == 1 &&
+                !ambiguous && !unreadableChildren
             val semanticSnapshot = uniqueSemanticCandidates()
             val resultDiagnostics = diagnostics(
                 outcome = if (canKeepCandidate) {
@@ -252,13 +264,13 @@ internal class AccessibilityCaptureProbe(
                     nodes = requireNotNull(recovered),
                     diagnostics = resultDiagnostics,
                     semanticCandidates = semanticSnapshot.candidates,
-                    semanticCandidatesComplete = semanticSnapshot.complete,
+                    semanticCandidatesComplete = semanticSnapshot.complete && !unreadableChildren,
                 )
             } else {
                 RecoveryResult.Failure(
                     resultDiagnostics,
                     semanticSnapshot.candidates,
-                    semanticSnapshot.complete,
+                    semanticSnapshot.complete && !unreadableChildren,
                 )
             }
         }
@@ -282,96 +294,113 @@ internal class AccessibilityCaptureProbe(
                     node.recycle()
                     return traversalLimitResult(limitReason)
                 }
-                val snapshot = semanticSnapshotter.snapshot(node, expected.packageName)
-                visited++
-                maxDepth = maxOf(maxDepth, item.depth)
-                if (snapshot != null &&
-                    snapshot.visibleToUser &&
-                    (snapshot.resourceId != null ||
-                        snapshot.text != null ||
-                        snapshot.contentDescription != null)
-                ) {
-                    semanticNodes++
-                }
-                var copiedChain: List<CapturedNode>? = null
-                if (snapshot != null &&
-                    snapshot.visibleToUser &&
-                    snapshot.hasUsableBounds &&
-                    !semanticCandidateOverflow &&
-                    (snapshot.resourceId != null ||
-                        snapshot.clickable ||
-                        snapshot.supportsActionClick)
-                ) {
-                    val chain = semanticSnapshotter.copySemanticChainReusingSnapshot(
-                        AccessibilityNodeInfo.obtain(node),
-                        expected.packageName,
-                        snapshot,
-                    )
-                    copiedChain = chain
-                    val selectors = RuleCandidateAnalyzer.stableDiffSelectorCandidates(chain)
-                    if (selectors.isNotEmpty()) {
-                        if (semanticCandidates.size < MAX_SEMANTIC_CANDIDATES) {
-                            semanticCandidates += SemanticCandidate(
-                                nodes = chain,
-                                selectors = selectors,
-                                visitedAtNodeCount = visited,
-                            )
-                        } else {
-                            semanticCandidateOverflow = true
+                try {
+                    val snapshot = semanticSnapshotter.snapshot(node, expected.packageName)
+                    visited++
+                    maxDepth = maxOf(maxDepth, item.depth)
+                    if (snapshot != null &&
+                        snapshot.visibleToUser &&
+                        (snapshot.resourceId != null ||
+                            snapshot.text != null ||
+                            snapshot.contentDescription != null)
+                    ) {
+                        semanticNodes++
+                    }
+                    var copiedChain: List<CapturedNode>? = null
+                    if (snapshot != null &&
+                        snapshot.visibleToUser &&
+                        snapshot.hasUsableBounds &&
+                        !semanticCandidateOverflow &&
+                        (snapshot.resourceId != null ||
+                            snapshot.clickable ||
+                            snapshot.supportsActionClick)
+                    ) {
+                        val chain = semanticSnapshotter.copySemanticChainReusingSnapshot(
+                            AccessibilityNodeInfo.obtain(node),
+                            expected.packageName,
+                            snapshot,
+                        )
+                        copiedChain = chain
+                        val selectors = RuleCandidateAnalyzer.stableDiffSelectorCandidates(chain)
+                        if (selectors.isNotEmpty()) {
+                            if (semanticCandidates.size < MAX_SEMANTIC_CANDIDATES) {
+                                semanticCandidates += SemanticCandidate(
+                                    nodes = chain,
+                                    selectors = selectors,
+                                    visitedAtNodeCount = visited,
+                                )
+                            } else {
+                                semanticCandidateOverflow = true
+                            }
                         }
                     }
-                }
-                val isCountdownSemantic = snapshot != null &&
-                    hint.allowBareNumericCountdown &&
-                    ClickSourceRecoveryMatcher.matches(
-                        snapshot,
-                        ClickSemanticHint(allowBareNumericCountdown = true),
-                    ) &&
-                    DismissSemantics.isBareNumericCountdown(snapshot.text)
-                if (isCountdownSemantic) countdownSemanticNodes++
-                val matchesKnownDismiss = snapshot != null &&
-                    ClickSourceRecoveryMatcher.matches(
-                        snapshot,
-                        ClickSemanticHint(
-                            allowBareNumericCountdown = hint.allowBareNumericCountdown,
-                        ),
-                    )
-                if (matchesKnownDismiss) {
-                    knownDismissNodes++
-                }
-                if (snapshot != null &&
-                    ClickSourceRecoveryMatcher.matches(snapshot, ClickSemanticHint())
-                ) {
-                    explicitDismissNodes++
-                }
-                if (snapshot != null && ClickSourceRecoveryMatcher.matches(snapshot, hint)) {
-                    matchedNodes++
-                    val chain = copiedChain ?: semanticSnapshotter.copySemanticChainReusingSnapshot(
-                        AccessibilityNodeInfo.obtain(node),
-                        expected.packageName,
-                        snapshot,
-                    )
-                    if (isCountdownSemantic && chain.any { it.isActionable() }) {
-                        countdownActionChains++
+                    val isCountdownSemantic = snapshot != null &&
+                        hint.allowBareNumericCountdown &&
+                        ClickSourceRecoveryMatcher.matches(
+                            snapshot,
+                            ClickSemanticHint(allowBareNumericCountdown = true),
+                        ) &&
+                        DismissSemantics.isBareNumericCountdown(snapshot.text)
+                    if (isCountdownSemantic) countdownSemanticNodes++
+                    val matchesKnownDismiss = snapshot != null &&
+                        ClickSourceRecoveryMatcher.matches(
+                            snapshot,
+                            ClickSemanticHint(
+                                allowBareNumericCountdown = hint.allowBareNumericCountdown,
+                            ),
+                        )
+                    if (matchesKnownDismiss) {
+                        knownDismissNodes++
                     }
-                    if (RuleCandidateAnalyzer.selectorCandidates(chain).isNotEmpty()) {
-                        selectorCandidateNodes++
-                        if (recovered == null) recovered = chain else ambiguous = true
+                    if (snapshot != null &&
+                        ClickSourceRecoveryMatcher.matches(snapshot, ClickSemanticHint())
+                    ) {
+                        explicitDismissNodes++
                     }
-                }
-                if (!ambiguous) {
-                    repeat(node.childCount) { index ->
-                        node.getChild(index)?.let { child ->
-                            queue.add(NodeAtDepth(child, item.depth + 1))
+                    if (snapshot != null && ClickSourceRecoveryMatcher.matches(snapshot, hint)) {
+                        matchedNodes++
+                        val chain = copiedChain ?: semanticSnapshotter.copySemanticChainReusingSnapshot(
+                            AccessibilityNodeInfo.obtain(node),
+                            expected.packageName,
+                            snapshot,
+                        )
+                        if (isCountdownSemantic && chain.any { it.isActionable() }) {
+                            countdownActionChains++
+                        }
+                        if (RuleCandidateAnalyzer.selectorCandidates(chain).isNotEmpty()) {
+                            selectorCandidateNodes++
+                            if (recovered == null) recovered = chain else ambiguous = true
                         }
                     }
+                    if (!ambiguous) {
+                        repeat(node.childCount) { index ->
+                            val childLimit = when {
+                                visited + queue.size >= MAX_NODES -> TraversalLimitReason.NODE_COUNT
+                                item.depth >= MAX_DEPTH -> TraversalLimitReason.DEPTH
+                                traversalExpired(
+                                    startedAt,
+                                    deadlineAtElapsedMs,
+                                    MAX_RECOVERY_TRAVERSAL_MS,
+                                ) -> TraversalLimitReason.TIME
+                                else -> null
+                            }
+                            if (childLimit != null) {
+                                return traversalLimitResult(childLimit)
+                            }
+                            val child = node.getChild(index)
+                            if (child == null) unreadableChildren = true
+                            else queue.add(NodeAtDepth(child, item.depth + 1))
+                        }
+                    }
+                } finally {
+                    node.recycle()
                 }
-                node.recycle()
             }
-            if (absoluteDeadlineExpired(deadlineAtElapsedMs)) {
+            if (traversalExpired(startedAt, deadlineAtElapsedMs, MAX_RECOVERY_TRAVERSAL_MS)) {
                 return traversalLimitResult(TraversalLimitReason.TIME)
             }
             val outcome = when {
+                unreadableChildren -> ClickRecoveryOutcome.UNAVAILABLE
                 ambiguous -> ClickRecoveryOutcome.AMBIGUOUS
                 recovered != null -> ClickRecoveryOutcome.SUCCESS
                 else -> ClickRecoveryOutcome.NO_MATCH
@@ -390,18 +419,18 @@ internal class AccessibilityCaptureProbe(
                 countdownSemanticNodeCount = countdownSemanticNodes,
                 countdownActionChainCount = countdownActionChains,
             )
-            return if (recovered != null && !ambiguous) {
+            return if (recovered != null && !ambiguous && !unreadableChildren) {
                 RecoveryResult.Success(
                     nodes = requireNotNull(recovered),
                     diagnostics = resultDiagnostics,
                     semanticCandidates = semanticSnapshot.candidates,
-                    semanticCandidatesComplete = semanticSnapshot.complete,
+                    semanticCandidatesComplete = semanticSnapshot.complete && !unreadableChildren,
                 )
             } else {
                 RecoveryResult.Failure(
                     resultDiagnostics,
                     semanticSnapshot.candidates,
-                    semanticSnapshot.complete,
+                    semanticSnapshot.complete && !unreadableChildren,
                 )
             }
         } finally {
@@ -446,13 +475,9 @@ internal class AccessibilityCaptureProbe(
         maxTraversalMs: Long,
     ): Boolean {
         val now = elapsedRealtimeMs()
-        return now - startedAt > maxTraversalMs ||
+        return now - startedAt >= maxTraversalMs ||
             (deadlineAtElapsedMs != null && now >= deadlineAtElapsedMs)
     }
-
-    private fun absoluteDeadlineExpired(deadlineAtElapsedMs: Long?): Boolean =
-        deadlineAtElapsedMs != null &&
-            elapsedRealtimeMs() > deadlineAtElapsedMs
 
     private fun AccessibilityNodeInfo.matches(expected: PageIdentity): Boolean =
         packageName?.toString() == expected.packageName && windowId == expected.windowId
@@ -462,6 +487,7 @@ internal class AccessibilityCaptureProbe(
     sealed interface ProbeResult {
         data class Success(val selectors: Set<CapturedSelector>) : ProbeResult
         data object NoRoot : ProbeResult
+        data object Unavailable : ProbeResult
         data object PageChanged : ProbeResult
         data object TraversalLimit : ProbeResult
     }

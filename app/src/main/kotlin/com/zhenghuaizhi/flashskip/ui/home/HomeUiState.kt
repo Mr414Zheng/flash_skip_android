@@ -1,81 +1,52 @@
 package com.zhenghuaizhi.flashskip.ui.home
 
-import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
-import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
-import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
-import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
-import com.zhenghuaizhi.flashskip.domain.model.RuleCardStatus
 import com.zhenghuaizhi.flashskip.domain.model.ServiceStatus
-import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
-import com.zhenghuaizhi.flashskip.domain.model.TargetApp
-import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
+import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 
+/** 首页只保留用户能理解的展示状态，不携带执行历史和采集诊断。 */
 data class HomeUiState(
     val serviceStatus: ServiceStatus = ServiceStatus.NOT_ENABLED,
-    val enabledAppCount: Int = 0,
     val targetApps: List<TargetAppUiState> = emptyList(),
     val capture: CaptureUiState = CaptureUiState(),
-    val capturingAppName: String? = null,
-    val records: List<ActionRecord> = emptyList(),
-    val latestSuccess: ActionRecord? = null,
-    val hasCapturedRules: Boolean = false,
-    val currentTimeEpochMs: Long = System.currentTimeMillis(),
     val operationInProgress: Boolean = false,
-    val operationMessage: String? = null,
+    val operationFeedback: HomeFeedback? = null,
+    val canRetry: Boolean = false,
     val ruleActionsEnabled: Boolean = true,
 )
 
 data class TargetAppUiState(
-    val target: TargetApp,
-    val enabled: Boolean,
+    val id: TargetAppId,
+    val displayName: String,
+    val checked: Boolean,
     val status: TargetAppStatus,
-    val ruleCard: RuleCardUiState? = null,
+    val canEnable: Boolean,
 )
 
 data class CaptureUiState(
     val sessionId: Long? = null,
     val operationInProgress: Boolean = false,
     val phase: CapturePhase? = null,
-    val failure: CaptureFailure? = null,
-    val failureDiagnostics: CaptureFailureDiagnostics? = null,
-    val targetWindowDiagnostics: TargetWindowDiagnostics? = null,
+    val failure: CaptureIssue? = null,
+    val targetAppName: String? = null,
     val canStart: Boolean = false,
 )
 
-data class RuleCardUiState(
-    val status: RuleCardStatus,
-    val sampleCount: Int,
-    val ruleCount: Int,
-    val stableSampleCount: Int,
-    val uniqueEvidenceCount: Int,
-    val selector: CapturedSelector?,
-    val activities: Set<String> = emptySet(),
-)
+enum class CaptureIssue {
+    SERVICE_UNAVAILABLE, CONFIGURATION_TIMEOUT, TARGET_TIMEOUT, CLICK_NOT_CAPTURED,
+    COMPLETION_TIMEOUT, RETURNED_BEFORE_TARGET, APP_UNAVAILABLE, AMBIGUOUS, UNKNOWN,
+    STORAGE,
+}
+
+enum class HomeFeedback {
+    STORAGE, CAPTURE_IN_PROGRESS, RULE_NOT_READY, RULES_UPDATING, STALE,
+    RETURN_STORAGE, DEPARTURE_STORAGE, GO_HOME_FAILED, SETTINGS_FAILED,
+    SAVED, SAVED_NOT_READY,
+}
 
 enum class TargetAppStatus {
     RULE_UNAVAILABLE,
     DISABLED,
     ENABLED_AND_RUNNING,
     ENABLED_BUT_SERVICE_UNAVAILABLE,
-}
-
-fun targetAppUiState(
-    target: TargetApp,
-    enabled: Boolean,
-    serviceStatus: ServiceStatus,
-    ruleCard: RuleCardUiState? = null,
-): TargetAppUiState {
-    val status = when {
-        target.ruleAvailability !is RuleAvailability.Available -> TargetAppStatus.RULE_UNAVAILABLE
-        !enabled -> TargetAppStatus.DISABLED
-        serviceStatus == ServiceStatus.RUNNING -> TargetAppStatus.ENABLED_AND_RUNNING
-        else -> TargetAppStatus.ENABLED_BUT_SERVICE_UNAVAILABLE
-    }
-    return TargetAppUiState(
-        target = target,
-        enabled = enabled,
-        status = status,
-        ruleCard = ruleCard,
-    )
 }

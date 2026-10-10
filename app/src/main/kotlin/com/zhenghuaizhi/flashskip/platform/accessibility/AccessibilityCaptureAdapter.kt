@@ -485,14 +485,20 @@ internal class AccessibilityCaptureAdapter(
             nodes = nodes,
             preClickUniqueSelectors = candidates.filter { it in latestUniqueSelectors },
         )
-        scope.launch { coordinator.recordCaptured(session.id, sample) }
-        CaptureTraceLog.stage(
-            session.id,
-            "sample_captured",
-            "nodes" to nodes.size,
-            "selectors" to candidates.size,
-            "clickedAfterTargetMs" to sample.clickedAfterTargetMs,
-        )
+        scope.launch {
+            val result = coordinator.recordCaptured(session.id, sample)
+            if (result is com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationResult.Failure &&
+                clickLockedSessionId == session.id
+            ) {
+                clickLockedSessionId = null
+            }
+            if (result is com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationResult.Success) {
+                CaptureTraceLog.stage(
+                    session.id, "sample_captured", "nodes" to nodes.size,
+                    "selectors" to candidates.size, "clickedAfterTargetMs" to sample.clickedAfterTargetMs,
+                )
+            }
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -612,14 +618,12 @@ internal class AccessibilityCaptureAdapter(
         candidateLockedSessionId = session.id
         frozenCandidate = frozen
         scope.launch {
-            val recorded = try {
-                coordinator.recordObservedCandidate(session.id, candidate)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
+            val result = coordinator.recordObservedCandidateResult(session.id, candidate)
+            if (result is com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationResult.Failure) {
                 handleCandidateWriteFailure(frozen)
                 return@launch
             }
+            val recorded = result is com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationResult.Success
             if (frozenCandidate !== frozen) return@launch
             if (!recorded) {
                 releaseFrozenCandidate(frozen)
@@ -650,15 +654,9 @@ internal class AccessibilityCaptureAdapter(
         CaptureTraceLog.stage(candidate.sessionId, "candidate_write_failed")
         releaseFrozenCandidate(candidate)
         if (verifiedPendingClick != null) {
-            try {
-                coordinator.recordCaptured(candidate.sessionId, verifiedPendingClick.sample)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                CaptureTraceLog.stage(
-                    candidate.sessionId,
-                    "candidate_click_recovery_write_failed",
-                )
+            val result = coordinator.recordCaptured(candidate.sessionId, verifiedPendingClick.sample)
+            if (result is com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationResult.Failure) {
+                CaptureTraceLog.stage(candidate.sessionId, "candidate_click_recovery_write_failed")
             }
         }
     }
@@ -1064,6 +1062,7 @@ internal class AccessibilityCaptureAdapter(
         ) {
             is AccessibilityCaptureProbe.ProbeResult.Success -> result.selectors
             AccessibilityCaptureProbe.ProbeResult.NoRoot,
+            AccessibilityCaptureProbe.ProbeResult.Unavailable,
             AccessibilityCaptureProbe.ProbeResult.PageChanged,
             AccessibilityCaptureProbe.ProbeResult.TraversalLimit,
             -> emptySet()

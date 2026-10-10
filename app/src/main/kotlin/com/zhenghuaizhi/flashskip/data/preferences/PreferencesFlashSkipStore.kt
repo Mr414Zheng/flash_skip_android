@@ -1,6 +1,11 @@
 package com.zhenghuaizhi.flashskip.data.preferences
 
 import android.content.Context
+import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementOperation
+import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementOutcome
+import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementTraceEvent
+import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementTraceSink
+import com.zhenghuaizhi.flashskip.application.rulecapture.recordSafely
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -25,17 +30,23 @@ private val Context.flashSkipDataStore by preferencesDataStore(name = "flashskip
 class PreferencesFlashSkipStore internal constructor(
     private val dataStore: DataStore<Preferences>,
     cleanupScope: CoroutineScope,
+    private val traceSink: RuleManagementTraceSink = RuleManagementTraceSink.None,
 ) : FlashSkipStore {
-    constructor(context: Context, cleanupScope: CoroutineScope) :
-        this(context.flashSkipDataStore, cleanupScope)
+    constructor(context: Context, cleanupScope: CoroutineScope, traceSink: RuleManagementTraceSink = RuleManagementTraceSink.None) :
+        this(context.flashSkipDataStore, cleanupScope, traceSink)
 
     init {
         cleanupScope.launch {
-            dataStore.edit { values ->
-                values.remove(LEGACY_QQ_MUSIC_ENABLED)
-                values.remove(LEGACY_TAOBAO_ENABLED)
-                values.remove(LEGACY_JD_ENABLED)
-                values.remove(LEGACY_RECORDS)
+            try {
+                dataStore.edit { values ->
+                    values.remove(LEGACY_QQ_MUSIC_ENABLED)
+                    values.remove(LEGACY_TAOBAO_ENABLED)
+                    values.remove(LEGACY_JD_ENABLED)
+                    values.remove(LEGACY_RECORDS)
+                }
+            } catch (_: IOException) {
+                // 清理失败不终止应用；读取仍执行安全过滤，后续写入可由用户重试。
+                traceSink.recordSafely { RuleManagementTraceEvent(RuleManagementOperation.INITIALIZE_PREFERENCES, RuleManagementOutcome.STORAGE_FAILURE) }
             }
         }
     }

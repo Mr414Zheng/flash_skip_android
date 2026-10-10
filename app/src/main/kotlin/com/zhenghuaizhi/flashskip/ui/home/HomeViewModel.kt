@@ -7,22 +7,22 @@ import com.zhenghuaizhi.flashskip.application.ServiceStatusCoordinator
 import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationFailure
 import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationResult
 import com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCoordinator
-import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
-import com.zhenghuaizhi.flashskip.domain.model.RuleAvailability
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
+import com.zhenghuaizhi.flashskip.domain.model.SemanticDiffOutcome
 import com.zhenghuaizhi.flashskip.domain.model.ServiceStatus
-import com.zhenghuaizhi.flashskip.domain.model.TargetApp
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalog
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalogSnapshot
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -35,6 +35,7 @@ class HomeViewModel(
     private val mutableEffects = MutableSharedFlow<HomeEffect>(extraBufferCapacity = 1)
     val effects = mutableEffects.asSharedFlow()
     private val operationState = MutableStateFlow(OperationUiState())
+    private var lastOperation: RetryOperation? = null
     // 生命周期可能先于开始请求的落盘完成；先记住离开/返回，再绑定实际创建的会话 ID。
     private var pendingReturnSessionId: Long? = null
     private var observedDepartureSessionId: Long? = null
@@ -55,61 +56,64 @@ class HomeViewModel(
         serviceStatusCoordinator.status,
         currentCatalog,
         operationState,
-    ) { preferences, serviceStatus, catalog, operation ->
+        captureCoordinator.serviceFailure,
+    ) { preferences, serviceStatus, catalog, operation, serviceFailure ->
         val captureState = catalog.captureState
+        val activeSession = captureState.activeSession
+        val currentServiceFailure = serviceFailure?.takeIf {
+            it.sessionId != null && it.sessionId == activeSession?.id
+        }
+        val serviceWriteFailed = currentServiceFailure?.reason == CaptureOperationFailure.STORAGE
         val targets = catalog.snapshot.capturedTargets.map { captured ->
-            val targetAppId = captured.targetAppId
-            val rules = catalog.snapshot.rulesForTarget(targetAppId)
-            val analysis = captured.analysis
-            val target = TargetApp(
-                id = targetAppId,
-                displayName = captured.displayName,
-                packageName = targetAppId.packageName,
-                ruleAvailability = if (rules.isNotEmpty()) {
-                    RuleAvailability.Available(rules.size)
-                } else {
-                    RuleAvailability.Unavailable
+            val id = captured.targetAppId
+            val available = catalog.snapshot.rulesForTarget(id).isNotEmpty()
+            val enabled = preferences.enabledApps[id] == true
+            TargetAppUiState(
+                id = id,
+                displayName = captured.displayName.takeUnless { it == id.packageName || it.isBlank() }
+                    ?: "该应用",
+                checked = enabled && available,
+                status = when {
+                    !available -> TargetAppStatus.RULE_UNAVAILABLE
+                    !enabled -> TargetAppStatus.DISABLED
+                    serviceStatus == ServiceStatus.RUNNING -> TargetAppStatus.ENABLED_AND_RUNNING
+                    else -> TargetAppStatus.ENABLED_BUT_SERVICE_UNAVAILABLE
                 },
-            )
-            targetAppUiState(
-                target = target,
-                enabled = preferences.enabledApps[targetAppId] == true,
-                serviceStatus = serviceStatus,
-                ruleCard = RuleCardUiState(
-                    status = analysis.status,
-                    sampleCount = analysis.sampleCount,
-                    ruleCount = analysis.rules.size,
-                    stableSampleCount = analysis.stableSampleCount,
-                    uniqueEvidenceCount = analysis.uniqueEvidenceCount,
-                    selector = analysis.primarySelector,
-                    activities = analysis.allowedActivities,
-                ),
+                canEnable = available && catalog.matchesCurrentSamples &&
+                    activeSession?.blocksAutomation != true && !operation.inProgress,
             )
         }
-        val activeSession = captureState.activeSession
+        val feedback = if (operation.savedTarget != null && catalog.matchesCurrentSamples) {
+            if (catalog.snapshot.rulesForTarget(operation.savedTarget).isNotEmpty()) {
+                HomeFeedback.SAVED
+            } else {
+                HomeFeedback.SAVED_NOT_READY
+            }
+        } else {
+            operation.feedback
+        }
         HomeUiState(
             serviceStatus = serviceStatus,
-            enabledAppCount = targets.count {
-                it.enabled && it.target.ruleAvailability is RuleAvailability.Available
-            },
             targetApps = targets,
             capture = CaptureUiState(
                 sessionId = activeSession?.id,
                 operationInProgress = operation.inProgress,
-                phase = activeSession?.phase,
-                failure = activeSession?.failure,
-                failureDiagnostics = activeSession?.failureDiagnostics,
-                targetWindowDiagnostics = activeSession?.targetWindowDiagnostics,
+                phase = if (serviceWriteFailed) CapturePhase.FAILED else activeSession?.phase,
+                failure = when {
+                    serviceWriteFailed -> CaptureIssue.STORAGE
+                    activeSession?.failureDiagnostics?.semanticDiff?.outcome == SemanticDiffOutcome.AMBIGUOUS ->
+                        CaptureIssue.AMBIGUOUS
+                    else -> activeSession?.failure.toCaptureIssue()
+                },
+                targetAppName = activeSession?.targetAppName?.takeUnless {
+                    it.isBlank() || it == activeSession.packageName
+                },
                 canStart = !operation.inProgress && serviceStatus == ServiceStatus.RUNNING &&
-                    (activeSession == null || activeSession.phase == CapturePhase.FAILED),
+                    (activeSession == null || activeSession.phase == CapturePhase.FAILED || serviceWriteFailed),
             ),
-            capturingAppName = activeSession?.targetAppName,
-            records = preferences.records,
-            latestSuccess = preferences.records.firstOrNull { it.outcome == ActionOutcome.CLOSED },
-            hasCapturedRules = captureState.samples.isNotEmpty(),
-            currentTimeEpochMs = System.currentTimeMillis(),
             operationInProgress = operation.inProgress,
-            operationMessage = operation.message,
+            operationFeedback = feedback,
+            canRetry = operation.retryAvailable && !operation.inProgress,
             ruleActionsEnabled = catalog.matchesCurrentSamples,
         )
     }.stateIn(
@@ -119,70 +123,69 @@ class HomeViewModel(
     )
 
     fun setAppEnabled(targetAppId: TargetAppId, enabled: Boolean) {
-        launchOperation { captureCoordinator.setAppEnabled(targetAppId, enabled) }
+        launchOperation(RetryOperation.Toggle(targetAppId, enabled))
     }
 
     fun startCapture() {
         if (serviceStatusCoordinator.status.value != ServiceStatus.RUNNING ||
             operationState.value.inProgress
         ) return
+        val failedSessionId = captureCoordinator.serviceFailure.value?.sessionId?.takeIf {
+            it == uiState.value.capture.sessionId
+        }
         captureStartPending = true
         stoppedWhileCaptureStartPending = false
         returnedWhileCaptureStartPending = false
-        launchOperation {
-            val result = captureCoordinator.requestStart()
-            if (result is CaptureOperationResult.Success && result.sessionId != null) {
-                val sessionId = result.sessionId
-                pendingReturnSessionId = sessionId
-                captureStartPending = false
-                if (stoppedWhileCaptureStartPending) {
-                    observedDepartureSessionId = sessionId
-                    viewModelScope.launch {
-                        persistDepartureAndMaybeReturn(sessionId)
-                    }
-                }
-                if (captureCoordinator.awaitConfigured(sessionId) &&
-                    !stoppedWhileCaptureStartPending && !returnedWhileCaptureStartPending
-                ) {
-                    mutableEffects.emit(HomeEffect.GoHome)
-                }
-            }
-            captureStartPending = false
-            result
-        }
+        launchOperation(RetryOperation.Start(failedSessionId))
     }
 
     fun finishCapture() {
-        val sessionId = uiState.value.capture.sessionId ?: return
-        launchOperation { captureCoordinator.finish(sessionId) }
+        val session = uiState.value.capture.sessionId ?: return
+        launchOperation(RetryOperation.Finish(session))
     }
 
     fun cancelCapture() {
-        val sessionId = uiState.value.capture.sessionId ?: return
-        launchOperation { captureCoordinator.cancel(sessionId) }
+        val session = uiState.value.capture.sessionId ?: return
+        launchOperation(RetryOperation.Cancel(session))
     }
 
     fun clearCapturedRules(targetAppId: TargetAppId) {
-        launchOperation { captureCoordinator.clearTarget(targetAppId) }
+        launchOperation(RetryOperation.Clear(targetAppId))
     }
 
     fun clearAllCapturedRules() {
-        launchOperation { captureCoordinator.clearAll() }
+        launchOperation(RetryOperation.ClearAll)
+    }
+
+    /** 重试固定的原动作；会话动作始终保留原 ID，不能取消或保存替换会话。 */
+    fun retryLastOperation() {
+        val operation = lastOperation ?: return
+        if (!operationState.value.retryAvailable || operationState.value.inProgress) return
+        if (operation is RetryOperation.Start) {
+            captureStartPending = true
+            stoppedWhileCaptureStartPending = false
+            returnedWhileCaptureStartPending = false
+        }
+        launchOperation(operation)
+    }
+
+    fun reportSettingsLaunchFailure() {
+        operationState.value = operationState.value.copy(feedback = HomeFeedback.SETTINGS_FAILED, retryAvailable = false)
+    }
+
+    fun reportGoHomeFailure(sessionId: Long) {
+        viewModelScope.launch {
+            // 外跳反馈可能先于开始请求释放控件；等同一请求结束后再取消其会话。
+            operationState.first { !it.inProgress }
+            if (captureCoordinator.state.first().activeSession?.id == sessionId) {
+                launchOperation(RetryOperation.CancelHomeFailure(sessionId))
+            }
+        }
     }
 
     fun refresh() {
         serviceStatusCoordinator.refresh()
-        viewModelScope.launch {
-            try {
-                captureCoordinator.expireActive()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                operationState.value = operationState.value.copy(
-                    message = CaptureOperationResult.Failure(CaptureOperationFailure.STORAGE).message(),
-                )
-            }
-        }
+        viewModelScope.launch { captureCoordinator.expireActive() }
     }
 
     fun onHostStopped(isChangingConfigurations: Boolean) {
@@ -201,33 +204,68 @@ class HomeViewModel(
         if (captureStartPending && stoppedWhileCaptureStartPending) {
             returnedWhileCaptureStartPending = true
         }
-        val sessionId = pendingReturnSessionId
-        val observedDeparture = sessionId != null && observedDepartureSessionId == sessionId
+        val expectedSessionId = pendingReturnSessionId
         viewModelScope.launch {
-            try {
-                val result = captureCoordinator.reconcileReturn(
-                    expectedSessionId = sessionId,
-                    observedDeparture = observedDeparture,
-                )
-                if (result is CaptureOperationResult.Failure) {
-                    operationState.value = operationState.value.copy(message = result.lifecycleMessage())
-                } else if (result is CaptureOperationResult.Success) {
-                    if (pendingReturnSessionId == result.sessionId) pendingReturnSessionId = null
-                    if (observedDepartureSessionId == result.sessionId) {
-                        observedDepartureSessionId = null
-                    }
-                    operationState.value = operationState.value.copy(message = null)
+            val sessionId = expectedSessionId ?: captureCoordinator.state.first().activeSession?.id
+            val observedDeparture = sessionId != null && observedDepartureSessionId == sessionId
+            reconcileReturn(sessionId, observedDeparture)
+        }
+    }
+
+    private suspend fun beginCapture(operation: RetryOperation.Start): CaptureOperationResult {
+        if (operation.previousSessionCancelled && captureCoordinator.state.first().activeSession != null) {
+            captureStartPending = false
+            return CaptureOperationResult.Stale
+        }
+        operation.failedSessionId?.takeUnless { operation.previousSessionCancelled }?.let { sessionId ->
+            val cancelled = captureCoordinator.cancel(sessionId)
+            if (cancelled !is CaptureOperationResult.Success) {
+                captureStartPending = false
+                return cancelled
+            }
+            // 重启包含两次写入；第二次失败时，重试只创建新会话，不再次取消已结束的旧会话。
+            lastOperation = operation.copy(previousSessionCancelled = true)
+        }
+        try {
+            val result = captureCoordinator.requestStart()
+            if (result is CaptureOperationResult.Success && result.sessionId != null) {
+                val sessionId = result.sessionId
+                pendingReturnSessionId = sessionId
+                captureStartPending = false
+                if (stoppedWhileCaptureStartPending) {
+                    observedDepartureSessionId = sessionId
+                    viewModelScope.launch { persistDepartureAndMaybeReturn(sessionId) }
                 }
-                if (result !is CaptureOperationResult.Failure) {
+                if (captureCoordinator.awaitConfigured(sessionId) &&
+                    !stoppedWhileCaptureStartPending && !returnedWhileCaptureStartPending
+                ) {
+                    mutableEffects.emit(HomeEffect.GoHome(sessionId))
+                }
+            }
+            return result
+        } finally {
+            captureStartPending = false
+        }
+    }
+
+    private suspend fun reconcileReturn(sessionId: Long?, observedDeparture: Boolean) {
+        val retry = sessionId?.let { RetryOperation.Return(it, observedDeparture) }
+        try {
+            val result = captureCoordinator.reconcileReturn(sessionId, observedDeparture)
+            when (result) {
+                is CaptureOperationResult.Failure -> reportLifecycleFailure(retry, HomeFeedback.RETURN_STORAGE)
+                is CaptureOperationResult.Success -> {
+                    clearLifecycleMarkers(result.sessionId)
+                    if (!operationState.value.inProgress) operationState.value = OperationUiState()
                     captureCoordinator.expireActive()
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                operationState.value = operationState.value.copy(
-                    message = "返回后的采集结果暂未保存，请检查存储后再次离开并返回 FlashSkip 重试。",
-                )
+                CaptureOperationResult.Stale -> captureCoordinator.expireActive()
+                CaptureOperationResult.Pending -> Unit
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            reportLifecycleFailure(retry, HomeFeedback.RETURN_STORAGE)
         }
     }
 
@@ -235,45 +273,81 @@ class HomeViewModel(
         try {
             val result = captureCoordinator.markLeftFlashSkip(sessionId)
             if (result is CaptureOperationResult.Failure) {
-                operationState.value = operationState.value.copy(message = result.lifecycleMessage())
+                reportLifecycleFailure(RetryOperation.Return(sessionId, true), HomeFeedback.DEPARTURE_STORAGE)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            operationState.value = operationState.value.copy(
-                message = "离开状态暂未保存，请检查存储后再次返回 FlashSkip 重试。",
-            )
+            reportLifecycleFailure(RetryOperation.Return(sessionId, true), HomeFeedback.DEPARTURE_STORAGE)
         }
     }
 
     private suspend fun persistDepartureAndMaybeReturn(sessionId: Long) {
         persistDeparture(sessionId)
-        if (returnedWhileCaptureStartPending) {
-            val result = captureCoordinator.reconcileReturn(
-                expectedSessionId = sessionId,
-                observedDeparture = true,
-            )
-            if (result is CaptureOperationResult.Success) {
-                if (pendingReturnSessionId == sessionId) pendingReturnSessionId = null
-                if (observedDepartureSessionId == sessionId) observedDepartureSessionId = null
-            } else if (result is CaptureOperationResult.Failure) {
-                operationState.value = operationState.value.copy(message = result.lifecycleMessage())
-            }
-        }
+        if (returnedWhileCaptureStartPending) reconcileReturn(sessionId, true)
     }
 
-    private fun launchOperation(action: suspend () -> CaptureOperationResult) {
+    private suspend fun reportLifecycleFailure(retry: RetryOperation?, feedback: HomeFeedback) {
+        if (retry is RetryOperation.Return && captureCoordinator.state.first().activeSession?.id != retry.sessionId) return
+        lastOperation = retry
+        operationState.value = operationState.value.copy(
+            feedback = feedback,
+            retryAvailable = retry != null,
+        )
+    }
+
+    private fun clearLifecycleMarkers(sessionId: Long?) {
+        if (pendingReturnSessionId == sessionId) pendingReturnSessionId = null
+        if (observedDepartureSessionId == sessionId) observedDepartureSessionId = null
+    }
+
+    private fun launchOperation(operation: RetryOperation) {
         if (operationState.value.inProgress) return
+        lastOperation = operation
         operationState.value = OperationUiState(inProgress = true)
         viewModelScope.launch {
             try {
-                val result = action()
-                operationState.value = OperationUiState(message = result.message())
+                val result = when (operation) {
+                    is RetryOperation.Toggle -> captureCoordinator.setAppEnabled(operation.id, operation.enabled)
+                    is RetryOperation.Start -> beginCapture(operation)
+                    is RetryOperation.Finish -> captureCoordinator.finish(operation.sessionId)
+                    is RetryOperation.Cancel -> captureCoordinator.cancel(operation.sessionId)
+                    is RetryOperation.Clear -> captureCoordinator.clearTarget(operation.id)
+                    RetryOperation.ClearAll -> captureCoordinator.clearAll()
+                    is RetryOperation.Return -> captureCoordinator.reconcileReturn(operation.sessionId, operation.observedDeparture)
+                    is RetryOperation.CancelHomeFailure -> captureCoordinator.cancel(operation.sessionId)
+                }
+                if (result is CaptureOperationResult.Success) {
+                    val sessionId = when (operation) {
+                        is RetryOperation.Return -> operation.sessionId
+                        is RetryOperation.Cancel -> operation.sessionId
+                        is RetryOperation.CancelHomeFailure -> operation.sessionId
+                        else -> null
+                    }
+                    if (sessionId != null) clearLifecycleMarkers(sessionId)
+                    val lifecycleFeedback = operationState.value.takeIf {
+                        operation is RetryOperation.Start && it.feedback in setOf(HomeFeedback.RETURN_STORAGE, HomeFeedback.DEPARTURE_STORAGE)
+                    }
+                    operationState.value = OperationUiState(
+                        feedback = if (operation is RetryOperation.CancelHomeFailure) HomeFeedback.GO_HOME_FAILED else lifecycleFeedback?.feedback,
+                        retryAvailable = lifecycleFeedback?.retryAvailable == true,
+                        savedTarget = if (operation is RetryOperation.Finish) {
+                            // 完成后会话已清除，按最后新增样本查找展示目录中的可用状态。
+                            captureCoordinator.state.first().samples.lastOrNull()?.targetAppId
+                        } else null,
+                    )
+                } else {
+                    operationState.value = OperationUiState(
+                        feedback = result.toFeedback(operation is RetryOperation.Return),
+                        retryAvailable = result is CaptureOperationResult.Failure && result.reason == CaptureOperationFailure.STORAGE,
+                    )
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 operationState.value = OperationUiState(
-                    message = CaptureOperationResult.Failure(CaptureOperationFailure.STORAGE).message(),
+                    feedback = if (operation is RetryOperation.Return) HomeFeedback.RETURN_STORAGE else HomeFeedback.STORAGE,
+                    retryAvailable = true,
                 )
             } finally {
                 operationState.value = operationState.value.copy(inProgress = false)
@@ -281,24 +355,27 @@ class HomeViewModel(
         }
     }
 
-    private fun CaptureOperationResult.message(): String? = when (this) {
-        is CaptureOperationResult.Success -> null
-        CaptureOperationResult.Stale -> "操作已过期，请根据当前采集状态重试。"
+    private fun CaptureOperationResult.toFeedback(isReturn: Boolean = false): HomeFeedback? = when (this) {
+        is CaptureOperationResult.Success, CaptureOperationResult.Pending -> null
+        CaptureOperationResult.Stale -> HomeFeedback.STALE
         is CaptureOperationResult.Failure -> when (reason) {
-            CaptureOperationFailure.STORAGE -> "未能保存更改，请检查可用存储空间后重试刚才的操作。"
-            CaptureOperationFailure.CAPTURE_IN_PROGRESS -> "请先完成或取消采集，再开启自动关闭。"
-            CaptureOperationFailure.RULE_NOT_READY -> "规则尚不可用，请重新采集后再开启自动关闭。"
-            CaptureOperationFailure.RULES_UPDATING -> "规则正在更新，请稍候再试。"
+            CaptureOperationFailure.STORAGE -> if (isReturn) HomeFeedback.RETURN_STORAGE else HomeFeedback.STORAGE
+            CaptureOperationFailure.CAPTURE_IN_PROGRESS -> HomeFeedback.CAPTURE_IN_PROGRESS
+            CaptureOperationFailure.RULE_NOT_READY -> HomeFeedback.RULE_NOT_READY
+            CaptureOperationFailure.RULES_UPDATING -> HomeFeedback.RULES_UPDATING
         }
     }
 
-    private fun CaptureOperationResult.lifecycleMessage(): String? = when (this) {
-        is CaptureOperationResult.Failure -> when (reason) {
-            CaptureOperationFailure.STORAGE ->
-                "返回后的采集结果暂未保存，请检查存储后再次离开并返回 FlashSkip 重试。"
-            else -> message()
-        }
-        else -> message()
+    private fun CaptureFailure?.toCaptureIssue(): CaptureIssue? = when (this) {
+        CaptureFailure.SERVICE_UNAVAILABLE -> CaptureIssue.SERVICE_UNAVAILABLE
+        CaptureFailure.CONFIGURATION_TIMEOUT -> CaptureIssue.CONFIGURATION_TIMEOUT
+        CaptureFailure.TARGET_TIMEOUT -> CaptureIssue.TARGET_TIMEOUT
+        CaptureFailure.CLICK_TIMEOUT, CaptureFailure.DISMISS_NOT_CAPTURED -> CaptureIssue.CLICK_NOT_CAPTURED
+        CaptureFailure.COMPLETION_TIMEOUT -> CaptureIssue.COMPLETION_TIMEOUT
+        CaptureFailure.RETURNED_BEFORE_TARGET -> CaptureIssue.RETURNED_BEFORE_TARGET
+        CaptureFailure.ACTIVITY_UNAVAILABLE, CaptureFailure.CLICK_SOURCE_UNAVAILABLE,
+        CaptureFailure.CLICK_SEMANTICS_UNAVAILABLE -> CaptureIssue.APP_UNAVAILABLE
+        null -> null
     }
 
     private data class CatalogUiState(
@@ -309,11 +386,24 @@ class HomeViewModel(
 
     private data class OperationUiState(
         val inProgress: Boolean = false,
-        val message: String? = null,
+        val feedback: HomeFeedback? = null,
+        val retryAvailable: Boolean = false,
+        val savedTarget: TargetAppId? = null,
     )
 
+    private sealed interface RetryOperation {
+        data class Toggle(val id: TargetAppId, val enabled: Boolean) : RetryOperation
+        data class Start(val failedSessionId: Long?, val previousSessionCancelled: Boolean = false) : RetryOperation
+        data class Finish(val sessionId: Long) : RetryOperation
+        data class Cancel(val sessionId: Long) : RetryOperation
+        data class Clear(val id: TargetAppId) : RetryOperation
+        data object ClearAll : RetryOperation
+        data class Return(val sessionId: Long, val observedDeparture: Boolean) : RetryOperation
+        data class CancelHomeFailure(val sessionId: Long) : RetryOperation
+    }
+
     sealed interface HomeEffect {
-        data object GoHome : HomeEffect
+        data class GoHome(val sessionId: Long) : HomeEffect
     }
 
     class Factory(
@@ -325,12 +415,7 @@ class HomeViewModel(
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(HomeViewModel::class.java))
-            return HomeViewModel(
-                store,
-                ruleCatalog,
-                serviceStatusCoordinator,
-                captureCoordinator,
-            ) as T
+            return HomeViewModel(store, ruleCatalog, serviceStatusCoordinator, captureCoordinator) as T
         }
     }
 }

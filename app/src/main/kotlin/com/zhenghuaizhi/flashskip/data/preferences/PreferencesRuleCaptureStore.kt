@@ -1,6 +1,11 @@
 package com.zhenghuaizhi.flashskip.data.preferences
 
 import android.content.Context
+import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementOperation
+import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementOutcome
+import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementTraceEvent
+import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementTraceSink
+import com.zhenghuaizhi.flashskip.application.rulecapture.recordSafely
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -22,18 +27,24 @@ private val Context.ruleCaptureDataStore by preferencesDataStore(name = "flashsk
 class PreferencesRuleCaptureStore internal constructor(
     private val dataStore: DataStore<Preferences>,
     cleanupScope: CoroutineScope,
+    private val traceSink: RuleManagementTraceSink = RuleManagementTraceSink.None,
 ) : RuleCaptureStore {
-    constructor(context: Context, cleanupScope: CoroutineScope) :
-        this(context.ruleCaptureDataStore, cleanupScope)
+    constructor(context: Context, cleanupScope: CoroutineScope, traceSink: RuleManagementTraceSink = RuleManagementTraceSink.None) :
+        this(context.ruleCaptureDataStore, cleanupScope, traceSink)
 
     init {
         cleanupScope.launch {
-            dataStore.edit { values ->
-                values.remove(LEGACY_STATE)
-                val raw = values[STATE] ?: return@edit
-                val current = RuleCaptureCodec.decodeOrEmpty(raw)
-                val sanitized = CaptureRuleSafetyPolicy.sanitize(current)
-                if (sanitized != current) values[STATE] = RuleCaptureCodec.encode(sanitized)
+            try {
+                dataStore.edit { values ->
+                    values.remove(LEGACY_STATE)
+                    val raw = values[STATE] ?: return@edit
+                    val current = RuleCaptureCodec.decodeOrEmpty(raw)
+                    val sanitized = CaptureRuleSafetyPolicy.sanitize(current)
+                    if (sanitized != current) values[STATE] = RuleCaptureCodec.encode(sanitized)
+                }
+            } catch (_: IOException) {
+                // 清理失败不终止应用；读取仍执行安全过滤，后续写入可由用户重试。
+                traceSink.recordSafely { RuleManagementTraceEvent(RuleManagementOperation.INITIALIZE_CAPTURE, RuleManagementOutcome.STORAGE_FAILURE) }
             }
         }
     }

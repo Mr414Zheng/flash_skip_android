@@ -33,6 +33,7 @@ enum class CaptureFailure {
 
 enum class ClickRecoveryOutcome {
     SUCCESS,
+    UNAVAILABLE,
     OUTSIDE_TARGETS,
     IDENTITY_CHANGED,
     NO_ROOT,
