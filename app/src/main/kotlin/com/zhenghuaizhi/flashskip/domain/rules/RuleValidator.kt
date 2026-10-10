@@ -40,6 +40,7 @@ object RuleValidator {
                         when (val text = selector.text) {
                             is TextCondition.Exact -> text.value.isBlank()
                             is TextCondition.Prefix -> text.value.isBlank()
+                            is TextCondition.SkipCountdown -> text.prefix.isBlank()
                             TextCondition.NumericCountdown -> false
                             null -> false
                         }
@@ -48,7 +49,8 @@ object RuleValidator {
                 issues += RuleValidationIssue.EMPTY_SELECTOR
             }
             if (rule.selectors.any { selector ->
-                    selector.text == TextCondition.NumericCountdown &&
+                    (selector.text == TextCondition.NumericCountdown ||
+                        selector.text is TextCondition.SkipCountdown) &&
                         !selector.hasAppSpecificResourceConstraint()
                 }
             ) {

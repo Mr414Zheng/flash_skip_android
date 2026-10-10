@@ -4,15 +4,21 @@ import com.zhenghuaizhi.flashskip.domain.model.ActionMethod
 import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.ActionReason
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
+import com.zhenghuaizhi.flashskip.domain.model.ActionObservationStatus
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-internal fun ActionRecord.title(): String = when (outcome) {
-    ActionOutcome.CLOSED -> "已关闭"
-    ActionOutcome.ABANDONED -> "已放弃"
-    ActionOutcome.FAILED -> "执行失败"
+internal fun ActionRecord.title(): String = when {
+    outcome == ActionOutcome.CLOSED -> "已关闭"
+    // 兼容旧记录中 method 未保存、但点击时序已经存在的未确认结果。
+    actionAccepted || method != null ||
+        timing?.targetToActionMs != null && reason in setOf(
+            ActionReason.TRAVERSAL_LIMIT, ActionReason.CLICK_UNCONFIRMED, ActionReason.NODE_UNAVAILABLE,
+        ) -> "已点击，关闭未确认"
+    outcome == ActionOutcome.ABANDONED -> "已放弃"
+    else -> "执行失败"
 }
 
 internal fun ActionRecord.detail(nowEpochMs: Long): String {
@@ -23,11 +29,14 @@ internal fun ActionRecord.detail(nowEpochMs: Long): String {
     }
     return buildList {
         add(action)
+        if (method != null && reason != null) add(reasonLabel(reason))
+        if (observation == ActionObservationStatus.TARGET_PRESENT) add("原关闭目标仍存在")
         timing?.let { timing ->
             timing.targetToFirstQueryMs?.let { add("查询 ${formatDuration(it)}") }
             timing.targetToFirstMatchMs?.let { add("匹配 ${formatDuration(it)}") }
             timing.targetToActionMs?.let { add("点击 ${formatDuration(it)}") }
-            add("确认 ${formatDuration(timing.targetToCompletedMs)}")
+            val completion = if (outcome == ActionOutcome.CLOSED) "确认" else "结束"
+            add("$completion ${formatDuration(timing.targetToCompletedMs)}")
         }
         add(formatTime(timestampEpochMs, nowEpochMs))
         add(ruleId)
@@ -39,8 +48,9 @@ private fun reasonLabel(reason: ActionReason?): String = when (reason) {
     ActionReason.NODE_DISAPPEARED -> "节点已失效"
     ActionReason.PAGE_CHANGED -> "页面已切换"
     ActionReason.QUERY_STALE -> "查询已过期"
+    ActionReason.NODE_UNAVAILABLE -> "无法读取当前节点"
     ActionReason.TRAVERSAL_LIMIT -> "页面结构超出安全范围"
-    ActionReason.CLICK_UNCONFIRMED -> "点击后广告仍存在"
+    ActionReason.CLICK_UNCONFIRMED -> "未能确认关闭"
     ActionReason.GESTURE_REJECTED -> "手势未被接受"
     ActionReason.GESTURE_CANCELLED -> "手势已取消"
     ActionReason.GESTURE_TIMED_OUT -> "手势等待超时"

@@ -6,6 +6,13 @@ import com.zhenghuaizhi.flashskip.domain.model.CaptureEvidence
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticClearReason
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticRecord
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticRecordKind
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticScanPurpose
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticSummary
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticTrace
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticWindowSource
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 import com.zhenghuaizhi.flashskip.domain.model.CapturedSelector
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
@@ -21,6 +28,7 @@ import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowRecognitionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.TraversalLimitReason
+import java.util.EnumMap
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -63,6 +71,8 @@ object RuleCaptureCodec {
         .putNullable("activityName", activityName)
         .putNullable("windowId", windowId)
         .putNullable("targetEnteredAtElapsedMs", targetEnteredAtElapsedMs)
+        .putNullable("leftFlashSkipAtEpochMs", leftFlashSkipAtEpochMs)
+        .put("candidateClickListeningEnabled", candidateClickListeningEnabled)
         .putNullable("pendingSample", pendingSample?.toJson())
         .putNullable("pendingObservedCandidate", pendingObservedCandidate?.toJson())
         .putNullable("failure", failure?.name)
@@ -81,6 +91,72 @@ object RuleCaptureCodec {
         .putNullable("semanticDiff", semanticDiff?.toJson())
         .putNullable("lastWindowVerifiedAgeMs", lastWindowVerifiedAgeMs)
         .putNullable("lastContentChangedAgeMs", lastContentChangedAgeMs)
+        .put("clickDiagnosticApplicable", clickDiagnosticApplicable)
+        .putNullable("sessionTrace", sessionTrace?.toJson())
+
+    private fun CaptureDiagnosticTrace.toJson() = JSONObject()
+        .put("summary", summary.toJson())
+        .put("records", JSONArray().apply { records.forEach { put(it.toJson()) } })
+
+    private fun CaptureDiagnosticSummary.toJson() = JSONObject()
+        .put("totalRecordCount", totalRecordCount)
+        .put("scanCount", scanCount)
+        .put("completedScanCount", completedScanCount)
+        .put("incompleteScanCount", incompleteScanCount)
+        .put("traversalLimitScanCount", traversalLimitScanCount)
+        .put("scansWithCloseSemantics", scansWithCloseSemantics)
+        .put("maxCloseSemanticCount", maxCloseSemanticCount)
+        .put("maxCountdownSemanticCount", maxCountdownSemanticCount)
+        .put("maxEffectiveCandidateCount", maxEffectiveCandidateCount)
+        .put("semanticDiffCount", semanticDiffCount)
+        .put("transitionSignalCount", transitionSignalCount)
+        .put("maxDiffCurrentCandidateCount", maxDiffCurrentCandidateCount)
+        .put("maxDiffStableCandidateCount", maxDiffStableCandidateCount)
+        .put("maxDiffDisappearedCandidateCount", maxDiffDisappearedCandidateCount)
+        .put("differenceClearCount", differenceClearCount)
+        .put("windowResolutionCount", windowResolutionCount)
+        .put("windowResolutionRetryCount", windowResolutionRetryCount)
+        .put(
+            "windowResolutionOutcomeCounts",
+            JSONObject().apply {
+                windowResolutionOutcomeCounts.toSortedMap().forEach { (outcome, count) ->
+                    put(outcome.name, count)
+                }
+            },
+        )
+        .put("hostWindowUpdateCount", hostWindowUpdateCount)
+        .put("droppedRecordCount", droppedRecordCount)
+
+    private fun CaptureDiagnosticRecord.toJson() = JSONObject()
+        .put("elapsedMs", elapsedMs)
+        .put("kind", kind.name)
+        .putNullable("eventId", eventId)
+        .putNullable("eventWindowId", eventWindowId)
+        .putNullable("hostWindowId", hostWindowId)
+        .putNullable("rootWindowId", rootWindowId)
+        .putNullable("rootSource", rootSource?.name)
+        .putNullable("ownedChild", ownedChild)
+        .putNullable("fallbackAllowed", fallbackAllowed)
+        .putNullable("retry", retry)
+        .putNullable("resolutionOutcome", resolutionOutcome?.name)
+        .putNullable("scanOutcome", scanOutcome?.name)
+        .putNullable("scanPurpose", scanPurpose?.name)
+        .putNullable("closeSemanticCount", closeSemanticCount)
+        .putNullable("effectiveCandidateCount", effectiveCandidateCount)
+        .putNullable("countdownSemanticCount", countdownSemanticCount)
+        .putNullable("visitedNodeCount", visitedNodeCount)
+        .putNullable("scanCompleted", scanCompleted)
+        .putNullable("traversalLimitReason", traversalLimitReason?.name)
+        .putNullable("semanticDiffOutcome", semanticDiffOutcome?.name)
+        .putNullable("diffObservationCount", diffObservationCount)
+        .putNullable("diffCurrentCandidateCount", diffCurrentCandidateCount)
+        .putNullable("diffStableCandidateCount", diffStableCandidateCount)
+        .putNullable("diffDisappearedCandidateCount", diffDisappearedCandidateCount)
+        .putNullable("transitionSignal", transitionSignal)
+        .putNullable("previousHostWindowId", previousHostWindowId)
+        .putNullable("currentHostWindowId", currentHostWindowId)
+        .putNullable("differenceCleared", differenceCleared)
+        .putNullable("clearReason", clearReason?.name)
 
     private fun ClickRecoveryDiagnostics.toJson() = JSONObject()
         .put("outcome", outcome.name)
@@ -90,6 +166,7 @@ object RuleCaptureCodec {
         .put("semanticNodeCount", semanticNodeCount)
         .put("matchedNodeCount", matchedNodeCount)
         .put("knownDismissNodeCount", knownDismissNodeCount)
+        .put("explicitDismissNodeCount", explicitDismissNodeCount)
         .put("selectorCandidateNodeCount", selectorCandidateNodeCount)
         .put("countdownSemanticNodeCount", countdownSemanticNodeCount)
         .put("countdownActionChainCount", countdownActionChainCount)
@@ -190,6 +267,8 @@ object RuleCaptureCodec {
         activityName = nullableString("activityName"),
         windowId = nullableInt("windowId"),
         targetEnteredAtElapsedMs = nullableLong("targetEnteredAtElapsedMs"),
+        leftFlashSkipAtEpochMs = nullableLong("leftFlashSkipAtEpochMs"),
+        candidateClickListeningEnabled = optBoolean("candidateClickListeningEnabled", false),
         pendingSample = optJSONObject("pendingSample")?.toSample(),
         pendingObservedCandidate = optJSONObject("pendingObservedCandidate")
             ?.toObservedDismissCandidate(),
@@ -211,6 +290,84 @@ object RuleCaptureCodec {
         semanticDiff = optJSONObject("semanticDiff")?.toSemanticDiffDiagnostics(),
         lastWindowVerifiedAgeMs = nullableLong("lastWindowVerifiedAgeMs"),
         lastContentChangedAgeMs = nullableLong("lastContentChangedAgeMs"),
+        clickDiagnosticApplicable = optBoolean("clickDiagnosticApplicable", true),
+        sessionTrace = optJSONObject("sessionTrace")?.let { trace ->
+            runCatching { trace.toSessionTrace() }.getOrNull()
+        },
+    )
+
+    private fun JSONObject.toSessionTrace() = CaptureDiagnosticTrace.snapshot(
+        summary = getJSONObject("summary").toDiagnosticSummary(),
+        records = getJSONArray("records").mapObjects { it.toDiagnosticRecord() },
+    )
+
+    private fun JSONObject.toDiagnosticSummary() = CaptureDiagnosticSummary(
+        totalRecordCount = optInt("totalRecordCount", 0),
+        scanCount = optInt("scanCount", 0),
+        completedScanCount = optInt("completedScanCount", 0),
+        incompleteScanCount = optInt("incompleteScanCount", 0),
+        traversalLimitScanCount = optInt("traversalLimitScanCount", 0),
+        scansWithCloseSemantics = optInt("scansWithCloseSemantics", 0),
+        maxCloseSemanticCount = optInt("maxCloseSemanticCount", 0),
+        maxCountdownSemanticCount = optInt("maxCountdownSemanticCount", 0),
+        maxEffectiveCandidateCount = optInt("maxEffectiveCandidateCount", 0),
+        semanticDiffCount = optInt("semanticDiffCount", 0),
+        transitionSignalCount = optInt("transitionSignalCount", 0),
+        maxDiffCurrentCandidateCount = optInt("maxDiffCurrentCandidateCount", 0),
+        maxDiffStableCandidateCount = optInt("maxDiffStableCandidateCount", 0),
+        maxDiffDisappearedCandidateCount = optInt("maxDiffDisappearedCandidateCount", 0),
+        differenceClearCount = optInt("differenceClearCount", 0),
+        windowResolutionCount = optInt("windowResolutionCount", 0),
+        windowResolutionRetryCount = optInt("windowResolutionRetryCount", 0),
+        windowResolutionOutcomeCounts = optJSONObject("windowResolutionOutcomeCounts")
+            ?.toWindowResolutionOutcomeCounts()
+            ?: emptyMap(),
+        hostWindowUpdateCount = optInt("hostWindowUpdateCount", 0),
+        droppedRecordCount = optInt("droppedRecordCount", 0),
+    )
+
+    private fun JSONObject.toWindowResolutionOutcomeCounts(): Map<TargetWindowRecognitionOutcome, Int> =
+        EnumMap<TargetWindowRecognitionOutcome, Int>(TargetWindowRecognitionOutcome::class.java).apply {
+            val keys = keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val count = getInt(key)
+                require(count >= 0)
+                put(TargetWindowRecognitionOutcome.valueOf(key), count)
+            }
+        }
+
+    private fun JSONObject.toDiagnosticRecord() = CaptureDiagnosticRecord(
+        elapsedMs = getLong("elapsedMs"),
+        kind = CaptureDiagnosticRecordKind.valueOf(getString("kind")),
+        eventId = nullableInt("eventId"),
+        eventWindowId = nullableInt("eventWindowId"),
+        hostWindowId = nullableInt("hostWindowId"),
+        rootWindowId = nullableInt("rootWindowId"),
+        rootSource = nullableString("rootSource")?.let(CaptureDiagnosticWindowSource::valueOf),
+        ownedChild = nullableBoolean("ownedChild"),
+        fallbackAllowed = nullableBoolean("fallbackAllowed"),
+        retry = nullableBoolean("retry"),
+        resolutionOutcome = nullableString("resolutionOutcome")
+            ?.let(TargetWindowRecognitionOutcome::valueOf),
+        scanOutcome = nullableString("scanOutcome")?.let(ClickRecoveryOutcome::valueOf),
+        scanPurpose = nullableString("scanPurpose")?.let(CaptureDiagnosticScanPurpose::valueOf),
+        closeSemanticCount = nullableInt("closeSemanticCount"),
+        effectiveCandidateCount = nullableInt("effectiveCandidateCount"),
+        countdownSemanticCount = nullableInt("countdownSemanticCount"),
+        visitedNodeCount = nullableInt("visitedNodeCount"),
+        scanCompleted = nullableBoolean("scanCompleted"),
+        traversalLimitReason = nullableString("traversalLimitReason")?.let(TraversalLimitReason::valueOf),
+        semanticDiffOutcome = nullableString("semanticDiffOutcome")?.let(SemanticDiffOutcome::valueOf),
+        diffObservationCount = nullableInt("diffObservationCount"),
+        diffCurrentCandidateCount = nullableInt("diffCurrentCandidateCount"),
+        diffStableCandidateCount = nullableInt("diffStableCandidateCount"),
+        diffDisappearedCandidateCount = nullableInt("diffDisappearedCandidateCount"),
+        transitionSignal = nullableBoolean("transitionSignal"),
+        previousHostWindowId = nullableInt("previousHostWindowId"),
+        currentHostWindowId = nullableInt("currentHostWindowId"),
+        differenceCleared = nullableBoolean("differenceCleared"),
+        clearReason = nullableString("clearReason")?.let(CaptureDiagnosticClearReason::valueOf),
     )
 
     private fun JSONObject.toRecoveryDiagnostics() = ClickRecoveryDiagnostics(
@@ -221,6 +378,7 @@ object RuleCaptureCodec {
         semanticNodeCount = getInt("semanticNodeCount"),
         matchedNodeCount = getInt("matchedNodeCount"),
         knownDismissNodeCount = getInt("knownDismissNodeCount"),
+        explicitDismissNodeCount = optInt("explicitDismissNodeCount", 0),
         selectorCandidateNodeCount = getInt("selectorCandidateNodeCount"),
         countdownSemanticNodeCount = optInt("countdownSemanticNodeCount", 0),
         countdownActionChainCount = optInt("countdownActionChainCount", 0),

@@ -35,6 +35,16 @@ sealed interface TextCondition {
     data class Exact(val value: String) : TextCondition
     data class Prefix(val value: String) : TextCondition
 
+    /** 只允许采集到的“跳过”文案及倒计时变化，不接受以它开头的普通页面文案。 */
+    data class SkipCountdown(val prefix: String) : TextCondition {
+        fun matches(value: String?): Boolean = value?.trim()?.let(pattern::matches) ?: false
+
+        private val pattern = Regex(
+            "^${Regex.escape(prefix)}(?:\\s*[0-9０-９]{1,2}\\s*(?:秒|s)?)?$",
+            RegexOption.IGNORE_CASE,
+        )
+    }
+
     data object NumericCountdown : TextCondition {
         fun matches(value: String?): Boolean = value
             ?.trim()

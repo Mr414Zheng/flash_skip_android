@@ -11,30 +11,45 @@ internal class AccessibilityNodeSelectorMatcher(
     private val service: AccessibilityService,
 ) {
     @Suppress("DEPRECATION")
-    fun matches(node: AccessibilityNodeInfo, selector: NodeSelector): Boolean {
+    fun matches(node: AccessibilityNodeInfo, selector: NodeSelector): Boolean =
+        check(node, selector) == CandidateMatchResult.MATCH
+
+    @Suppress("DEPRECATION")
+    fun check(
+        node: AccessibilityNodeInfo,
+        selector: NodeSelector,
+        refreshAncestors: Boolean = false,
+    ): CandidateMatchResult {
         val targetSnapshot = node.toSnapshot()
-        if (!SelectorMatcher.matchesTarget(selector, targetSnapshot)) return false
-        if (!selector.hasAncestorConstraint) return true
-        val distance = selector.ancestorDistance ?: return false
+        if (!SelectorMatcher.matchesTarget(selector, targetSnapshot)) return CandidateMatchResult.NO_MATCH
+        if (!selector.hasAncestorConstraint) return CandidateMatchResult.MATCH
+        val distance = selector.ancestorDistance ?: return CandidateMatchResult.NO_MATCH
         if (selector.ancestorResourceId == null ||
             distance !in 1..NodeSelector.MAX_ANCESTOR_DISTANCE
         ) {
-            return false
+            return CandidateMatchResult.NO_MATCH
         }
 
-        val targetPackage = node.packageName?.toString() ?: return false
+        val targetPackage = node.packageName?.toString() ?: return CandidateMatchResult.NO_MATCH
         val ancestors = mutableListOf<NodeSnapshot>()
         var ownedAncestor: AccessibilityNodeInfo? = null
         try {
             repeat(distance) {
                 val parent = runCatching { (ownedAncestor ?: node).parent }.getOrNull()
-                    ?: return false
+                    ?: return CandidateMatchResult.UNAVAILABLE
                 ownedAncestor?.recycle()
                 ownedAncestor = parent
-                if (parent.packageName?.toString() != targetPackage) return false
+                if (refreshAncestors && !runCatching { parent.refresh() }.getOrDefault(false)) {
+                    return CandidateMatchResult.UNAVAILABLE
+                }
+                if (parent.packageName?.toString() != targetPackage) return CandidateMatchResult.NO_MATCH
                 ancestors += parent.toSnapshot()
             }
-            return SelectorMatcher.matches(selector, targetSnapshot, ancestors)
+            return if (SelectorMatcher.matches(selector, targetSnapshot, ancestors)) {
+                CandidateMatchResult.MATCH
+            } else {
+                CandidateMatchResult.NO_MATCH
+            }
         } finally {
             ownedAncestor?.recycle()
         }
@@ -54,3 +69,5 @@ internal class AccessibilityNodeSelectorMatcher(
         )
     }
 }
+
+internal enum class CandidateMatchResult { MATCH, NO_MATCH, UNAVAILABLE }

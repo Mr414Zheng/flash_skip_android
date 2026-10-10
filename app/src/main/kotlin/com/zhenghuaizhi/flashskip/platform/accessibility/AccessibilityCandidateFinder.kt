@@ -3,6 +3,7 @@ package com.zhenghuaizhi.flashskip.platform.accessibility
 import android.view.accessibility.AccessibilityNodeInfo
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
 import com.zhenghuaizhi.flashskip.domain.model.TextCondition
+import com.zhenghuaizhi.flashskip.domain.ports.MonotonicClock
 import java.util.ArrayDeque
 
 /**
@@ -13,6 +14,7 @@ import java.util.ArrayDeque
  */
 internal class AccessibilityCandidateFinder(
     private val selectorMatcher: AccessibilityNodeSelectorMatcher,
+    private val monotonicClock: MonotonicClock = AndroidMonotonicClock,
 ) {
     @Suppress("DEPRECATION")
     fun <T> findUnique(
@@ -20,24 +22,38 @@ internal class AccessibilityCandidateFinder(
         root: AccessibilityNodeInfo,
         selector: NodeSelector,
         onUnique: (AccessibilityNodeInfo) -> T,
+        trace: ((CandidateCheck) -> Unit)? = null,
+        diagnostics: SearchDiagnostics? = null,
     ): CandidateSearchResult<T> {
-        val startedAt = AndroidMonotonicClock.elapsedRealtimeMs()
-        val indexedNodes = indexedCandidates(root, selector)
-        if (indexedNodes != null) {
-            when (
-                val indexedResult = evaluateCandidates(
-                    expectedPackage = expectedPackage,
-                    nodes = indexedNodes,
-                    selector = selector,
-                    startedAt = startedAt,
-                    onUnique = onUnique,
-                )
-            ) {
-                CandidateSearchResult.None -> Unit
-                else -> return indexedResult
+        val startedAt = monotonicClock.elapsedRealtimeMs()
+        diagnostics?.phase = SearchPhase.INDEX
+        try {
+            val indexedNodes = indexedCandidates(root, selector)
+            diagnostics?.apply {
+                this.indexedNodes = indexedNodes?.size
+                indexLookupMs = monotonicClock.elapsedRealtimeMs() - startedAt
             }
+            if (indexedNodes != null) {
+                when (
+                    val indexedResult = evaluateCandidates(
+                        expectedPackage = expectedPackage,
+                        nodes = indexedNodes,
+                        selector = selector,
+                        startedAt = startedAt,
+                        onUnique = onUnique,
+                        trace = trace,
+                        diagnostics = diagnostics,
+                    )
+                ) {
+                    CandidateSearchResult.None -> Unit
+                    else -> return indexedResult
+                }
+            }
+            diagnostics?.phase = SearchPhase.FALLBACK
+            return traverseFallback(expectedPackage, root, selector, startedAt, onUnique, trace, diagnostics)
+        } finally {
+            diagnostics?.searchMs = monotonicClock.elapsedRealtimeMs() - startedAt
         }
-        return traverseFallback(expectedPackage, root, selector, startedAt, onUnique)
     }
 
     private fun indexedCandidates(
@@ -58,6 +74,7 @@ internal class AccessibilityCandidateFinder(
     private fun TextCondition.queryValue(): String? = when (this) {
         is TextCondition.Exact -> value
         is TextCondition.Prefix -> value
+        is TextCondition.SkipCountdown -> prefix
         TextCondition.NumericCountdown -> null
     }
 
@@ -68,18 +85,29 @@ internal class AccessibilityCandidateFinder(
         selector: NodeSelector,
         startedAt: Long,
         onUnique: (AccessibilityNodeInfo) -> T,
+        trace: ((CandidateCheck) -> Unit)?,
+        diagnostics: SearchDiagnostics?,
     ): CandidateSearchResult<T> {
         var firstMatch: AccessibilityNodeInfo? = null
+        var unavailable = false
         try {
             nodes.forEachIndexed { index, node ->
-                if (index >= MAX_NODES || hasTimedOut(startedAt)) {
-                    return CandidateSearchResult.TraversalLimit
-                }
+                if (index >= MAX_NODES) return limited(SearchLimit.NODE_COUNT, diagnostics)
+                if (hasTimedOut(startedAt)) return limited(SearchLimit.TIME, diagnostics)
                 if (node.packageName?.toString() != expectedPackage) return@forEachIndexed
-                if (!selectorMatcher.matches(node, selector)) return@forEachIndexed
+                when (checkCandidate(node, selector, expectedPackage, trace)) {
+                    CandidateMatchResult.NO_MATCH -> return@forEachIndexed
+                    CandidateMatchResult.UNAVAILABLE -> {
+                        unavailable = true
+                        return@forEachIndexed
+                    }
+                    CandidateMatchResult.MATCH -> Unit
+                }
                 if (firstMatch != null) return CandidateSearchResult.Ambiguous
                 firstMatch = node
             }
+            if (unavailable) return CandidateSearchResult.Unavailable
+            if (hasTimedOut(startedAt)) return limited(SearchLimit.TIME, diagnostics)
             return firstMatch?.let { CandidateSearchResult.Value(onUnique(it)) }
                 ?: CandidateSearchResult.None
         } finally {
@@ -94,24 +122,41 @@ internal class AccessibilityCandidateFinder(
         selector: NodeSelector,
         startedAt: Long,
         onUnique: (AccessibilityNodeInfo) -> T,
+        trace: ((CandidateCheck) -> Unit)?,
+        diagnostics: SearchDiagnostics?,
     ): CandidateSearchResult<T> {
         val queue = ArrayDeque<NodeAtDepth>().apply {
             add(NodeAtDepth(AccessibilityNodeInfo.obtain(root), 0))
         }
         var firstMatch: AccessibilityNodeInfo? = null
         var visited = 0
+        var unavailable = false
         try {
             while (queue.isNotEmpty()) {
                 val item = queue.removeFirst()
                 val node = item.node
                 visited++
-                if (visited > MAX_NODES || item.depth > MAX_DEPTH || hasTimedOut(startedAt)) {
-                    node.recycle()
-                    return CandidateSearchResult.TraversalLimit
+                diagnostics?.apply {
+                    visitedNodes = visited
+                    maxDepth = maxOf(maxDepth, item.depth)
                 }
-                if (node.packageName?.toString() == expectedPackage &&
-                    selectorMatcher.matches(node, selector)
-                ) {
+                val limit = when {
+                    visited > MAX_NODES -> SearchLimit.NODE_COUNT
+                    item.depth > MAX_DEPTH -> SearchLimit.DEPTH
+                    hasTimedOut(startedAt) -> SearchLimit.TIME
+                    else -> null
+                }
+                if (limit != null) {
+                    node.recycle()
+                    return limited(limit, diagnostics)
+                }
+                val match = if (node.packageName?.toString() == expectedPackage) {
+                    checkCandidate(node, selector, expectedPackage, trace)
+                } else {
+                    CandidateMatchResult.NO_MATCH
+                }
+                if (match == CandidateMatchResult.UNAVAILABLE) unavailable = true
+                if (match == CandidateMatchResult.MATCH) {
                     if (firstMatch != null) {
                         node.recycle()
                         return CandidateSearchResult.Ambiguous
@@ -125,6 +170,8 @@ internal class AccessibilityCandidateFinder(
                 }
                 if (node !== firstMatch) node.recycle()
             }
+            if (unavailable) return CandidateSearchResult.Unavailable
+            if (hasTimedOut(startedAt)) return limited(SearchLimit.TIME, diagnostics)
             return firstMatch?.let { CandidateSearchResult.Value(onUnique(it)) }
                 ?: CandidateSearchResult.None
         } finally {
@@ -134,7 +181,51 @@ internal class AccessibilityCandidateFinder(
     }
 
     private fun hasTimedOut(startedAt: Long): Boolean =
-        AndroidMonotonicClock.elapsedRealtimeMs() - startedAt > MAX_TRAVERSAL_MS
+        monotonicClock.elapsedRealtimeMs() - startedAt > MAX_TRAVERSAL_MS
+
+    private fun limited(limit: SearchLimit, diagnostics: SearchDiagnostics?): CandidateSearchResult<Nothing> {
+        diagnostics?.limit = limit
+        return CandidateSearchResult.TraversalLimit
+    }
+
+    private fun checkCandidate(
+        node: AccessibilityNodeInfo,
+        selector: NodeSelector,
+        expectedPackage: String,
+        trace: ((CandidateCheck) -> Unit)?,
+    ): CandidateMatchResult {
+        val cached = selectorMatcher.check(node, selector)
+        val prefixLike = (selector.text as? TextCondition.SkipCountdown)?.let {
+            node.text?.startsWith(it.prefix, ignoreCase = true) == true
+        } ?: false
+        val refreshed = if (cached == CandidateMatchResult.MATCH) {
+            runCatching { node.refresh() }.getOrDefault(false)
+        } else {
+            null
+        }
+        // 刷新可能跨过页面变化，先重核包边界，再读取最新节点特征或执行动作。
+        if (refreshed == true && node.packageName?.toString() != expectedPackage) {
+            return CandidateMatchResult.UNAVAILABLE
+        }
+        val result = when {
+            refreshed == false -> CandidateMatchResult.UNAVAILABLE
+            refreshed == true -> selectorMatcher.check(node, selector, refreshAncestors = true)
+            else -> cached
+        }
+        if (trace != null && (cached != CandidateMatchResult.NO_MATCH || prefixLike)) {
+            trace(CandidateCheck(
+                cachedMatch = cached == CandidateMatchResult.MATCH,
+                refreshed = refreshed,
+                result = result,
+                prefixLike = prefixLike,
+                resourceIdHash = node.viewIdResourceName?.hashCode(),
+                classHash = node.className?.hashCode(),
+                visible = node.isVisibleToUser,
+                clickable = node.isClickable,
+            ))
+        }
+        return result
+    }
 
     private data class NodeAtDepth(val node: AccessibilityNodeInfo, val depth: Int)
 
@@ -146,6 +237,7 @@ internal class AccessibilityCandidateFinder(
 }
 
 internal sealed interface CandidateSearchResult<out T> {
+    data object Unavailable : CandidateSearchResult<Nothing>
     data object None : CandidateSearchResult<Nothing>
     data object Ambiguous : CandidateSearchResult<Nothing>
     data object PageChanged : CandidateSearchResult<Nothing>

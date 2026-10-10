@@ -14,9 +14,12 @@ import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
 import com.zhenghuaizhi.flashskip.domain.ports.MonotonicClock
+import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.ports.RuleCaptureStore
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
+import com.zhenghuaizhi.flashskip.domain.rulecapture.CaptureRuleSafetyPolicy
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalog
+import com.zhenghuaizhi.flashskip.domain.rulecapture.ObservedCandidateClickMatcher
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +44,12 @@ enum class CaptureOperationFailure {
     RULES_UPDATING,
 }
 
+/** 服务在终止采集监听前提供的有限计数与耗时诊断。 */
+data class CaptureDiagnosticSnapshot(
+    val failure: CaptureFailureDiagnostics?,
+    val targetWindow: TargetWindowDiagnostics?,
+)
+
 class RuleCaptureCoordinator(
     private val captureStore: RuleCaptureStore,
     private val flashSkipStore: FlashSkipStore,
@@ -53,6 +62,10 @@ class RuleCaptureCoordinator(
     private val sessionSequence = AtomicLong(0)
     // 两份存储没有跨库事务；所有入口共享锁，保证先关闭自动执行，再提交规则。
     private val operationMutex = Mutex()
+    private val diagnosticsProviderSequence = AtomicLong(0)
+
+    @Volatile
+    private var returnDiagnosticsProvider: RegisteredDiagnosticsProvider? = null
 
     /** 有未结束的采集时拒绝重复开始，避免迟到的界面操作替换当前会话。 */
     suspend fun requestStart(): CaptureOperationResult = operation {
@@ -109,6 +122,127 @@ class RuleCaptureCoordinator(
         }
     }
 
+    /** 服务仅在采集期间提供瞬时诊断；注册令牌确保旧服务不能注销新服务的提供者。 */
+    @Synchronized
+    fun registerReturnDiagnosticsProvider(
+        provider: (Long) -> CaptureDiagnosticSnapshot?,
+    ): Long {
+        val registrationId = diagnosticsProviderSequence.incrementAndGet()
+        returnDiagnosticsProvider = RegisteredDiagnosticsProvider(registrationId, provider)
+        return registrationId
+    }
+
+    /** 仅允许注册者注销自己的诊断提供者，避免旧服务销毁时清除新服务状态。 */
+    @Synchronized
+    fun unregisterReturnDiagnosticsProvider(registrationId: Long) {
+        if (returnDiagnosticsProvider?.registrationId == registrationId) {
+            returnDiagnosticsProvider = null
+        }
+    }
+
+    /** 标记真实离开；调用者必须传入发起本次外跳的 session ID。 */
+    suspend fun markLeftFlashSkip(sessionId: Long): CaptureOperationResult = operation {
+        val active = captureStore.state.first().activeSession?.takeIf {
+            it.id == sessionId && it.phase != CapturePhase.FAILED
+        } ?: return@operation CaptureOperationResult.Stale
+        if (active.leftFlashSkipAtEpochMs != null) {
+            return@operation CaptureOperationResult.Success(sessionId)
+        }
+        var marked = false
+        captureStore.update { state ->
+            val session = state.activeSession?.takeIf {
+                it.id == sessionId && it.phase != CapturePhase.FAILED &&
+                    it.leftFlashSkipAtEpochMs == null
+            } ?: return@update state
+            marked = true
+            state.copy(
+                activeSession = session.copy(
+                    leftFlashSkipAtEpochMs = wallClock.currentTimeMillis(),
+                ),
+            )
+        }
+        if (marked) CaptureOperationResult.Success(sessionId) else CaptureOperationResult.Stale
+    }
+
+    /**
+     * 返回时只结算明确离开过的同一会话。持久化快照是状态依据，observedDeparture 用于本进程中
+     * 离开标记写入失败后仍可在真实返回时完成结算。
+     */
+    suspend fun reconcileReturn(
+        expectedSessionId: Long? = null,
+        observedDeparture: Boolean = false,
+    ): CaptureOperationResult = operation {
+        val active = captureStore.state.first().activeSession ?: return@operation CaptureOperationResult.Stale
+        if (expectedSessionId != null && active.id != expectedSessionId) {
+            return@operation CaptureOperationResult.Stale
+        }
+        if (active.leftFlashSkipAtEpochMs == null && !observedDeparture) {
+            return@operation CaptureOperationResult.Stale
+        }
+
+        val shouldFailWithoutEvidence = active.phase in setOf(
+            CapturePhase.CONFIGURING,
+            CapturePhase.WAITING_FOR_TARGET,
+            CapturePhase.OBSERVING_CLICK,
+        )
+        val diagnostics = if (shouldFailWithoutEvidence) {
+            synchronized(this) { returnDiagnosticsProvider?.provider }
+                ?.let { provider ->
+                    try {
+                        provider(active.id)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+        } else {
+            null
+        }
+        val returnFailureDiagnostics = diagnostics?.failure?.let { returned ->
+            returned.copy(
+                sessionTrace = returned.sessionTrace ?: active.failureDiagnostics?.sessionTrace,
+            )
+        } ?: active.failureDiagnostics
+        var reconciled = false
+        captureStore.update { state ->
+            val session = state.activeSession?.takeIf {
+                it.id == active.id &&
+                    (it.leftFlashSkipAtEpochMs != null || observedDeparture)
+            } ?: return@update state
+            val nextSession = when (session.phase) {
+                CapturePhase.CONFIGURING,
+                CapturePhase.WAITING_FOR_TARGET,
+                -> failed(
+                    session = session,
+                    failure = CaptureFailure.RETURNED_BEFORE_TARGET,
+                    diagnostics = returnFailureDiagnostics,
+                    targetWindowDiagnostics = diagnostics?.targetWindow ?: session.targetWindowDiagnostics,
+                )
+
+                CapturePhase.OBSERVING_CLICK -> failed(
+                    session = session,
+                    failure = CaptureFailure.DISMISS_NOT_CAPTURED,
+                    diagnostics = returnFailureDiagnostics,
+                    targetWindowDiagnostics = diagnostics?.targetWindow ?: session.targetWindowDiagnostics,
+                )
+
+                CapturePhase.CAPTURED,
+                -> session.copy(leftFlashSkipAtEpochMs = null)
+
+                CapturePhase.AWAITING_CONFIRMATION -> session.copy(
+                    leftFlashSkipAtEpochMs = null,
+                    candidateClickListeningEnabled = false,
+                )
+
+                CapturePhase.FAILED -> session.copy(leftFlashSkipAtEpochMs = null)
+            }
+            reconciled = true
+            state.copy(activeSession = nextSession)
+        }
+        if (reconciled) CaptureOperationResult.Success(active.id) else CaptureOperationResult.Stale
+    }
+
     suspend fun observeTarget(
         sessionId: Long,
         targetAppId: TargetAppId,
@@ -151,6 +285,7 @@ class RuleCaptureCoordinator(
     }
 
     suspend fun recordCaptured(sessionId: Long, sample: CaptureSample) {
+        if (!CaptureRuleSafetyPolicy.accepts(sample.nodes)) return
         updateState { state ->
             val session = state.activeSession?.takeIf {
                 it.id == sessionId && it.phase in setOf(
@@ -176,15 +311,72 @@ class RuleCaptureCoordinator(
                             .coerceAtLeast(0),
                     pendingSample = sample,
                     pendingObservedCandidate = null,
+                    candidateClickListeningEnabled = false,
                 ),
             )
         }
     }
 
+    suspend fun upgradeObservedCandidateClick(
+        sessionId: Long,
+        candidate: ObservedDismissCandidate,
+        candidateIdentity: PageIdentity,
+        clickedIdentity: PageIdentity,
+        sample: CaptureSample,
+    ): CaptureOperationResult = operation {
+        if (!CaptureRuleSafetyPolicy.accepts(sample.nodes)) return@operation CaptureOperationResult.Stale
+        val now = wallClock.currentTimeMillis()
+        var upgraded = false
+        captureStore.update { state ->
+            val session = state.activeSession?.takeIf {
+                it.id == sessionId &&
+                    it.phase == CapturePhase.AWAITING_CONFIRMATION &&
+                    it.listensForCandidateClick &&
+                    it.pendingObservedCandidate == candidate
+            } ?: return@update state
+            if (candidate.id != sessionId ||
+                sample.id != sessionId ||
+                sample.evidence != CaptureEvidence.ACCESSIBILITY_CLICK ||
+                sample.targetAppId != candidate.targetAppId ||
+                session.targetAppId != candidate.targetAppId ||
+                sample.activityName != candidate.activityName ||
+                session.activityName != candidate.activityName ||
+                candidateIdentity.packageName != candidate.targetAppId.packageName ||
+                candidateIdentity.activityName != candidate.activityName ||
+                clickedIdentity != candidateIdentity ||
+                !ObservedCandidateClickMatcher.matches(
+                    candidate = candidate,
+                    candidateIdentity = candidateIdentity,
+                    clickedIdentity = clickedIdentity,
+                    clickedNodes = sample.nodes,
+                )
+            ) {
+                return@update state
+            }
+            upgraded = true
+            state.copy(
+                activeSession = session.copy(
+                    targetAppName = sample.targetAppName,
+                    phase = CapturePhase.CAPTURED,
+                    phaseStartedAtEpochMs = now,
+                    deadlineAtEpochMs = now + COMPLETION_TIMEOUT_MS,
+                    activityName = sample.activityName,
+                    windowId = candidateIdentity.windowId,
+                    pendingSample = sample,
+                    pendingObservedCandidate = null,
+                    candidateClickListeningEnabled = false,
+                ),
+            )
+        }
+        if (upgraded) CaptureOperationResult.Success(sessionId) else CaptureOperationResult.Stale
+    }
+
     suspend fun recordObservedCandidate(
         sessionId: Long,
         candidate: ObservedDismissCandidate,
-    ) {
+    ): Boolean {
+        if (!CaptureRuleSafetyPolicy.accepts(candidate.nodes)) return false
+        var recorded = false
         updateState { state ->
             val session = state.activeSession?.takeIf {
                 it.id == sessionId && it.phase in setOf(
@@ -205,11 +397,17 @@ class RuleCaptureCoordinator(
                     phaseStartedAtEpochMs = now,
                     deadlineAtEpochMs = now + COMPLETION_TIMEOUT_MS,
                     activityName = candidate.activityName,
+                    targetEnteredAtElapsedMs = session.targetEnteredAtElapsedMs
+                        ?: (monotonicClock.elapsedRealtimeMs() - candidate.observedAfterTargetMs)
+                            .coerceAtLeast(0),
                     pendingSample = null,
                     pendingObservedCandidate = candidate,
+                    candidateClickListeningEnabled = true,
                 ),
             )
+            .also { recorded = true }
         }
+        return recorded
     }
 
     suspend fun recordSemanticDiffEvidence(
@@ -317,9 +515,9 @@ class RuleCaptureCoordinator(
                 activeSession = failed(
                     session = session,
                     failure = failure,
-                    diagnostics = failureDiagnostics.takeIf {
-                        session.phase == CapturePhase.OBSERVING_CLICK
-                    },
+                    diagnostics = failureDiagnostics?.copy(
+                        clickDiagnosticApplicable = session.phase == CapturePhase.OBSERVING_CLICK,
+                    ),
                     targetWindowDiagnostics = targetWindowDiagnostics,
                 ),
             )
@@ -385,10 +583,18 @@ class RuleCaptureCoordinator(
         }
 
     /** 断连只能终止该服务当时观察到的会话，不能在异步回调中选择后续新会话。 */
-    fun serviceDisconnected(expectedSessionId: Long?) {
+    fun serviceDisconnected(
+        expectedSessionId: Long?,
+        diagnostics: CaptureDiagnosticSnapshot? = null,
+    ) {
         if (expectedSessionId == null) return
         applicationScope.launch {
-            fail(expectedSessionId, CaptureFailure.SERVICE_UNAVAILABLE)
+            fail(
+                sessionId = expectedSessionId,
+                failure = CaptureFailure.SERVICE_UNAVAILABLE,
+                diagnostics = diagnostics?.failure,
+                targetWindowDiagnostics = diagnostics?.targetWindow,
+            )
         }
     }
 
@@ -436,11 +642,13 @@ class RuleCaptureCoordinator(
             phase = CapturePhase.FAILED,
             phaseStartedAtEpochMs = now,
             deadlineAtEpochMs = now,
+            leftFlashSkipAtEpochMs = null,
             pendingSample = null,
             pendingObservedCandidate = null,
             failure = failure,
             failureDiagnostics = diagnostics,
             targetWindowDiagnostics = targetWindowDiagnostics,
+            candidateClickListeningEnabled = false,
         )
     }
 
@@ -465,5 +673,10 @@ class RuleCaptureCoordinator(
         nodes = nodes,
         preClickUniqueSelectors = preClickUniqueSelectors,
         evidence = CaptureEvidence.USER_CONFIRMED_UNREPORTED_CLICK,
+    )
+
+    private data class RegisteredDiagnosticsProvider(
+        val registrationId: Long,
+        val provider: (Long) -> CaptureDiagnosticSnapshot?,
     )
 }

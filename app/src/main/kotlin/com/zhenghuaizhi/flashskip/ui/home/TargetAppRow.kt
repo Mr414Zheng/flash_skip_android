@@ -150,45 +150,6 @@ internal fun CaptureControls(
             MaterialTheme.colorScheme.onSurfaceVariant
         },
     )
-    if (phase == CapturePhase.FAILED &&
-        (state.failureDiagnostics != null || state.targetWindowDiagnostics != null)
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(12.dp),
-        ) {
-            Column(
-                modifier = Modifier.padding(FlashSkipTokens.Space12),
-                verticalArrangement = Arrangement.spacedBy(FlashSkipTokens.Space4),
-            ) {
-                Text(
-                    text = "本地诊断",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                state.targetWindowDiagnostics?.let { diagnostics ->
-                    Text(
-                        text = "目标窗口\n${formatTargetWindowDiagnostics(diagnostics)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                state.failureDiagnostics?.let { diagnostics ->
-                    val isClickTimeout = state.failure == CaptureFailure.CLICK_TIMEOUT
-                    Text(
-                        text = if (isClickTimeout) {
-                            "关闭按钮探测\n${formatCaptureTimeoutDiagnostics(diagnostics)}"
-                        } else {
-                            "点击恢复\n${formatCaptureFailureDiagnostics(diagnostics)}"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-    }
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(FlashSkipTokens.Space8),
@@ -342,8 +303,12 @@ private fun failureMessage(failure: CaptureFailure?): String = when (failure) {
     CaptureFailure.SERVICE_UNAVAILABLE -> "采集失败：无障碍服务已断开，请检查后重试。"
     CaptureFailure.CONFIGURATION_TIMEOUT -> "采集失败：监听配置超时。"
     CaptureFailure.TARGET_TIMEOUT -> "采集失败：90 秒内未进入目标应用。"
-    CaptureFailure.CLICK_TIMEOUT -> "采集失败：进入目标应用后 15 秒内没有点击。"
+    CaptureFailure.CLICK_TIMEOUT -> "采集失败：15 秒内未捕获到点击或关闭候选，请重新采集。"
     CaptureFailure.COMPLETION_TIMEOUT -> "采集失败：10 分钟内未确认采集完成。"
+    CaptureFailure.RETURNED_BEFORE_TARGET ->
+        "已返回 FlashSkip，但本次尚未识别到目标应用，无法判断关闭按钮。请重新采集。"
+    CaptureFailure.DISMISS_NOT_CAPTURED ->
+        "已返回 FlashSkip，但本次未识别到关闭按钮，也没有捕获到点击或唯一候选。请重新采集。"
     CaptureFailure.ACTIVITY_UNAVAILABLE -> "采集失败：无法验证当前 Activity。"
     CaptureFailure.CLICK_SOURCE_UNAVAILABLE -> "采集失败：系统未提供点击节点，且未找到唯一关闭节点。"
     CaptureFailure.CLICK_SEMANTICS_UNAVAILABLE -> "该广告暂不支持：关闭节点没有可用语义。"

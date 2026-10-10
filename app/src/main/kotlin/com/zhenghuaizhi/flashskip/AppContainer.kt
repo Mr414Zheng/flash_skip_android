@@ -14,6 +14,7 @@ import com.zhenghuaizhi.flashskip.domain.rules.BuiltinRuleCatalog
 import com.zhenghuaizhi.flashskip.domain.rules.CompositeRuleCatalog
 import com.zhenghuaizhi.flashskip.platform.accessibility.AndroidMonotonicClock
 import com.zhenghuaizhi.flashskip.platform.accessibility.AndroidWallClock
+import com.zhenghuaizhi.flashskip.platform.accessibility.AutomationTraceLog
 import com.zhenghuaizhi.flashskip.platform.packages.AndroidTargetAppVersionReader
 import com.zhenghuaizhi.flashskip.platform.settings.AndroidSystemServiceStatusReader
 import com.zhenghuaizhi.flashskip.ui.home.HomeViewModel
@@ -55,6 +56,7 @@ class AppContainer(context: Context) {
         monotonicClock = monotonicClock,
         wallClock = wallClock,
         scope = scope,
+        traceSink = AutomationTraceLog(enabled = BuildConfig.DEBUG),
     )
 
     private val serviceStatusCoordinator = ServiceStatusCoordinator(

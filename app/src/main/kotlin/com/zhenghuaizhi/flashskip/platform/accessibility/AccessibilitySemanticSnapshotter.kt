@@ -7,8 +7,10 @@ import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
 
 internal class AccessibilitySemanticSnapshotter(
     private val service: AccessibilityService,
+    private val onRead: (AccessibilitySemanticRead) -> Unit = {},
 ) {
     fun snapshot(node: AccessibilityNodeInfo, expectedPackage: String): CapturedNode? {
+        onRead(AccessibilitySemanticRead.SNAPSHOT)
         if (node.packageName?.toString() != expectedPackage) return null
         val bounds = Rect().also(node::getBoundsInScreen)
         val metrics = service.resources.displayMetrics
@@ -35,15 +37,53 @@ internal class AccessibilitySemanticSnapshotter(
     fun copySemanticChain(
         initialNode: AccessibilityNodeInfo,
         expectedPackage: String,
+    ): List<CapturedNode> = copySemanticChain(
+        initialNode = initialNode,
+        expectedPackage = expectedPackage,
+        initialSnapshot = null,
+        reuseInitialSnapshot = false,
+        skipUnusedTerminalParentQuery = false,
+    )
+
+    /** 复用本次probe已取得的自身快照；五层链之外不再读取第六个物理节点。 */
+    @Suppress("DEPRECATION")
+    fun copySemanticChainReusingSnapshot(
+        initialNode: AccessibilityNodeInfo,
+        expectedPackage: String,
+        initialSnapshot: CapturedNode?,
+    ): List<CapturedNode> = copySemanticChain(
+        initialNode = initialNode,
+        expectedPackage = expectedPackage,
+        initialSnapshot = initialSnapshot,
+        reuseInitialSnapshot = true,
+        skipUnusedTerminalParentQuery = true,
+    )
+
+    @Suppress("DEPRECATION")
+    private fun copySemanticChain(
+        initialNode: AccessibilityNodeInfo,
+        expectedPackage: String,
+        initialSnapshot: CapturedNode?,
+        reuseInitialSnapshot: Boolean,
+        skipUnusedTerminalParentQuery: Boolean,
     ): List<CapturedNode> {
         val nodes = mutableListOf<CapturedNode>()
         var current: AccessibilityNodeInfo? = initialNode
         var depth = 0
         while (current != null && depth < MAX_CAPTURE_DEPTH) {
             val node = current
-            val parent = runCatching { node.parent }.getOrNull()
+            val parent = if (skipUnusedTerminalParentQuery && depth == MAX_CAPTURE_DEPTH - 1) {
+                null
+            } else {
+                parent(node)
+            }
             try {
-                snapshot(node, expectedPackage)?.let(nodes::add)
+                val captured = if (reuseInitialSnapshot && depth == 0) {
+                    initialSnapshot
+                } else {
+                    snapshot(node, expectedPackage)
+                }
+                captured?.let(nodes::add)
             } finally {
                 node.recycle()
             }
@@ -52,6 +92,12 @@ internal class AccessibilitySemanticSnapshotter(
         }
         current?.recycle()
         return nodes
+    }
+
+    @Suppress("DEPRECATION")
+    private fun parent(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        onRead(AccessibilitySemanticRead.PARENT)
+        return runCatching { node.parent }.getOrNull()
     }
 
     fun sanitizeSemantic(value: String?): String? = sanitize(value, MAX_SEMANTIC_LENGTH)
@@ -68,4 +114,9 @@ internal class AccessibilitySemanticSnapshotter(
         const val MAX_RESOURCE_ID_LENGTH = 180
         const val MAX_SEMANTIC_LENGTH = 80
     }
+}
+
+internal enum class AccessibilitySemanticRead {
+    SNAPSHOT,
+    PARENT,
 }

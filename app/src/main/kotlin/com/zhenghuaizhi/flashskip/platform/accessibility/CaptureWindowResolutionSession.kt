@@ -8,6 +8,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+internal data class CaptureWindowResolutionRecord(
+    val request: AccessibilityCaptureWindowResolver.Request,
+    val outcome: TargetWindowRecognitionOutcome,
+    val isRetry: Boolean,
+    val occurredAtElapsedMs: Long,
+    val details: AccessibilityCaptureWindowResolver.ResolutionDetails,
+)
+
 /**
  * 只跨重试保存窗口标量；事件、窗口和节点始终由同步 resolver 调用持有并释放。
  */
@@ -15,35 +23,29 @@ internal class CaptureWindowResolutionSession(
     private val scope: CoroutineScope,
     private val elapsedRealtimeMs: () -> Long,
     private val attemptResolver: CaptureWindowAttemptResolver,
-    private val retryRequestProvider: (WindowRetryKey) -> AccessibilityCaptureWindowResolver.Request?,
+    private val retryRequestProvider: (
+        key: WindowRetryKey,
+        eventType: Int,
+    ) -> AccessibilityCaptureWindowResolver.Request?,
     private val onRetryResolved: (
         request: AccessibilityCaptureWindowResolver.Request,
         root: AccessibilityCaptureWindowResolver.ResolvedRoot,
     ) -> Unit,
-    private val recordResolution: (
-        packageName: String,
-        windowId: Int,
-        outcome: TargetWindowRecognitionOutcome,
-        isRetry: Boolean,
-        occurredAtElapsedMs: Long,
-    ) -> Unit,
+    private val recordResolution: (CaptureWindowResolutionRecord) -> Unit,
 ) {
     constructor(
         service: AccessibilityService,
         scope: CoroutineScope,
         elapsedRealtimeMs: () -> Long,
-        retryRequestProvider: (WindowRetryKey) -> AccessibilityCaptureWindowResolver.Request?,
+        retryRequestProvider: (
+            key: WindowRetryKey,
+            eventType: Int,
+        ) -> AccessibilityCaptureWindowResolver.Request?,
         onRetryResolved: (
             request: AccessibilityCaptureWindowResolver.Request,
             root: AccessibilityCaptureWindowResolver.ResolvedRoot,
         ) -> Unit,
-        recordResolution: (
-            packageName: String,
-            windowId: Int,
-            outcome: TargetWindowRecognitionOutcome,
-            isRetry: Boolean,
-            occurredAtElapsedMs: Long,
-        ) -> Unit,
+        recordResolution: (CaptureWindowResolutionRecord) -> Unit,
     ) : this(
         scope = scope,
         elapsedRealtimeMs = elapsedRealtimeMs,
@@ -70,13 +72,23 @@ internal class CaptureWindowResolutionSession(
         event: AccessibilityEvent?,
         block: (AccessibilityCaptureWindowResolver.ResolvedRoot) -> Unit,
     ) {
+        var successRecorded = false
         val result = attemptResolver.resolve(
             request = request,
             event = event,
             deadlineAtElapsedMs = null,
-            block = block,
+            block = { resolved ->
+                recordResolvedRoot(request, resolved, isRetry = false)
+                successRecorded = true
+                block(resolved)
+            },
         )
-        handleResult(request, result, isRetry = false)
+        handleResult(
+            request,
+            result,
+            isRetry = false,
+            successAlreadyRecorded = successRecorded,
+        )
     }
 
     /** 会话结束或宿主身份变化时取消全部键；普通窗口成功只能取消自己的键。 */
@@ -93,16 +105,19 @@ internal class CaptureWindowResolutionSession(
         request: AccessibilityCaptureWindowResolver.Request,
         result: AccessibilityCaptureWindowResolver.Result<Unit>,
         isRetry: Boolean,
+        successAlreadyRecorded: Boolean = false,
     ) {
         val key = request.toRetryKey()
         val now = elapsedRealtimeMs()
         when (result) {
             is AccessibilityCaptureWindowResolver.Result.Success -> {
                 cancel(key)
-                record(request, result.source.toRecognitionOutcome(), isRetry, now)
+                if (!successAlreadyRecorded) {
+                    record(request, result.source.toRecognitionOutcome(), isRetry, now, result.details)
+                }
             }
 
-            AccessibilityCaptureWindowResolver.Result.Retryable -> {
+            is AccessibilityCaptureWindowResolver.Result.Retryable -> {
                 record(
                     request,
                     if (pendingRetries[key]?.exhausted == true) {
@@ -112,15 +127,34 @@ internal class CaptureWindowResolutionSession(
                     },
                     isRetry,
                     now,
+                    result.details,
                 )
                 if (!isRetry) schedule(request)
             }
 
             is AccessibilityCaptureWindowResolver.Result.Rejected -> {
                 cancel(key)
-                record(request, result.reason.toRecognitionOutcome(), isRetry, now)
+                record(request, result.reason.toRecognitionOutcome(), isRetry, now, result.details)
             }
         }
+    }
+
+    private fun recordResolvedRoot(
+        request: AccessibilityCaptureWindowResolver.Request,
+        resolved: AccessibilityCaptureWindowResolver.ResolvedRoot,
+        isRetry: Boolean,
+    ) {
+        record(
+            request = request,
+            outcome = resolved.source.toRecognitionOutcome(),
+            isRetry = isRetry,
+            occurredAt = elapsedRealtimeMs(),
+            details = resolved.details.copy(
+                rootWindowId = resolved.node.windowId,
+                rootSource = resolved.source,
+                ownedChild = resolved.ownedChild,
+            ),
+        )
     }
 
     private fun schedule(request: AccessibilityCaptureWindowResolver.Request) {
@@ -134,27 +168,35 @@ internal class CaptureWindowResolutionSession(
             for (delayMs in RETRY_DELAYS_MS) {
                 delay(delayMs)
                 if (!gate.claimAttempt(key, elapsedRealtimeMs())) break
-                val retryRequest = retryRequestProvider(key) ?: run {
+                val retryRequest = retryRequestProvider(key, request.eventType) ?: run {
                     cancel(key)
                     return@launch
                 }
+                var successRecorded = false
                 val result = attemptResolver.resolve(
                     request = retryRequest,
                     event = null,
                     deadlineAtElapsedMs = deadlineAt,
                 ) { root ->
+                    recordResolvedRoot(retryRequest, root, isRetry = true)
+                    successRecorded = true
                     onRetryResolved(retryRequest, root)
                 }
                 if (elapsedRealtimeMs() > deadlineAt) {
                     recordExhausted(request)
                     return@launch
                 }
-                handleResult(retryRequest, result, isRetry = true)
+                handleResult(
+                    retryRequest,
+                    result,
+                    isRetry = true,
+                    successAlreadyRecorded = successRecorded,
+                )
                 if (result !is AccessibilityCaptureWindowResolver.Result.Retryable) {
                     return@launch
                 }
             }
-            if (key in pendingRetries && retryRequestProvider(key) != null) {
+            if (key in pendingRetries && retryRequestProvider(key, request.eventType) != null) {
                 recordExhausted(request)
             }
         }
@@ -168,6 +210,7 @@ internal class CaptureWindowResolutionSession(
             TargetWindowRecognitionOutcome.RETRY_EXHAUSTED,
             isRetry = true,
             occurredAt = elapsedRealtimeMs(),
+            details = AccessibilityCaptureWindowResolver.ResolutionDetails(),
         )
     }
 
@@ -176,13 +219,17 @@ internal class CaptureWindowResolutionSession(
         outcome: TargetWindowRecognitionOutcome,
         isRetry: Boolean,
         occurredAt: Long,
+        details: AccessibilityCaptureWindowResolver.ResolutionDetails =
+            AccessibilityCaptureWindowResolver.ResolutionDetails(),
     ) {
         recordResolution(
-            request.eventPackageName,
-            request.eventWindowId,
-            outcome,
-            isRetry,
-            occurredAt,
+            CaptureWindowResolutionRecord(
+                request = request,
+                outcome = outcome,
+                isRetry = isRetry,
+                occurredAtElapsedMs = occurredAt,
+                details = details,
+            ),
         )
     }
 

@@ -41,6 +41,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.refresh()
+        viewModel.onHostResumed()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        viewModel.onHostStopped(isChangingConfigurations)
     }
 }

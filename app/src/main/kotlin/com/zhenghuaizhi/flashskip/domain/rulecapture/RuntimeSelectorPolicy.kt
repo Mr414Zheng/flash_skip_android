@@ -20,7 +20,7 @@ internal fun CapturedSelector.toRuntimeSelector(): NodeSelector {
             when {
                 hasStableStructure && DismissSemantics.isBareNumericCountdown(value) ->
                     TextCondition.NumericCountdown
-                skipPrefix != null -> TextCondition.Prefix(skipPrefix)
+                skipPrefix != null -> TextCondition.SkipCountdown(skipPrefix)
                 else -> TextCondition.Exact(value)
             }
         },

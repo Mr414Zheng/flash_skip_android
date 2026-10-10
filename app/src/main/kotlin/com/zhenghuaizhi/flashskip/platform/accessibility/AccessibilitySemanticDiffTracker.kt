@@ -32,6 +32,8 @@ internal class AccessibilitySemanticDiffTracker(
         identity: PageIdentity,
         candidates: List<SemanticCandidate>,
         visitedNodeCount: Int,
+        traversalComplete: Boolean,
+        semanticCandidatesComplete: Boolean,
         transitionSignal: Boolean,
         priorSelectors: List<CapturedSelector> = emptyList(),
     ): Result {
@@ -42,6 +44,8 @@ internal class AccessibilitySemanticDiffTracker(
         val now = elapsedRealtimeMs()
         observationCount++
         val currentCandidates = candidates.deduplicated()
+        val absenceEvidenceComplete = semanticCandidatesComplete &&
+            (traversalComplete || transitionSignal)
         val previous = trackedCandidates
         val newlyTracked = currentCandidates.map { current ->
             val existing = previous.firstOrNull { it.candidate.overlaps(current) }
@@ -57,19 +61,20 @@ internal class AccessibilitySemanticDiffTracker(
         val coverageConfirmedDisappearances = previous.filter { tracked ->
             tracked.isStableAt(now) &&
                 currentCandidates.none { current -> tracked.candidate.overlaps(current) } &&
-                (transitionSignal || visitedNodeCount >= tracked.candidate.visitedAtNodeCount)
+                absenceEvidenceComplete
         }
         val insufficientCoverageCount = previous.count { tracked ->
             tracked.isStableAt(now) &&
                 currentCandidates.none { current -> tracked.candidate.overlaps(current) } &&
-                !transitionSignal && visitedNodeCount < tracked.candidate.visitedAtNodeCount
+                !absenceEvidenceComplete
         }
-        // 新快照尚未遍历到旧候选的位置时不能把它当成消失，也不能丢掉已经建立的稳定性。
+        // 部分扫描或候选集合有损时，缺失不能作为消失证据，也不能丢掉旧候选稳定性。
         val carriedCandidates = previous.filter { tracked ->
             currentCandidates.none { current -> tracked.candidate.overlaps(current) } &&
-                !transitionSignal && visitedNodeCount < tracked.candidate.visitedAtNodeCount
+                !absenceEvidenceComplete
         }
-        val nextTrackedCandidates = newlyTracked + carriedCandidates
+        val nextTrackedCandidates = (newlyTracked + carriedCandidates)
+            .take(MAX_TRACKED_CANDIDATES)
         val eligibleDisappearances = coverageConfirmedDisappearances.filter { tracked ->
             transitionSignal || tracked.candidate.hasDismissHint()
         }
@@ -169,5 +174,6 @@ internal class AccessibilitySemanticDiffTracker(
     private companion object {
         const val REQUIRED_OBSERVATIONS = 2
         const val MIN_STABILITY_MS = 200L
+        const val MAX_TRACKED_CANDIDATES = 64
     }
 }

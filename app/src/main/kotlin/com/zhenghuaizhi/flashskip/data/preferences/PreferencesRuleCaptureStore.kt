@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.ports.RuleCaptureStore
+import com.zhenghuaizhi.flashskip.domain.rulecapture.CaptureRuleSafetyPolicy
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -27,7 +28,13 @@ class PreferencesRuleCaptureStore internal constructor(
 
     init {
         cleanupScope.launch {
-            dataStore.edit { values -> values.remove(LEGACY_STATE) }
+            dataStore.edit { values ->
+                values.remove(LEGACY_STATE)
+                val raw = values[STATE] ?: return@edit
+                val current = RuleCaptureCodec.decodeOrEmpty(raw)
+                val sanitized = CaptureRuleSafetyPolicy.sanitize(current)
+                if (sanitized != current) values[STATE] = RuleCaptureCodec.encode(sanitized)
+            }
         }
     }
 
@@ -35,12 +42,12 @@ class PreferencesRuleCaptureStore internal constructor(
         .catch { error ->
             if (error is IOException) emit(emptyPreferences()) else throw error
         }
-        .map { values -> RuleCaptureCodec.decodeOrEmpty(values[STATE]) }
+        .map { values -> CaptureRuleSafetyPolicy.sanitize(RuleCaptureCodec.decodeOrEmpty(values[STATE])) }
 
     override suspend fun update(transform: (RuleCaptureState) -> RuleCaptureState) {
         dataStore.edit { values ->
-            val current = RuleCaptureCodec.decodeOrEmpty(values[STATE])
-            values[STATE] = RuleCaptureCodec.encode(transform(current))
+            val current = CaptureRuleSafetyPolicy.sanitize(RuleCaptureCodec.decodeOrEmpty(values[STATE]))
+            values[STATE] = RuleCaptureCodec.encode(CaptureRuleSafetyPolicy.sanitize(transform(current)))
         }
     }
 

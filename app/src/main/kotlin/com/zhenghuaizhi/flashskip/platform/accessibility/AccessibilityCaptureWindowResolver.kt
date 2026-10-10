@@ -19,11 +19,18 @@ internal class AccessibilityCaptureWindowResolver(
         block: (ResolvedRoot) -> T,
     ): Result<T> {
         if (!request.hasValidHostBoundary()) {
-            return Result.Rejected(RejectReason.HOST_UNVERIFIED)
+            return Result.Rejected(
+                reason = RejectReason.HOST_UNVERIFIED,
+                details = ResolutionDetails(),
+            )
         }
         fun deadlineReached(): Boolean = deadlineAtElapsedMs != null &&
             elapsedRealtimeMs() >= deadlineAtElapsedMs
-        if (deadlineReached()) return Result.Retryable
+        if (deadlineReached()) {
+            return Result.Retryable(
+                details = ResolutionDetails(),
+            )
+        }
 
         var matchingRoot: AccessibilityNodeInfo? = null
         var activeRoot: AccessibilityNodeInfo? = null
@@ -45,10 +52,10 @@ internal class AccessibilityCaptureWindowResolver(
                 ?.let { runCatching { it.root }.getOrNull() }
 
             if (matchingWindows.size != 1 || matchingRoot == null) {
-                if (deadlineReached()) return Result.Retryable
+                if (deadlineReached()) return Result.Retryable()
                 activeRoot = runCatching { service.rootInActiveWindow }.getOrNull()
             }
-            if (deadlineReached()) return Result.Retryable
+            if (deadlineReached()) return Result.Retryable()
             val activeRootWindows = activeRoot?.let { root ->
                 currentWindows?.filter { it.id == root.windowId }.orEmpty()
             }.orEmpty()
@@ -76,7 +83,7 @@ internal class AccessibilityCaptureWindowResolver(
             if (matchingWindowAllowsSourceFallback && activeRootProvesTargetForeground &&
                 activeRoot.windowId != request.eventWindowId
             ) {
-                if (deadlineReached()) return Result.Retryable
+                if (deadlineReached()) return Result.Retryable()
                 event?.source?.let { source ->
                     sourcePackageName = source.packageName?.toString()
                     sourceWindowId = source.windowId
@@ -117,12 +124,12 @@ internal class AccessibilityCaptureWindowResolver(
                 evidence = evidence,
                 allowActiveHostRootFallback = request.allowActiveHostRootFallback,
             )
-            CaptureTraceLog.windowBoundary(request, evidence, decision, deadlineAtElapsedMs)
+            val details = evidence.toResolutionDetails(decision)
             return when (decision) {
                 is Decision.AcceptPrimary -> {
                     val root = rootFor(decision.source, matchingRoot, activeRoot, sourceRoot)
-                        ?: return Result.Retryable
-                    if (deadlineReached()) return Result.Retryable
+                        ?: return Result.Retryable(details)
+                    if (deadlineReached()) return Result.Retryable(details)
                     Result.Success(
                         value = block(
                             ResolvedRoot(
@@ -130,17 +137,19 @@ internal class AccessibilityCaptureWindowResolver(
                                 source = decision.source,
                                 ownedChild = false,
                                 deadlineAtElapsedMs = deadlineAtElapsedMs,
+                                details = details,
                             ),
                         ),
                         source = decision.source,
                         ownedChild = false,
+                        details = details,
                     )
                 }
 
                 is Decision.AcceptOwnedChild -> {
                     val root = rootFor(decision.source, matchingRoot, activeRoot, sourceRoot)
-                        ?: return Result.Retryable
-                    if (deadlineReached()) return Result.Retryable
+                        ?: return Result.Retryable(details)
+                    if (deadlineReached()) return Result.Retryable(details)
                     Result.Success(
                         value = block(
                             ResolvedRoot(
@@ -148,15 +157,17 @@ internal class AccessibilityCaptureWindowResolver(
                                 source = decision.source,
                                 ownedChild = true,
                                 deadlineAtElapsedMs = deadlineAtElapsedMs,
+                                details = details,
                             ),
                         ),
                         source = decision.source,
                         ownedChild = true,
+                        details = details,
                     )
                 }
 
-                is Decision.Retryable -> Result.Retryable
-                is Decision.Reject -> Result.Rejected(decision.reason)
+                is Decision.Retryable -> Result.Retryable(details)
+                is Decision.Reject -> Result.Rejected(decision.reason, details)
             }
         } finally {
             matchingRoot?.recycle()
@@ -219,6 +230,7 @@ internal class AccessibilityCaptureWindowResolver(
         val eventWindowId: Int,
         val host: VerifiedCaptureHost,
         val allowActiveHostRootFallback: Boolean = false,
+        val eventType: Int = 0,
     )
 
     data class ResolvedRoot(
@@ -226,6 +238,23 @@ internal class AccessibilityCaptureWindowResolver(
         val source: CaptureWindowResolutionSource,
         val ownedChild: Boolean,
         val deadlineAtElapsedMs: Long? = null,
+        val details: ResolutionDetails = ResolutionDetails(),
+    )
+
+    /** 只传递解析阶段已读取的数值与枚举，日志回调不需要重新访问节点或窗口。 */
+    data class ResolutionDetails(
+        val rootWindowId: Int? = null,
+        val rootSource: CaptureWindowResolutionSource? = null,
+        val ownedChild: Boolean? = null,
+        val matchingWindowCount: Int? = null,
+        val matchingWindowType: Int? = null,
+        val matchingWindowActive: Boolean? = null,
+        val matchingRootAvailable: Boolean? = null,
+        val activeRootWindowType: Int? = null,
+        val activeRootWindowActive: Boolean? = null,
+        val sourceWindowType: Int? = null,
+        val sourceWindowActive: Boolean? = null,
+        val rejectReason: RejectReason? = null,
     )
 
     sealed interface Result<out T> {
@@ -233,10 +262,61 @@ internal class AccessibilityCaptureWindowResolver(
             val value: T,
             val source: CaptureWindowResolutionSource,
             val ownedChild: Boolean,
+            val details: ResolutionDetails,
         ) : Result<T>
 
-        data object Retryable : Result<Nothing>
-        data class Rejected(val reason: RejectReason) : Result<Nothing>
+        data class Retryable(
+            val details: ResolutionDetails = ResolutionDetails(),
+        ) : Result<Nothing>
+
+        data class Rejected(
+            val reason: RejectReason,
+            val details: ResolutionDetails = ResolutionDetails(),
+        ) : Result<Nothing>
+    }
+
+    private fun CaptureWindowBoundaryEvidence.toResolutionDetails(
+        decision: Decision,
+    ): ResolutionDetails {
+        val acceptedSource = when (decision) {
+            is Decision.AcceptPrimary -> decision.source
+            is Decision.AcceptOwnedChild -> decision.source
+            is Decision.Retryable,
+            is Decision.Reject,
+            -> null
+        }
+        val source = acceptedSource ?: when {
+            matchingRootAvailable -> CaptureWindowResolutionSource.WINDOW_LIST
+            activeRootWindowAvailable -> CaptureWindowResolutionSource.ACTIVE_ROOT
+            sourceWindowAvailable -> CaptureWindowResolutionSource.EVENT_SOURCE
+            else -> null
+        }
+        val rootWindowId = when (source) {
+            CaptureWindowResolutionSource.WINDOW_LIST -> matchingRootWindowId
+            CaptureWindowResolutionSource.ACTIVE_ROOT -> activeRootWindowId
+            CaptureWindowResolutionSource.EVENT_SOURCE -> sourceWindowObjectId
+            null -> null
+        }
+        return ResolutionDetails(
+            rootWindowId = rootWindowId,
+            rootSource = source,
+            ownedChild = when (decision) {
+                is Decision.AcceptPrimary -> false
+                is Decision.AcceptOwnedChild -> true
+                is Decision.Retryable,
+                is Decision.Reject,
+                -> null
+            },
+            matchingWindowCount = matchingWindowCount,
+            matchingWindowType = matchingWindowType,
+            matchingWindowActive = matchingWindowActive,
+            matchingRootAvailable = matchingRootAvailable,
+            activeRootWindowType = activeRootWindowType,
+            activeRootWindowActive = activeRootWindowActive,
+            sourceWindowType = sourceWindowType,
+            sourceWindowActive = sourceWindowActive,
+            rejectReason = (decision as? Decision.Reject)?.reason,
+        )
     }
 
     private companion object {

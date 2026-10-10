@@ -2,15 +2,22 @@ package com.zhenghuaizhi.flashskip.application.rulecapture
 
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
+import com.zhenghuaizhi.flashskip.domain.model.CaptureEvidence
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticSummary
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticTrace
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
+import com.zhenghuaizhi.flashskip.domain.model.ObservedDismissCandidate
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipPreferences
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
 import com.zhenghuaizhi.flashskip.domain.ports.MonotonicClock
+import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.ports.RuleCaptureStore
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
 import com.zhenghuaizhi.flashskip.domain.rules.BuiltinRuleCatalog
@@ -33,6 +40,21 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RuleCaptureCoordinatorTest {
+    @Test
+    fun numericRecommendationCannotEnterConfirmationOrCapturedPhase() = runTest {
+        val fixture = fixture(observingState())
+        val nodes = listOf(CapturedNode(
+            resourceId = "${TARGET.packageName}:id/recommendation_count", text = "30",
+            clickable = true, supportsActionClick = true, visibleToUser = true, hasUsableBounds = true,
+        ))
+        val candidate = candidateForClick().copy(nodes = nodes)
+        assertFalse(fixture.coordinator.recordObservedCandidate(SESSION_ID, candidate))
+        assertEquals(CapturePhase.OBSERVING_CLICK, fixture.capture.state.value.activeSession?.phase)
+        fixture.coordinator.recordCaptured(SESSION_ID, sample().copy(nodes = nodes))
+        assertEquals(CapturePhase.OBSERVING_CLICK, fixture.capture.state.value.activeSession?.phase)
+        assertNull(fixture.capture.state.value.activeSession?.pendingSample)
+    }
+
     @Test
     fun finishKeepsAutomationBlockedUntilDisableIsPersisted() = runTest {
         val fixture = fixture(capturedState())
@@ -142,6 +164,346 @@ class RuleCaptureCoordinatorTest {
         val first = fixture.coordinator.requestStart() as CaptureOperationResult.Success
         assertEquals(CaptureOperationResult.Stale, fixture.coordinator.requestStart())
         assertEquals(first.sessionId, fixture.capture.state.value.activeSession!!.id)
+    }
+
+    @Test
+    fun onlyARealDepartureCanReconcileWaitingSessionAndRepeatResumeIsHarmless() = runTest {
+        val initial = waitingState()
+        val fixture = fixture(initial)
+
+        assertEquals(CaptureOperationResult.Stale, fixture.coordinator.reconcileReturn())
+        assertEquals(initial, fixture.capture.state.value)
+        assertEquals(CaptureOperationResult.Stale, fixture.coordinator.reconcileReturn(SESSION_ID))
+        assertEquals(initial, fixture.capture.state.value)
+
+        assertEquals(CaptureOperationResult.Success(SESSION_ID), fixture.coordinator.markLeftFlashSkip(SESSION_ID))
+        val marked = fixture.capture.state.value
+        assertEquals(1_000L, marked.activeSession?.leftFlashSkipAtEpochMs)
+        assertEquals(CaptureOperationResult.Success(SESSION_ID), fixture.coordinator.reconcileReturn(SESSION_ID))
+        assertEquals(CaptureFailure.RETURNED_BEFORE_TARGET, fixture.capture.state.value.activeSession?.failure)
+        assertEquals(CapturePhase.FAILED, fixture.capture.state.value.activeSession?.phase)
+        assertNull(fixture.capture.state.value.activeSession?.leftFlashSkipAtEpochMs)
+
+        assertEquals(CaptureOperationResult.Stale, fixture.coordinator.reconcileReturn(SESSION_ID))
+        assertEquals(CaptureFailure.RETURNED_BEFORE_TARGET, fixture.capture.state.value.activeSession?.failure)
+    }
+
+    @Test
+    fun returnedAfterTargetWithoutEvidenceKeepsServiceDiagnostics() = runTest {
+        val fixture = fixture(observingState())
+        val trace = CaptureDiagnosticTrace.snapshot(
+            summary = CaptureDiagnosticSummary(scanCount = 2, maxEffectiveCandidateCount = 3),
+            records = emptyList(),
+        )
+        val failureDiagnostics = CaptureFailureDiagnostics(
+            sourceAvailable = false,
+            eventTextCount = 0,
+            eventHasContentDescription = false,
+            selectorCandidateCount = 2,
+            sessionTrace = trace,
+        )
+        val windowDiagnostics = TargetWindowDiagnostics(viewClickedEventCount = 1)
+        val oldProvider = fixture.coordinator.registerReturnDiagnosticsProvider {
+            CaptureDiagnosticSnapshot(failureDiagnostics, windowDiagnostics)
+        }
+        val replacementProvider = fixture.coordinator.registerReturnDiagnosticsProvider {
+            CaptureDiagnosticSnapshot(
+                failure = failureDiagnostics.copy(selectorCandidateCount = 3),
+                targetWindow = windowDiagnostics.copy(viewClickedEventCount = 4),
+            )
+        }
+        fixture.coordinator.unregisterReturnDiagnosticsProvider(oldProvider)
+
+        fixture.coordinator.markLeftFlashSkip(SESSION_ID)
+        assertEquals(CaptureOperationResult.Success(SESSION_ID), fixture.coordinator.reconcileReturn(SESSION_ID))
+        val result = requireNotNull(fixture.capture.state.value.activeSession)
+        assertEquals(CaptureFailure.DISMISS_NOT_CAPTURED, result.failure)
+        assertEquals(3, result.failureDiagnostics?.selectorCandidateCount)
+        assertEquals(trace, result.failureDiagnostics?.sessionTrace)
+        assertEquals(4, result.targetWindowDiagnostics?.viewClickedEventCount)
+
+        fixture.coordinator.unregisterReturnDiagnosticsProvider(replacementProvider)
+    }
+
+    @Test
+    fun returnDoesNotDropTraceAlreadySavedOnTheActiveSession() = runTest {
+        val savedTrace = CaptureDiagnosticTrace.snapshot(
+            summary = CaptureDiagnosticSummary(scanCount = 1, maxEffectiveCandidateCount = 2),
+            records = emptyList(),
+        )
+        val initial = observingState().let { state ->
+            state.copy(
+                activeSession = requireNotNull(state.activeSession).copy(
+                    failureDiagnostics = CaptureFailureDiagnostics(
+                        sourceAvailable = false,
+                        eventTextCount = 0,
+                        eventHasContentDescription = false,
+                        sessionTrace = savedTrace,
+                    ),
+                ),
+            )
+        }
+        val fixture = fixture(initial)
+        val provider = fixture.coordinator.registerReturnDiagnosticsProvider {
+            CaptureDiagnosticSnapshot(
+                failure = CaptureFailureDiagnostics(
+                    sourceAvailable = false,
+                    eventTextCount = 0,
+                    eventHasContentDescription = false,
+                ),
+                targetWindow = null,
+            )
+        }
+
+        fixture.coordinator.markLeftFlashSkip(SESSION_ID)
+        fixture.coordinator.reconcileReturn(SESSION_ID)
+
+        assertEquals(
+            savedTrace,
+            fixture.capture.state.value.activeSession?.failureDiagnostics?.sessionTrace,
+        )
+        fixture.coordinator.unregisterReturnDiagnosticsProvider(provider)
+    }
+
+    @Test
+    fun targetTimeoutPersistsSessionTraceWithoutShowingClickDiagnostics() = runTest {
+        val fixture = fixture(waitingState())
+        val trace = CaptureDiagnosticTrace.snapshot(
+            summary = CaptureDiagnosticSummary(scanCount = 1, incompleteScanCount = 1),
+            records = emptyList(),
+        )
+        val failureDiagnostics = CaptureFailureDiagnostics(
+            sourceAvailable = false,
+            eventTextCount = 0,
+            eventHasContentDescription = false,
+            clickDiagnosticApplicable = false,
+            sessionTrace = trace,
+        )
+        testScheduler.advanceTimeBy(RuleCaptureCoordinator.TARGET_TIMEOUT_MS)
+
+        fixture.coordinator.expireActive(failureDiagnostics = failureDiagnostics)
+
+        val failedSession = requireNotNull(fixture.capture.state.value.activeSession)
+        assertEquals(CaptureFailure.TARGET_TIMEOUT, failedSession.failure)
+        assertEquals(trace, failedSession.failureDiagnostics?.sessionTrace)
+        assertEquals(false, failedSession.failureDiagnostics?.clickDiagnosticApplicable)
+    }
+
+    @Test
+    fun returnPreservesCapturedSampleAndObservedCandidateForExplicitConfirmation() = runTest {
+        val sampleFixture = fixture(capturedState())
+        sampleFixture.coordinator.markLeftFlashSkip(SESSION_ID)
+        assertEquals(CaptureOperationResult.Success(SESSION_ID), sampleFixture.coordinator.reconcileReturn(SESSION_ID))
+        assertEquals(CapturePhase.CAPTURED, sampleFixture.capture.state.value.activeSession?.phase)
+        assertEquals(sample(), sampleFixture.capture.state.value.activeSession?.pendingSample)
+        assertTrue(sampleFixture.capture.state.value.samples.isEmpty())
+
+        val candidate = ObservedDismissCandidate(
+            id = 102L,
+            targetAppId = TARGET,
+            targetAppName = "Target",
+            activityName = "com.example.target.MainActivity",
+            observedAfterTargetMs = 500L,
+            observedAtEpochMs = 1_000L,
+            nodes = sample().nodes,
+            preClickUniqueSelectors = emptyList(),
+        )
+        val candidateState = observingState().copy(
+            activeSession = observingState().activeSession!!.copy(
+                phase = CapturePhase.AWAITING_CONFIRMATION,
+                candidateClickListeningEnabled = true,
+                pendingObservedCandidate = candidate,
+            ),
+        )
+        val candidateFixture = fixture(candidateState)
+        candidateFixture.coordinator.markLeftFlashSkip(SESSION_ID)
+        assertEquals(CaptureOperationResult.Success(SESSION_ID), candidateFixture.coordinator.reconcileReturn(SESSION_ID))
+        assertEquals(CapturePhase.AWAITING_CONFIRMATION, candidateFixture.capture.state.value.activeSession?.phase)
+        assertEquals(candidate, candidateFixture.capture.state.value.activeSession?.pendingObservedCandidate)
+        assertFalse(candidateFixture.capture.state.value.activeSession!!.listensForCandidateClick)
+        assertTrue(candidateFixture.capture.state.value.samples.isEmpty())
+    }
+
+    @Test
+    fun observedCandidateClickUpgradesOnlyTheStillPendingMatchingCandidate() = runTest {
+        val fixture = fixture(observingState())
+        val candidate = candidateForClick()
+        assertTrue(fixture.coordinator.recordObservedCandidate(SESSION_ID, candidate))
+        assertTrue(fixture.capture.state.value.activeSession!!.listensForCandidateClick)
+
+        val identity = PageIdentity(
+            packageName = TARGET.packageName,
+            activityName = candidate.activityName,
+            windowId = 7,
+        )
+        val clickSample = sample().copy(
+            id = SESSION_ID,
+            targetAppName = candidate.targetAppName,
+            nodes = candidate.nodes,
+            evidence = CaptureEvidence.ACCESSIBILITY_CLICK,
+        )
+
+        assertEquals(
+            CaptureOperationResult.Success(SESSION_ID),
+            fixture.coordinator.upgradeObservedCandidateClick(
+                sessionId = SESSION_ID,
+                candidate = candidate,
+                candidateIdentity = identity,
+                clickedIdentity = identity,
+                sample = clickSample,
+            ),
+        )
+        val upgraded = requireNotNull(fixture.capture.state.value.activeSession)
+        assertEquals(CapturePhase.CAPTURED, upgraded.phase)
+        assertEquals(clickSample, upgraded.pendingSample)
+        assertFalse(upgraded.listensForCandidateClick)
+        assertNull(upgraded.pendingObservedCandidate)
+    }
+
+    @Test
+    fun clickUpgradeWaitsBehindCandidatePersistenceAndThenUsesThatPendingCandidate() = runTest {
+        val fixture = fixture(observingState())
+        val candidate = candidateForClick()
+        val releaseWrite = CompletableDeferred<Unit>()
+        fixture.capture.beforeUpdate = { releaseWrite.await() }
+
+        val recording = async {
+            fixture.coordinator.recordObservedCandidate(SESSION_ID, candidate)
+        }
+        runCurrent()
+        val identity = PageIdentity(
+            packageName = TARGET.packageName,
+            activityName = candidate.activityName,
+            windowId = 9,
+        )
+        val clickSample = sample().copy(
+            id = SESSION_ID,
+            targetAppName = candidate.targetAppName,
+            nodes = candidate.nodes,
+            evidence = CaptureEvidence.ACCESSIBILITY_CLICK,
+        )
+        val upgrade = async {
+            fixture.coordinator.upgradeObservedCandidateClick(
+                sessionId = SESSION_ID,
+                candidate = candidate,
+                candidateIdentity = identity,
+                clickedIdentity = identity,
+                sample = clickSample,
+            )
+        }
+        runCurrent()
+        assertFalse(upgrade.isCompleted)
+
+        releaseWrite.complete(Unit)
+        assertTrue(recording.await())
+        assertEquals(CaptureOperationResult.Success(SESSION_ID), upgrade.await())
+        assertEquals(clickSample, fixture.capture.state.value.activeSession?.pendingSample)
+    }
+
+    @Test
+    fun mismatchedCandidateClickKeepsManualConfirmationAvailable() = runTest {
+        val fixture = fixture(observingState())
+        val candidate = candidateForClick()
+        assertTrue(fixture.coordinator.recordObservedCandidate(SESSION_ID, candidate))
+        val candidateIdentity = PageIdentity(
+            packageName = TARGET.packageName,
+            activityName = candidate.activityName,
+            windowId = 7,
+        )
+        val wrongWindow = candidateIdentity.copy(windowId = 8)
+        val clickSample = sample().copy(
+            id = SESSION_ID,
+            targetAppName = candidate.targetAppName,
+            nodes = candidate.nodes,
+            evidence = CaptureEvidence.ACCESSIBILITY_CLICK,
+        )
+
+        assertEquals(
+            CaptureOperationResult.Stale,
+            fixture.coordinator.upgradeObservedCandidateClick(
+                sessionId = SESSION_ID,
+                candidate = candidate,
+                candidateIdentity = candidateIdentity,
+                clickedIdentity = wrongWindow,
+                sample = clickSample,
+            ),
+        )
+        val pending = requireNotNull(fixture.capture.state.value.activeSession)
+        assertEquals(CapturePhase.AWAITING_CONFIRMATION, pending.phase)
+        assertTrue(pending.listensForCandidateClick)
+        assertEquals(CaptureOperationResult.Success(), fixture.coordinator.finish(SESSION_ID))
+        val manuallyConfirmed = fixture.capture.state.value.samples.single()
+        assertEquals(CaptureEvidence.USER_CONFIRMED_UNREPORTED_CLICK, manuallyConfirmed.evidence)
+        assertEquals(candidate.nodes, manuallyConfirmed.nodes)
+    }
+
+    @Test
+    fun candidateClickListeningStopsAfterCancelAndCompletionTimeout() = runTest {
+        val cancelled = fixture(observingState())
+        assertTrue(cancelled.coordinator.recordObservedCandidate(SESSION_ID, candidateForClick()))
+        assertTrue(cancelled.capture.state.value.activeSession!!.listensForCandidateClick)
+        assertEquals(CaptureOperationResult.Success(), cancelled.coordinator.cancel(SESSION_ID))
+        assertNull(cancelled.capture.state.value.activeSession)
+
+        val expired = fixture(observingState())
+        assertTrue(expired.coordinator.recordObservedCandidate(SESSION_ID, candidateForClick()))
+        testScheduler.advanceTimeBy(RuleCaptureCoordinator.COMPLETION_TIMEOUT_MS)
+        expired.coordinator.expireActive()
+        val failedSession = requireNotNull(expired.capture.state.value.activeSession)
+        assertEquals(CapturePhase.FAILED, failedSession.phase)
+        assertFalse(failedSession.listensForCandidateClick)
+    }
+
+    @Test
+    fun queuedCaptureWinsReturnSettlementAndLateCaptureCannotUndoReturnFailure() = runTest {
+        val queuedFixture = fixture(observingState())
+        queuedFixture.coordinator.markLeftFlashSkip(SESSION_ID)
+        val releaseWrite = CompletableDeferred<Unit>()
+        queuedFixture.capture.beforeUpdate = { releaseWrite.await() }
+
+        val capture = async { queuedFixture.coordinator.recordCaptured(SESSION_ID, sample()) }
+        runCurrent()
+        val returned = async { queuedFixture.coordinator.reconcileReturn(SESSION_ID) }
+        runCurrent()
+        assertFalse(returned.isCompleted)
+
+        releaseWrite.complete(Unit)
+        capture.await()
+        assertEquals(CaptureOperationResult.Success(SESSION_ID), returned.await())
+        assertEquals(CapturePhase.CAPTURED, queuedFixture.capture.state.value.activeSession?.phase)
+        assertEquals(sample(), queuedFixture.capture.state.value.activeSession?.pendingSample)
+
+        val returnedFirst = fixture(observingState())
+        returnedFirst.coordinator.markLeftFlashSkip(SESSION_ID)
+        returnedFirst.coordinator.reconcileReturn(SESSION_ID)
+        returnedFirst.coordinator.recordCaptured(SESSION_ID, sample())
+        assertEquals(CaptureFailure.DISMISS_NOT_CAPTURED, returnedFirst.capture.state.value.activeSession?.failure)
+        assertNull(returnedFirst.capture.state.value.activeSession?.pendingSample)
+    }
+
+    @Test
+    fun oldReturnCannotFailReplacementSessionAndStorageFailureCanRetry() = runTest {
+        val fixture = fixture(observingState())
+        fixture.coordinator.markLeftFlashSkip(SESSION_ID)
+        fixture.coordinator.cancel(SESSION_ID)
+        val replacement = fixture.coordinator.requestStart() as CaptureOperationResult.Success
+        val replacementId = requireNotNull(replacement.sessionId)
+        val before = fixture.capture.state.value
+
+        assertEquals(CaptureOperationResult.Stale, fixture.coordinator.reconcileReturn(SESSION_ID))
+        fixture.coordinator.recordCaptured(SESSION_ID, sample())
+        assertEquals(before, fixture.capture.state.value)
+        assertEquals(replacementId, fixture.capture.state.value.activeSession?.id)
+
+        val retryFixture = fixture(waitingState())
+        retryFixture.coordinator.markLeftFlashSkip(SESSION_ID)
+        retryFixture.capture.beforeUpdate = { throw IOException("disk full") }
+        assertEquals(storageFailure(), retryFixture.coordinator.reconcileReturn(SESSION_ID))
+        assertEquals(CapturePhase.WAITING_FOR_TARGET, retryFixture.capture.state.value.activeSession?.phase)
+        assertEquals(1_000L, retryFixture.capture.state.value.activeSession?.leftFlashSkipAtEpochMs)
+        retryFixture.capture.beforeUpdate = {}
+        assertEquals(CaptureOperationResult.Success(SESSION_ID), retryFixture.coordinator.reconcileReturn(SESSION_ID))
+        assertEquals(CaptureFailure.RETURNED_BEFORE_TARGET, retryFixture.capture.state.value.activeSession?.failure)
     }
 
     @Test
@@ -317,6 +679,43 @@ class RuleCaptureCoordinatorTest {
     }
 
     @Test
+    fun serviceDisconnectPersistsSynchronousTraceAndReturnKeepsIt() = runTest {
+        val fixture = fixture(observingState())
+        val trace = CaptureDiagnosticTrace.snapshot(
+            summary = CaptureDiagnosticSummary(scanCount = 3, maxCloseSemanticCount = 1),
+            records = emptyList(),
+        )
+        val failureDiagnostics = CaptureFailureDiagnostics(
+            sourceAvailable = false,
+            eventTextCount = 0,
+            eventHasContentDescription = false,
+            sessionTrace = trace,
+        )
+        val targetWindowDiagnostics = TargetWindowDiagnostics(viewClickedEventCount = 2)
+
+        fixture.coordinator.serviceDisconnected(
+            expectedSessionId = SESSION_ID,
+            diagnostics = CaptureDiagnosticSnapshot(
+                failure = failureDiagnostics,
+                targetWindow = targetWindowDiagnostics,
+            ),
+        )
+        runCurrent()
+
+        val failed = requireNotNull(fixture.capture.state.value.activeSession)
+        assertEquals(CaptureFailure.SERVICE_UNAVAILABLE, failed.failure)
+        assertEquals(trace, failed.failureDiagnostics?.sessionTrace)
+        assertEquals(targetWindowDiagnostics, failed.targetWindowDiagnostics)
+
+        fixture.coordinator.reconcileReturn(SESSION_ID, observedDeparture = true)
+
+        val returned = requireNotNull(fixture.capture.state.value.activeSession)
+        assertEquals(CaptureFailure.SERVICE_UNAVAILABLE, returned.failure)
+        assertEquals(trace, returned.failureDiagnostics?.sessionTrace)
+        assertEquals(targetWindowDiagnostics, returned.targetWindowDiagnostics)
+    }
+
+    @Test
     fun hashCollidingRuleIdsCannotEnableCatalogThatFellBackToEmpty() = runTest {
         val samples = listOf("Aa", "BB").mapIndexed { index, suffix ->
             sample().copy(
@@ -448,6 +847,17 @@ class RuleCaptureCoordinatorTest {
             preClickUniqueSelectors = emptyList(),
         )
 
+        fun candidateForClick() = ObservedDismissCandidate(
+            id = SESSION_ID,
+            targetAppId = TARGET,
+            targetAppName = "Target",
+            activityName = "com.example.target.MainActivity",
+            observedAfterTargetMs = 100L,
+            observedAtEpochMs = 1_000L,
+            nodes = sample().nodes,
+            preClickUniqueSelectors = emptyList(),
+        )
+
         fun capturedState() = RuleCaptureState(
             activeSession = CaptureSession(
                 id = SESSION_ID,
@@ -456,6 +866,28 @@ class RuleCaptureCoordinatorTest {
                 phaseStartedAtEpochMs = 1_000L,
                 deadlineAtEpochMs = 601_000L,
                 pendingSample = sample(),
+            ),
+        )
+
+        fun waitingState() = RuleCaptureState(
+            activeSession = CaptureSession(
+                id = SESSION_ID,
+                phase = CapturePhase.WAITING_FOR_TARGET,
+                phaseStartedAtEpochMs = 1_000L,
+                deadlineAtEpochMs = 91_000L,
+            ),
+        )
+
+        fun observingState() = RuleCaptureState(
+            activeSession = CaptureSession(
+                id = SESSION_ID,
+                targetAppId = TARGET,
+                targetAppName = "Target",
+                packageName = TARGET.packageName,
+                phase = CapturePhase.OBSERVING_CLICK,
+                phaseStartedAtEpochMs = 1_000L,
+                deadlineAtEpochMs = 16_000L,
+                targetEnteredAtElapsedMs = 500L,
             ),
         )
     }

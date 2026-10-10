@@ -6,6 +6,7 @@ import com.zhenghuaizhi.flashskip.application.ServiceStatusCoordinator
 import com.zhenghuaizhi.flashskip.application.SystemServiceStatusReader
 import com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCoordinator
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.CapturedNode
@@ -160,7 +161,135 @@ class HomeViewModelTest {
         }
     }
 
-    private suspend fun TestScope.withFixture(block: suspend TestScope.(Fixture) -> Unit) {
+    @Test
+    fun initialResumeDoesNotEndAnUnmarkedCapture() = runTest {
+        withFixture { fixture ->
+            val active = session(5L).copy(
+                phase = CapturePhase.OBSERVING_CLICK,
+                deadlineAtEpochMs = 16_000L,
+            )
+            fixture.capture.state.value = RuleCaptureState(activeSession = active)
+
+            fixture.viewModel.onHostResumed()
+            runCurrent()
+
+            assertEquals(active, fixture.capture.state.value.activeSession)
+            assertEquals(null, fixture.viewModel.uiState.value.capture.failure)
+        }
+    }
+
+    @Test
+    fun restoredDepartureIsReconciledFromPersistedSessionState() = runTest {
+        withFixture { fixture ->
+            val active = session(6L).copy(
+                phase = CapturePhase.OBSERVING_CLICK,
+                deadlineAtEpochMs = 16_000L,
+                leftFlashSkipAtEpochMs = 900L,
+            )
+            fixture.capture.state.value = RuleCaptureState(activeSession = active)
+
+            fixture.viewModel.onHostResumed()
+            runCurrent()
+
+            assertEquals(CaptureFailure.DISMISS_NOT_CAPTURED, fixture.capture.state.value.activeSession?.failure)
+            assertEquals(CaptureFailure.DISMISS_NOT_CAPTURED, fixture.viewModel.uiState.value.capture.failure)
+        }
+    }
+
+    @Test
+    fun configurationStopAndResumeDoNotMarkCaptureAsReturned() = runTest {
+        withFixture { fixture ->
+            fixture.serviceReader.enabled = true
+            fixture.serviceConnections.setConnected(true)
+            fixture.viewModel.onHostResumed()
+            runCurrent()
+
+            fixture.viewModel.startCapture()
+            runCurrent()
+            val sessionId = requireNotNull(fixture.capture.state.value.activeSession?.id)
+            fixture.coordinator.markConfigured(sessionId)
+            runCurrent()
+
+            fixture.viewModel.onHostStopped(isChangingConfigurations = true)
+            runCurrent()
+            assertEquals(null, fixture.capture.state.value.activeSession?.leftFlashSkipAtEpochMs)
+
+            fixture.viewModel.onHostResumed()
+            runCurrent()
+            assertEquals(CapturePhase.WAITING_FOR_TARGET, fixture.capture.state.value.activeSession?.phase)
+            assertEquals(null, fixture.capture.state.value.activeSession?.failure)
+        }
+    }
+
+    @Test
+    fun realCaptureDepartureAndReturnSettlesPersistedTargetWithoutUiSubscription() = runTest {
+        withFixture(collectUi = false) { fixture ->
+            fixture.serviceReader.enabled = true
+            fixture.serviceConnections.setConnected(true)
+            fixture.viewModel.onHostResumed()
+            runCurrent()
+
+            fixture.viewModel.startCapture()
+            runCurrent()
+            val sessionId = requireNotNull(fixture.capture.state.value.activeSession?.id)
+            fixture.coordinator.markConfigured(sessionId)
+            runCurrent()
+            assertEquals(CapturePhase.WAITING_FOR_TARGET, fixture.capture.state.value.activeSession?.phase)
+
+            fixture.viewModel.onHostStopped(isChangingConfigurations = false)
+            runCurrent()
+            assertNotNull(fixture.capture.state.value.activeSession?.leftFlashSkipAtEpochMs)
+
+            fixture.coordinator.observeTarget(
+                sessionId = sessionId,
+                targetAppId = TARGET,
+                targetAppName = "Example",
+                packageName = TARGET.packageName,
+                activityName = "com.example.target.MainActivity",
+                windowId = 4,
+                enteredAtElapsedMs = testScheduler.currentTime,
+            )
+            fixture.viewModel.onHostResumed()
+            runCurrent()
+
+            assertEquals(CaptureFailure.DISMISS_NOT_CAPTURED, fixture.capture.state.value.activeSession?.failure)
+            val resumedUi = backgroundScope.launch { fixture.viewModel.uiState.collect {} }
+            runCurrent()
+            assertEquals(CaptureFailure.DISMISS_NOT_CAPTURED, fixture.viewModel.uiState.value.capture.failure)
+            resumedUi.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun returnStorageFailureIsExplainedAndCanBeRetried() = runTest {
+        withFixture { fixture ->
+            val active = session(7L).copy(
+                phase = CapturePhase.WAITING_FOR_TARGET,
+                deadlineAtEpochMs = 91_000L,
+                leftFlashSkipAtEpochMs = 900L,
+            )
+            fixture.capture.state.value = RuleCaptureState(activeSession = active)
+            fixture.capture.beforeUpdate = { throw IOException("disk full") }
+
+            fixture.viewModel.onHostResumed()
+            runCurrent()
+
+            assertEquals(CapturePhase.WAITING_FOR_TARGET, fixture.capture.state.value.activeSession?.phase)
+            assertTrue(fixture.viewModel.uiState.value.operationMessage!!.contains("返回后的采集结果"))
+            assertTrue(fixture.viewModel.uiState.value.operationMessage!!.contains("重试"))
+
+            fixture.capture.beforeUpdate = {}
+            fixture.viewModel.onHostResumed()
+            runCurrent()
+            assertEquals(CaptureFailure.RETURNED_BEFORE_TARGET, fixture.capture.state.value.activeSession?.failure)
+            assertEquals(null, fixture.viewModel.uiState.value.operationMessage)
+        }
+    }
+
+    private suspend fun TestScope.withFixture(
+        collectUi: Boolean = true,
+        block: suspend TestScope.(Fixture) -> Unit,
+    ) {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val capture = FakeCaptureStore()
         val preferences = FakePreferencesStore()
@@ -180,23 +309,25 @@ class HomeViewModelTest {
             backgroundScope,
             ruleCatalog,
         )
+        val serviceReader = FakeSystemServiceStatusReader()
+        val serviceConnections = ServiceConnectionRegistry()
         val viewModel = HomeViewModel(
             preferences,
             ruleCatalog,
             ServiceStatusCoordinator(
-                SystemServiceStatusReader { false },
-                ServiceConnectionRegistry(),
+                serviceReader,
+                serviceConnections,
                 backgroundScope,
             ),
             coordinator,
         )
-        val collector = backgroundScope.launch { viewModel.uiState.collect {} }
+        val collector = if (collectUi) backgroundScope.launch { viewModel.uiState.collect {} } else null
         runCurrent()
         try {
-            block(Fixture(viewModel, capture, preferences, catalog))
+            block(Fixture(viewModel, capture, preferences, catalog, coordinator, serviceReader, serviceConnections))
         } finally {
             try {
-                collector.cancelAndJoin()
+                collector?.cancelAndJoin()
                 // 取消的子协程仍会访问 Main，必须等全部结束后再恢复 Android dispatcher。
                 requireNotNull(viewModel.viewModelScope.coroutineContext[Job]).cancelAndJoin()
                 runCurrent()
@@ -211,11 +342,21 @@ class HomeViewModelTest {
         val capture: FakeCaptureStore,
         val preferences: FakePreferencesStore,
         val catalog: MutableStateFlow<RuleCatalogSnapshot>,
+        val coordinator: RuleCaptureCoordinator,
+        val serviceReader: FakeSystemServiceStatusReader,
+        val serviceConnections: ServiceConnectionRegistry,
     )
+
+    private class FakeSystemServiceStatusReader : SystemServiceStatusReader {
+        var enabled = false
+        override fun isFlashSkipEnabled(): Boolean = enabled
+    }
 
     private class FakeCaptureStore : RuleCaptureStore {
         override val state = MutableStateFlow(RuleCaptureState())
+        var beforeUpdate: suspend () -> Unit = {}
         override suspend fun update(transform: (RuleCaptureState) -> RuleCaptureState) {
+            beforeUpdate()
             state.value = transform(state.value)
         }
     }

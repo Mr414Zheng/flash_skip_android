@@ -60,6 +60,8 @@ internal class AccessibilityPreClickRecovery(
         return RefreshResult(
             diagnostics = recovery.diagnostics,
             semanticCandidates = recovery.semanticCandidates,
+            traversalComplete = recovery.diagnostics.isCompleteTraversal(),
+            semanticCandidatesComplete = recovery.semanticCandidatesComplete,
         )
     }
 
@@ -121,6 +123,8 @@ internal class AccessibilityPreClickRecovery(
     data class RefreshResult(
         val diagnostics: ClickRecoveryDiagnostics,
         val semanticCandidates: List<AccessibilityCaptureProbe.SemanticCandidate>,
+        val traversalComplete: Boolean,
+        val semanticCandidatesComplete: Boolean,
     )
 
     private data class Snapshot(

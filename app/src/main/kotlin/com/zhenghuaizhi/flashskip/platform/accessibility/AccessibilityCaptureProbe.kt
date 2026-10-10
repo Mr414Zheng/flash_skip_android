@@ -19,6 +19,7 @@ internal class AccessibilityCaptureProbe(
     private val targetPackages: () -> Set<String>,
     private val currentIdentity: () -> PageIdentity?,
     private val semanticSnapshotter: AccessibilitySemanticSnapshotter,
+    private val elapsedRealtimeMs: () -> Long = AndroidMonotonicClock::elapsedRealtimeMs,
 ) {
     private val selectorMatcher = AccessibilityNodeSelectorMatcher(service)
     private val rootResolver = AccessibilityWindowRootResolver(service, targetPackages)
@@ -70,7 +71,7 @@ internal class AccessibilityCaptureProbe(
         val queue = ArrayDeque<NodeAtDepth>().apply { add(NodeAtDepth(root, 0)) }
         val counts = selectors.associateWith { 0 }.toMutableMap()
         var visited = 0
-        val startedAt = AndroidMonotonicClock.elapsedRealtimeMs()
+        val startedAt = elapsedRealtimeMs()
         try {
             while (queue.isNotEmpty()) {
                 val item = queue.removeFirst()
@@ -117,7 +118,7 @@ internal class AccessibilityCaptureProbe(
         expected: PageIdentity,
         hint: ClickSemanticHint,
     ): RecoveryResult {
-        val startedAt = AndroidMonotonicClock.elapsedRealtimeMs()
+        val startedAt = elapsedRealtimeMs()
         // 恢复路径仍遵守与自动化 Gateway 相同的包和窗口边界，不能因 source 为空而放宽。
         if (expected.packageName !in targetPackages()) {
             return RecoveryResult.Failure(
@@ -152,7 +153,7 @@ internal class AccessibilityCaptureProbe(
         hint: ClickSemanticHint,
         deadlineAtElapsedMs: Long? = null,
     ): RecoveryResult {
-        val startedAt = AndroidMonotonicClock.elapsedRealtimeMs()
+        val startedAt = elapsedRealtimeMs()
         if (expected.packageName !in targetPackages()) {
             return RecoveryResult.Failure(
                 diagnostics(ClickRecoveryOutcome.OUTSIDE_TARGETS, startedAt),
@@ -193,30 +194,41 @@ internal class AccessibilityCaptureProbe(
         var semanticNodes = 0
         var matchedNodes = 0
         var knownDismissNodes = 0
+        var explicitDismissNodes = 0
         var selectorCandidateNodes = 0
         var countdownSemanticNodes = 0
         var countdownActionChains = 0
         val semanticCandidates = mutableListOf<SemanticCandidate>()
         var semanticCandidateOverflow = false
-        fun uniqueSemanticCandidates(): List<SemanticCandidate> {
-            if (semanticCandidateOverflow) return emptyList()
+        fun uniqueSemanticCandidates(): SemanticCandidateSnapshot {
+            if (semanticCandidateOverflow) {
+                return SemanticCandidateSnapshot(emptyList(), complete = false)
+            }
             val selectorCounts = semanticCandidates
                 .flatMap(SemanticCandidate::selectors)
                 .groupingBy(CapturedSelector::stableKey)
                 .eachCount()
-            return semanticCandidates.mapNotNull { candidate ->
+            var omittedCandidate = false
+            val uniqueCandidates = semanticCandidates.mapNotNull { candidate ->
                 val uniqueSelectors = candidate.selectors.filter { selector ->
                     selectorCounts[selector.stableKey()] == 1
                 }
-                candidate.copy(selectors = uniqueSelectors).takeIf {
-                    uniqueSelectors.isNotEmpty()
+                if (uniqueSelectors.size != candidate.selectors.size) {
+                    omittedCandidate = true
+                }
+                if (uniqueSelectors.isEmpty()) {
+                    null
+                } else {
+                    candidate.copy(selectors = uniqueSelectors)
                 }
             }
+            return SemanticCandidateSnapshot(uniqueCandidates, complete = !omittedCandidate)
         }
         fun traversalLimitResult(reason: TraversalLimitReason): RecoveryResult {
             // 候选选择器必须带稳定结构，且自动执行前仍会重新做全窗口唯一性校验；因此有界扫描
             // 已确认一个可执行候选时可以保留采集证据，无需因未遍历无关的复杂页面尾部而丢弃。
             val canKeepCandidate = recovered != null && selectorCandidateNodes == 1 && !ambiguous
+            val semanticSnapshot = uniqueSemanticCandidates()
             val resultDiagnostics = diagnostics(
                 outcome = if (canKeepCandidate) {
                     ClickRecoveryOutcome.SUCCESS
@@ -229,6 +241,7 @@ internal class AccessibilityCaptureProbe(
                 semanticNodeCount = semanticNodes,
                 matchedNodeCount = matchedNodes,
                 knownDismissNodeCount = knownDismissNodes,
+                explicitDismissNodeCount = explicitDismissNodes,
                 selectorCandidateNodeCount = selectorCandidateNodes,
                 countdownSemanticNodeCount = countdownSemanticNodes,
                 countdownActionChainCount = countdownActionChains,
@@ -238,10 +251,15 @@ internal class AccessibilityCaptureProbe(
                 RecoveryResult.Success(
                     nodes = requireNotNull(recovered),
                     diagnostics = resultDiagnostics,
-                    semanticCandidates = uniqueSemanticCandidates(),
+                    semanticCandidates = semanticSnapshot.candidates,
+                    semanticCandidatesComplete = semanticSnapshot.complete,
                 )
             } else {
-                RecoveryResult.Failure(resultDiagnostics, uniqueSemanticCandidates())
+                RecoveryResult.Failure(
+                    resultDiagnostics,
+                    semanticSnapshot.candidates,
+                    semanticSnapshot.complete,
+                )
             }
         }
         try {
@@ -249,10 +267,8 @@ internal class AccessibilityCaptureProbe(
                 // Android ViewGroup 通常后添加的子节点绘制在上层，倒序深度优先可先触达广告浮层。
                 val item = queue.removeLast()
                 val node = item.node
-                visited++
-                maxDepth = maxOf(maxDepth, item.depth)
                 val limitReason = when {
-                    visited > MAX_NODES -> TraversalLimitReason.NODE_COUNT
+                    visited >= MAX_NODES -> TraversalLimitReason.NODE_COUNT
                     item.depth > MAX_DEPTH -> TraversalLimitReason.DEPTH
                     traversalExpired(
                         startedAt,
@@ -267,6 +283,8 @@ internal class AccessibilityCaptureProbe(
                     return traversalLimitResult(limitReason)
                 }
                 val snapshot = semanticSnapshotter.snapshot(node, expected.packageName)
+                visited++
+                maxDepth = maxOf(maxDepth, item.depth)
                 if (snapshot != null &&
                     snapshot.visibleToUser &&
                     (snapshot.resourceId != null ||
@@ -284,9 +302,10 @@ internal class AccessibilityCaptureProbe(
                         snapshot.clickable ||
                         snapshot.supportsActionClick)
                 ) {
-                    val chain = semanticSnapshotter.copySemanticChain(
+                    val chain = semanticSnapshotter.copySemanticChainReusingSnapshot(
                         AccessibilityNodeInfo.obtain(node),
                         expected.packageName,
+                        snapshot,
                     )
                     copiedChain = chain
                     val selectors = RuleCandidateAnalyzer.stableDiffSelectorCandidates(chain)
@@ -320,10 +339,17 @@ internal class AccessibilityCaptureProbe(
                 if (matchesKnownDismiss) {
                     knownDismissNodes++
                 }
+                if (snapshot != null &&
+                    ClickSourceRecoveryMatcher.matches(snapshot, ClickSemanticHint())
+                ) {
+                    explicitDismissNodes++
+                }
                 if (snapshot != null && ClickSourceRecoveryMatcher.matches(snapshot, hint)) {
                     matchedNodes++
-                    val chain = copiedChain ?: semanticSnapshotter.copySemanticChain(
-                        AccessibilityNodeInfo.obtain(node), expected.packageName,
+                    val chain = copiedChain ?: semanticSnapshotter.copySemanticChainReusingSnapshot(
+                        AccessibilityNodeInfo.obtain(node),
+                        expected.packageName,
+                        snapshot,
                     )
                     if (isCountdownSemantic && chain.any { it.isActionable() }) {
                         countdownActionChains++
@@ -350,6 +376,7 @@ internal class AccessibilityCaptureProbe(
                 recovered != null -> ClickRecoveryOutcome.SUCCESS
                 else -> ClickRecoveryOutcome.NO_MATCH
             }
+            val semanticSnapshot = uniqueSemanticCandidates()
             val resultDiagnostics = diagnostics(
                 outcome = outcome,
                 startedAt = startedAt,
@@ -358,6 +385,7 @@ internal class AccessibilityCaptureProbe(
                 semanticNodeCount = semanticNodes,
                 matchedNodeCount = matchedNodes,
                 knownDismissNodeCount = knownDismissNodes,
+                explicitDismissNodeCount = explicitDismissNodes,
                 selectorCandidateNodeCount = selectorCandidateNodes,
                 countdownSemanticNodeCount = countdownSemanticNodes,
                 countdownActionChainCount = countdownActionChains,
@@ -366,10 +394,15 @@ internal class AccessibilityCaptureProbe(
                 RecoveryResult.Success(
                     nodes = requireNotNull(recovered),
                     diagnostics = resultDiagnostics,
-                    semanticCandidates = uniqueSemanticCandidates(),
+                    semanticCandidates = semanticSnapshot.candidates,
+                    semanticCandidatesComplete = semanticSnapshot.complete,
                 )
             } else {
-                RecoveryResult.Failure(resultDiagnostics, uniqueSemanticCandidates())
+                RecoveryResult.Failure(
+                    resultDiagnostics,
+                    semanticSnapshot.candidates,
+                    semanticSnapshot.complete,
+                )
             }
         } finally {
             while (queue.isNotEmpty()) queue.removeFirst().node.recycle()
@@ -384,6 +417,7 @@ internal class AccessibilityCaptureProbe(
         semanticNodeCount: Int = 0,
         matchedNodeCount: Int = 0,
         knownDismissNodeCount: Int = 0,
+        explicitDismissNodeCount: Int = 0,
         selectorCandidateNodeCount: Int = 0,
         countdownSemanticNodeCount: Int = 0,
         countdownActionChainCount: Int = 0,
@@ -392,10 +426,11 @@ internal class AccessibilityCaptureProbe(
         outcome = outcome,
         visitedNodeCount = visitedNodeCount,
         maxDepth = maxDepth,
-        elapsedMs = (AndroidMonotonicClock.elapsedRealtimeMs() - startedAt).coerceAtLeast(0),
+        elapsedMs = (elapsedRealtimeMs() - startedAt).coerceAtLeast(0),
         semanticNodeCount = semanticNodeCount,
         matchedNodeCount = matchedNodeCount,
         knownDismissNodeCount = knownDismissNodeCount,
+        explicitDismissNodeCount = explicitDismissNodeCount,
         selectorCandidateNodeCount = selectorCandidateNodeCount,
         countdownSemanticNodeCount = countdownSemanticNodeCount,
         countdownActionChainCount = countdownActionChainCount,
@@ -410,14 +445,14 @@ internal class AccessibilityCaptureProbe(
         deadlineAtElapsedMs: Long?,
         maxTraversalMs: Long,
     ): Boolean {
-        val now = AndroidMonotonicClock.elapsedRealtimeMs()
+        val now = elapsedRealtimeMs()
         return now - startedAt > maxTraversalMs ||
             (deadlineAtElapsedMs != null && now >= deadlineAtElapsedMs)
     }
 
     private fun absoluteDeadlineExpired(deadlineAtElapsedMs: Long?): Boolean =
         deadlineAtElapsedMs != null &&
-            AndroidMonotonicClock.elapsedRealtimeMs() > deadlineAtElapsedMs
+            elapsedRealtimeMs() > deadlineAtElapsedMs
 
     private fun AccessibilityNodeInfo.matches(expected: PageIdentity): Boolean =
         packageName?.toString() == expected.packageName && windowId == expected.windowId
@@ -434,16 +469,19 @@ internal class AccessibilityCaptureProbe(
     sealed interface RecoveryResult {
         val diagnostics: ClickRecoveryDiagnostics
         val semanticCandidates: List<SemanticCandidate>
+        val semanticCandidatesComplete: Boolean
 
         data class Success(
             val nodes: List<CapturedNode>,
             override val diagnostics: ClickRecoveryDiagnostics,
             override val semanticCandidates: List<SemanticCandidate> = emptyList(),
+            override val semanticCandidatesComplete: Boolean = false,
         ) : RecoveryResult
 
         data class Failure(
             override val diagnostics: ClickRecoveryDiagnostics,
             override val semanticCandidates: List<SemanticCandidate> = emptyList(),
+            override val semanticCandidatesComplete: Boolean = false,
         ) : RecoveryResult
     }
 
@@ -451,6 +489,11 @@ internal class AccessibilityCaptureProbe(
         val nodes: List<CapturedNode>,
         val selectors: List<CapturedSelector>,
         val visitedAtNodeCount: Int,
+    )
+
+    private data class SemanticCandidateSnapshot(
+        val candidates: List<SemanticCandidate>,
+        val complete: Boolean,
     )
 
     private companion object {
@@ -461,3 +504,7 @@ internal class AccessibilityCaptureProbe(
         const val MAX_SEMANTIC_CANDIDATES = 64
     }
 }
+
+internal fun ClickRecoveryDiagnostics.isCompleteTraversal(): Boolean =
+    traversalLimitReason == null &&
+        outcome in setOf(ClickRecoveryOutcome.NO_MATCH, ClickRecoveryOutcome.SUCCESS)

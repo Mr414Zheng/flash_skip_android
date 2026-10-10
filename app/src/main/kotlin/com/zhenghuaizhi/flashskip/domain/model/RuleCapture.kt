@@ -1,5 +1,9 @@
 package com.zhenghuaizhi.flashskip.domain.model
 
+import java.util.Collections
+import java.util.ArrayList
+import java.util.EnumMap
+
 enum class CapturePhase {
     CONFIGURING,
     WAITING_FOR_TARGET,
@@ -20,6 +24,8 @@ enum class CaptureFailure {
     TARGET_TIMEOUT,
     CLICK_TIMEOUT,
     COMPLETION_TIMEOUT,
+    RETURNED_BEFORE_TARGET,
+    DISMISS_NOT_CAPTURED,
     ACTIVITY_UNAVAILABLE,
     CLICK_SOURCE_UNAVAILABLE,
     CLICK_SEMANTICS_UNAVAILABLE,
@@ -50,6 +56,7 @@ data class ClickRecoveryDiagnostics(
     val semanticNodeCount: Int = 0,
     val matchedNodeCount: Int = 0,
     val knownDismissNodeCount: Int = 0,
+    val explicitDismissNodeCount: Int = 0,
     val selectorCandidateNodeCount: Int = 0,
     val countdownSemanticNodeCount: Int = 0,
     val countdownActionChainCount: Int = 0,
@@ -89,6 +96,128 @@ data class SemanticDiffDiagnostics(
     val transitionSignal: Boolean = false,
 )
 
+enum class CaptureDiagnosticRecordKind {
+    SCAN,
+    SEMANTIC_DIFF,
+    WINDOW_RESOLUTION,
+    HOST_WINDOW_UPDATE,
+}
+
+/** 区分常规预点击扫描与缺少点击源时的即时恢复扫描。 */
+enum class CaptureDiagnosticScanPurpose {
+    PRE_CLICK_REFRESH,
+    CLICK_RECOVERY,
+}
+
+enum class CaptureDiagnosticWindowSource {
+    WINDOW_LIST,
+    ACTIVE_ROOT,
+    EVENT_SOURCE,
+}
+
+enum class CaptureDiagnosticClearReason {
+    HOST_WINDOW_CHANGED,
+    HOST_IDENTITY_CHANGED,
+}
+
+/** 单条采集轨迹只保存相对时间、窗口数字、计数和固定枚举，不携带页面内容。 */
+data class CaptureDiagnosticRecord(
+    val elapsedMs: Long,
+    val kind: CaptureDiagnosticRecordKind,
+    val eventId: Int? = null,
+    val eventWindowId: Int? = null,
+    val hostWindowId: Int? = null,
+    val rootWindowId: Int? = null,
+    val rootSource: CaptureDiagnosticWindowSource? = null,
+    val ownedChild: Boolean? = null,
+    val fallbackAllowed: Boolean? = null,
+    val retry: Boolean? = null,
+    val resolutionOutcome: TargetWindowRecognitionOutcome? = null,
+    val scanOutcome: ClickRecoveryOutcome? = null,
+    val scanPurpose: CaptureDiagnosticScanPurpose? = null,
+    val closeSemanticCount: Int? = null,
+    val effectiveCandidateCount: Int? = null,
+    val countdownSemanticCount: Int? = null,
+    val visitedNodeCount: Int? = null,
+    val scanCompleted: Boolean? = null,
+    val traversalLimitReason: TraversalLimitReason? = null,
+    val semanticDiffOutcome: SemanticDiffOutcome? = null,
+    val diffObservationCount: Int? = null,
+    val diffCurrentCandidateCount: Int? = null,
+    val diffStableCandidateCount: Int? = null,
+    val diffDisappearedCandidateCount: Int? = null,
+    val transitionSignal: Boolean? = null,
+    val previousHostWindowId: Int? = null,
+    val currentHostWindowId: Int? = null,
+    val differenceCleared: Boolean? = null,
+    val clearReason: CaptureDiagnosticClearReason? = null,
+)
+
+/** 汇总覆盖整个会话，确保超出近期记录上限的扫描结果仍可回溯。 */
+data class CaptureDiagnosticSummary(
+    val totalRecordCount: Int = 0,
+    val scanCount: Int = 0,
+    val completedScanCount: Int = 0,
+    val incompleteScanCount: Int = 0,
+    val traversalLimitScanCount: Int = 0,
+    val scansWithCloseSemantics: Int = 0,
+    val maxCloseSemanticCount: Int = 0,
+    val maxCountdownSemanticCount: Int = 0,
+    val maxEffectiveCandidateCount: Int = 0,
+    val semanticDiffCount: Int = 0,
+    val transitionSignalCount: Int = 0,
+    val maxDiffCurrentCandidateCount: Int = 0,
+    val maxDiffStableCandidateCount: Int = 0,
+    val maxDiffDisappearedCandidateCount: Int = 0,
+    val differenceClearCount: Int = 0,
+    val windowResolutionCount: Int = 0,
+    val windowResolutionRetryCount: Int = 0,
+    val windowResolutionOutcomeCounts: Map<TargetWindowRecognitionOutcome, Int> = emptyMap(),
+    val hostWindowUpdateCount: Int = 0,
+    val droppedRecordCount: Int = 0,
+)
+
+/** 记录列表在创建时复制并设为只读，避免快照暴露采集器的可变缓冲区。 */
+class CaptureDiagnosticTrace private constructor(
+    val summary: CaptureDiagnosticSummary,
+    records: List<CaptureDiagnosticRecord>,
+) {
+    val records: List<CaptureDiagnosticRecord> =
+        Collections.unmodifiableList(ArrayList(records))
+
+    override fun equals(other: Any?): Boolean =
+        other is CaptureDiagnosticTrace && summary == other.summary && records == other.records
+
+    override fun hashCode(): Int = 31 * summary.hashCode() + records.hashCode()
+
+    override fun toString(): String = "CaptureDiagnosticTrace(summary=$summary, records=$records)"
+
+    companion object {
+        fun snapshot(
+            summary: CaptureDiagnosticSummary,
+            records: List<CaptureDiagnosticRecord>,
+        ): CaptureDiagnosticTrace {
+            val boundedRecords = records.takeLast(MAX_RECORDS)
+            val totalRecordCount = maxOf(summary.totalRecordCount, records.size)
+            val normalizedSummary = summary.copy(
+                totalRecordCount = totalRecordCount,
+                droppedRecordCount = maxOf(
+                    summary.droppedRecordCount,
+                    (totalRecordCount - boundedRecords.size).coerceAtLeast(0),
+                ).coerceAtMost(totalRecordCount),
+                windowResolutionOutcomeCounts = Collections.unmodifiableMap(
+                    EnumMap<TargetWindowRecognitionOutcome, Int>(
+                        TargetWindowRecognitionOutcome::class.java,
+                    ).apply { putAll(summary.windowResolutionOutcomeCounts) },
+                ),
+            )
+            return CaptureDiagnosticTrace(normalizedSummary, boundedRecords)
+        }
+
+        private const val MAX_RECORDS = 48
+    }
+}
+
 data class CaptureFailureDiagnostics(
     val sourceAvailable: Boolean,
     val eventTextCount: Int,
@@ -101,6 +230,8 @@ data class CaptureFailureDiagnostics(
     val semanticDiff: SemanticDiffDiagnostics? = null,
     val lastWindowVerifiedAgeMs: Long? = null,
     val lastContentChangedAgeMs: Long? = null,
+    val clickDiagnosticApplicable: Boolean = true,
+    val sessionTrace: CaptureDiagnosticTrace? = null,
 )
 
 enum class TargetWindowRecognitionOutcome {
@@ -230,6 +361,10 @@ data class CaptureSession(
     val activityName: String? = null,
     val windowId: Int? = null,
     val targetEnteredAtElapsedMs: Long? = null,
+    /** 仅记录本次采集因用户离开 FlashSkip 而等待返回，用于区分初始恢复与真实返回。 */
+    val leftFlashSkipAtEpochMs: Long? = null,
+    /** 候选待确认期间是否仍监听匹配该候选的真实点击；旧持久化数据默认关闭。 */
+    val candidateClickListeningEnabled: Boolean = false,
     val pendingSample: CaptureSample? = null,
     val pendingObservedCandidate: ObservedDismissCandidate? = null,
     val failure: CaptureFailure? = null,
@@ -238,6 +373,11 @@ data class CaptureSession(
 ) {
     val blocksAutomation: Boolean
         get() = phase != CapturePhase.FAILED
+
+    val listensForCandidateClick: Boolean
+        get() = candidateClickListeningEnabled &&
+            phase == CapturePhase.AWAITING_CONFIRMATION &&
+            pendingObservedCandidate != null
 }
 
 data class RuleCaptureState(

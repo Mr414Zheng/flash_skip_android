@@ -3,6 +3,7 @@ package com.zhenghuaizhi.flashskip.data.preferences
 import com.zhenghuaizhi.flashskip.domain.model.ActionMethod
 import com.zhenghuaizhi.flashskip.domain.model.ActionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.ActionReason
+import com.zhenghuaizhi.flashskip.domain.model.ActionObservationStatus
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
 import com.zhenghuaizhi.flashskip.domain.model.ExecutionTiming
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
@@ -24,6 +25,8 @@ object ActionRecordCodec {
                     .put("method", record.method?.name ?: JSONObject.NULL)
                     .put("outcome", record.outcome.name)
                     .put("reason", record.reason?.name ?: JSONObject.NULL)
+                    .put("actionAccepted", record.actionAccepted)
+                    .put("observation", record.observation?.name ?: JSONObject.NULL)
                     .put("timing", record.timing?.toJson() ?: JSONObject.NULL),
             )
         }
@@ -54,6 +57,9 @@ object ActionRecordCodec {
         outcome = ActionOutcome.valueOf(getString("outcome")),
         reason = optionalEnum("reason", ActionReason::valueOf),
         timing = optJSONObject("timing")?.toExecutionTiming(),
+        actionAccepted = optBoolean("actionAccepted", !isNull("method")),
+        observation = if (!has("observation") || isNull("observation")) null else
+            runCatching { ActionObservationStatus.valueOf(getString("observation")) }.getOrNull(),
     )
 
     private fun ExecutionTiming.toJson(): JSONObject = JSONObject()

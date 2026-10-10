@@ -4,34 +4,67 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.zhenghuaizhi.flashskip.BuildConfig
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticRecord
+import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticTrace
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
+import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
-import java.util.concurrent.atomic.AtomicLong
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 
 /** 采集诊断仅限 Debug 构建，且只输出状态、计数与耗时，不读取事件源节点。 */
 internal object CaptureTraceLog : CaptureTraceLogger(enabled = BuildConfig.DEBUG)
 
 internal open class CaptureTraceLogger(private val enabled: Boolean) {
-    private val sequence = AtomicLong(0)
-
-    @Volatile
+    private var sequence = 0L
     private var currentSessionId: Long? = null
+    private var stateObserved = false
+    private var lastState: List<Pair<String, Any?>>? = null
+    private val sessionStarts = linkedMapOf<Long, Long>()
+    private val repeatedStages = linkedMapOf<String, RepeatedStage>()
+    private var lastTrace: Pair<Long, CaptureDiagnosticTrace>? = null
+    private var lastSample: Pair<Long, List<Pair<String, Any?>>>? = null
 
+    @Synchronized
     fun state(session: CaptureSession?) {
         if (!enabled) return
-        val previousSessionId = currentSessionId
-        if (session == null && previousSessionId == null) return
-        stage(
-            sessionId = session?.id,
-            name = if (session == null) "capture_session_cleared" else "capture_state",
-            "phase" to session?.phase,
-            "failure" to session?.failure,
-            "hasPendingSample" to (session?.pendingSample != null),
-            "hasObservedCandidate" to (session?.pendingObservedCandidate != null),
+        stateObserved = true
+        if (session?.id != currentSessionId) {
+            flush()
+            repeatedStages.clear()
+            lastState = null
+            if (lastTrace?.first != session?.id) lastTrace = null
+            if (lastSample?.first != session?.id) lastSample = null
+            val previousId = currentSessionId
+            currentSessionId = session?.id
+            if (session == null) {
+                if (previousId != null) write(previousId, "capture_session_cleared", emptyList())
+                return
+            }
+            if (session.id !in sessionStarts) rememberSession(session.id)
+        }
+        if (session == null) return
+        val fields = listOf(
+            "phase" to session.phase,
+            "failure" to session.failure,
+            "hasPendingSample" to (session.pendingSample != null),
+            "hasObservedCandidate" to (session.pendingObservedCandidate != null),
+            "candidateClickListening" to session.listensForCandidateClick,
+            "evidence" to session.pendingSample?.evidence,
         )
+        if (fields == lastState) return
+        flush()
+        lastState = fields
+        write(session.id, "capture_state", fields)
+        sample(session)
     }
 
-    fun event(session: CaptureSession, event: AccessibilityEvent) {
+    fun event(
+        session: CaptureSession,
+        event: AccessibilityEvent,
+        route: CaptureTraceEventRoute = CaptureTraceEventRoute.DISPATCHED,
+        reason: CaptureTraceReason? = null,
+    ) {
         if (!enabled) return
         // 诊断不需要页面语义；即使已验证目标，也不读取 text、description 或 source。
         stage(
@@ -42,91 +75,373 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
             "action" to event.action,
             "contentChanges" to event.contentChangeTypes,
             "recordCount" to event.recordCount,
+            "eventWindowId" to event.windowId,
+            "route" to route,
+            "reason" to reason,
         )
     }
 
-    fun windowBoundary(
-        request: AccessibilityCaptureWindowResolver.Request,
-        evidence: CaptureWindowBoundaryEvidence,
-        decision: CaptureWindowBoundaryPolicy.Decision,
-        deadlineAtElapsedMs: Long?,
-    ) {
+    fun windowResolution(record: CaptureWindowResolutionRecord) {
         if (!enabled) return
+        val request = record.request
+        val details = record.details
         stage(
             request.sessionId,
-            "window_boundary",
+            "window_resolution",
+            "eventId" to request.eventType,
+            "eventWindowId" to request.eventWindowId,
+            "hostWindowId" to request.host.windowId,
+            "rootWindowId" to details.rootWindowId,
+            "rootSource" to details.rootSource,
+            "ownedChild" to details.ownedChild,
             "activeHostFallback" to request.allowActiveHostRootFallback,
-            "windowCount" to evidence.matchingWindowCount,
-            "windowType" to evidence.matchingWindowType,
-            "windowActive" to evidence.matchingWindowActive,
-            "windowRoot" to evidence.matchingRootAvailable,
-            "activeRootType" to evidence.activeRootWindowType,
-            "activeRootActive" to evidence.activeRootWindowActive,
-            "sourceWindowType" to evidence.sourceWindowType,
-            "sourceWindowActive" to evidence.sourceWindowActive,
-            "accepted" to (decision is CaptureWindowBoundaryPolicy.Decision.AcceptPrimary ||
-                decision is CaptureWindowBoundaryPolicy.Decision.AcceptOwnedChild),
-            "resolution" to when (decision) {
-                is CaptureWindowBoundaryPolicy.Decision.AcceptPrimary -> decision.source
-                is CaptureWindowBoundaryPolicy.Decision.AcceptOwnedChild -> decision.source
-                is CaptureWindowBoundaryPolicy.Decision.Retryable -> decision.reason
-                is CaptureWindowBoundaryPolicy.Decision.Reject -> decision.reason
-            },
-            "remainingMs" to deadlineAtElapsedMs?.let {
-                (it - SystemClock.elapsedRealtime()).coerceAtLeast(0)
-            },
+            "windowCount" to details.matchingWindowCount,
+            "windowType" to details.matchingWindowType,
+            "windowActive" to details.matchingWindowActive,
+            "windowRoot" to details.matchingRootAvailable,
+            "activeRootType" to details.activeRootWindowType,
+            "activeRootActive" to details.activeRootWindowActive,
+            "sourceWindowType" to details.sourceWindowType,
+            "sourceWindowActive" to details.sourceWindowActive,
+            "outcome" to record.outcome,
+            "rejectReason" to details.rejectReason,
+            "retry" to record.isRetry,
         )
     }
 
-    fun probe(
+    @Synchronized
+    fun record(
         sessionId: Long,
-        allowBareNumericCountdown: Boolean,
-        diagnostics: ClickRecoveryDiagnostics,
+        record: CaptureDiagnosticRecord,
+        scanDiagnostics: ClickRecoveryDiagnostics? = null,
+        allowBareNumericCountdown: Boolean = false,
+        terminal: Boolean = false,
     ) {
         if (!enabled) return
-        stage(
-            sessionId,
-            "pre_click_probe",
+        val fields = listOf(
+            "kind" to record.kind,
+            "recordElapsedMs" to record.elapsedMs,
+            "eventId" to record.eventId,
+            "eventWindowId" to record.eventWindowId,
+            "hostWindowId" to record.hostWindowId,
+            "rootWindowId" to record.rootWindowId,
+            "rootSource" to record.rootSource,
+            "ownedChild" to record.ownedChild,
+            "fallbackAllowed" to record.fallbackAllowed,
+            "retry" to record.retry,
+            "resolutionOutcome" to record.resolutionOutcome,
+            "scanOutcome" to record.scanOutcome,
+            "scanPurpose" to record.scanPurpose,
+            "closeSemantics" to record.closeSemanticCount,
+            "selectorCandidates" to record.effectiveCandidateCount,
+            "countdownSemantics" to record.countdownSemanticCount,
+            "visited" to record.visitedNodeCount,
+            "complete" to record.scanCompleted,
+            "limit" to record.traversalLimitReason,
+            "diffOutcome" to record.semanticDiffOutcome,
+            "observations" to record.diffObservationCount,
+            "current" to record.diffCurrentCandidateCount,
+            "stable" to record.diffStableCandidateCount,
+            "disappeared" to record.diffDisappearedCandidateCount,
+            "transition" to record.transitionSignal,
+            "previousHostWindowId" to record.previousHostWindowId,
+            "currentHostWindowId" to record.currentHostWindowId,
+            "differenceCleared" to record.differenceCleared,
+            "clearReason" to record.clearReason,
+        ) + if (scanDiagnostics == null) emptyList() else listOf(
             "allowBareNumeric" to allowBareNumericCountdown,
-            "outcome" to diagnostics.outcome,
-            "visited" to diagnostics.visitedNodeCount,
-            "depth" to diagnostics.maxDepth,
-            "elapsedMs" to diagnostics.elapsedMs,
-            "semantic" to diagnostics.semanticNodeCount,
-            "matched" to diagnostics.matchedNodeCount,
-            "knownDismiss" to diagnostics.knownDismissNodeCount,
-            "selectorCandidates" to diagnostics.selectorCandidateNodeCount,
-            "countdownSemantic" to diagnostics.countdownSemanticNodeCount,
-            "countdownActionChains" to diagnostics.countdownActionChainCount,
-            "limit" to diagnostics.traversalLimitReason,
+            "depth" to scanDiagnostics.maxDepth,
+            "elapsedMs" to scanDiagnostics.elapsedMs,
+            "semantic" to scanDiagnostics.semanticNodeCount,
+            "matched" to scanDiagnostics.matchedNodeCount,
+            "knownDismiss" to scanDiagnostics.knownDismissNodeCount,
+            "countdownActionChains" to scanDiagnostics.countdownActionChainCount,
         )
+        if (terminal) write(sessionId, "capture_recent_record", fields)
+        else stage(sessionId, "capture_trace_${record.kind.name.lowercase()}", *fields.toTypedArray())
+    }
+
+    /** 在上下文清空前惰性取快照；Release 不读取诊断提供者。 */
+    @Synchronized
+    fun summary(
+        session: CaptureSession,
+        reason: CaptureTraceConclusion,
+        diagnostics: () -> CaptureFailureDiagnostics?,
+        targetWindow: () -> TargetWindowDiagnostics?,
+        savedSample: CaptureSample? = null,
+    ) {
+        if (!enabled) return
+        flush()
+        if (session.id !in sessionStarts) rememberSession(session.id)
+        val failure = diagnostics()
+        val traceUnchanged = failure?.sessionTrace?.let { lastTrace == (session.id to it) } == true
+        write(
+            session.id,
+            "capture_summary",
+            listOf(
+                "conclusion" to reason,
+                "phase" to session.phase,
+                "failure" to session.failure,
+                "candidateClickListening" to session.listensForCandidateClick,
+                "hasPendingSample" to (session.pendingSample != null),
+                "hasObservedCandidate" to (session.pendingObservedCandidate != null),
+                "evidence" to (savedSample?.evidence ?: session.pendingSample?.evidence),
+                "savedSample" to (savedSample != null),
+                "trailUnchanged" to traceUnchanged,
+            ),
+        )
+        sample(session, savedSample)
+        targetWindow()?.let { window ->
+            write(
+                session.id,
+                "target_window_summary",
+                listOf(
+                    "windowEvents" to window.windowStateEventCount,
+                    "contentEvents" to window.contentChangedEventCount,
+                    "clickEvents" to window.viewClickedEventCount,
+                    "ignoredPackageEvents" to window.ignoredPackageEventCount,
+                    "missingPackageEvents" to window.missingPackageEventCount,
+                    "resolutionAttempts" to window.windowResolutionAttemptCount,
+                    "retryAttempts" to window.windowRetryAttemptCount,
+                    "lastEventWindowId" to window.lastEventWindowId,
+                    "windows" to window.lastWindowCount,
+                    "matchingWindows" to window.lastMatchingWindowCount,
+                    "windowType" to window.lastMatchingWindowType,
+                    "windowActive" to window.lastMatchingWindowActive,
+                    "lastOutcome" to window.lastOutcome,
+                    "lastEventAgeMs" to window.lastEventAgeMs,
+                ),
+            )
+        }
+        failure?.let { failure ->
+            write(
+                session.id,
+                "capture_diagnostics",
+                listOf(
+                    "clickApplicable" to failure.clickDiagnosticApplicable,
+                    "sourceAvailable" to failure.sourceAvailable,
+                    "eventTextCount" to failure.eventTextCount,
+                    "eventHasDescription" to failure.eventHasContentDescription,
+                    "copiedNodes" to failure.copiedNodeCount,
+                    "selectorCandidates" to failure.selectorCandidateCount,
+                    "snapshotOutcome" to failure.snapshotRecovery?.outcome,
+                    "snapshotAgeMs" to failure.snapshotRecovery?.ageMs,
+                    "windowVerifiedAgeMs" to failure.lastWindowVerifiedAgeMs,
+                    "contentChangedAgeMs" to failure.lastContentChangedAgeMs,
+                    "diffOutcome" to failure.semanticDiff?.outcome,
+                    "diffObservations" to failure.semanticDiff?.observationCount,
+                    "diffCurrent" to failure.semanticDiff?.currentCandidateCount,
+                    "diffStable" to failure.semanticDiff?.stableCandidateCount,
+                    "diffDisappeared" to failure.semanticDiff?.disappearedCandidateCount,
+                    "diffVisited" to failure.semanticDiff?.visitedNodeCount,
+                    "diffTransition" to failure.semanticDiff?.transitionSignal,
+                ),
+            )
+            failure.immediateRecovery?.let { recovery(session.id, "immediate_recovery_summary", it) }
+            failure.preClickProbe?.let { recovery(session.id, "pre_click_probe_summary", it) }
+            failure.sessionTrace?.let traceSnapshot@{ trace ->
+                if (traceUnchanged) return@traceSnapshot
+                lastTrace = session.id to trace
+                val totals = trace.summary
+                write(
+                    session.id,
+                    "capture_scan_summary",
+                    listOf(
+                        "scans" to totals.scanCount,
+                        "complete" to totals.completedScanCount,
+                        "incomplete" to totals.incompleteScanCount,
+                        "limited" to totals.traversalLimitScanCount,
+                        "scansWithCloseSemantics" to totals.scansWithCloseSemantics,
+                        "maxCloseSemantics" to totals.maxCloseSemanticCount,
+                        "maxCountdownSemantics" to totals.maxCountdownSemanticCount,
+                        "maxSelectorCandidates" to totals.maxEffectiveCandidateCount,
+                        "diffs" to totals.semanticDiffCount,
+                        "transitions" to totals.transitionSignalCount,
+                        "maxDiffCurrent" to totals.maxDiffCurrentCandidateCount,
+                        "maxDiffStable" to totals.maxDiffStableCandidateCount,
+                        "maxDiffDisappeared" to totals.maxDiffDisappearedCandidateCount,
+                        "differenceClears" to totals.differenceClearCount,
+                        "resolutions" to totals.windowResolutionCount,
+                        "retries" to totals.windowResolutionRetryCount,
+                        "hostUpdates" to totals.hostWindowUpdateCount,
+                        "totalRecords" to totals.totalRecordCount,
+                        "retainedRecords" to trace.records.size,
+                        "droppedRecords" to totals.droppedRecordCount,
+                    ),
+                )
+                totals.windowResolutionOutcomeCounts.forEach { (outcome, count) ->
+                    write(session.id, "capture_window_outcome", listOf("outcome" to outcome, "count" to count))
+                }
+                trace.records.forEach { record(session.id, it, terminal = true) }
+            }
+        }
+    }
+
+    private fun recovery(sessionId: Long, name: String, diagnostics: ClickRecoveryDiagnostics) {
+        write(
+            sessionId,
+            name,
+            listOf(
+                "outcome" to diagnostics.outcome,
+                "visited" to diagnostics.visitedNodeCount,
+                "depth" to diagnostics.maxDepth,
+                "elapsedMs" to diagnostics.elapsedMs,
+                "semantic" to diagnostics.semanticNodeCount,
+                "matched" to diagnostics.matchedNodeCount,
+                "knownDismiss" to diagnostics.knownDismissNodeCount,
+                "closeSemantics" to diagnostics.explicitDismissNodeCount,
+                "selectorCandidates" to diagnostics.selectorCandidateNodeCount,
+                "countdownSemantics" to diagnostics.countdownSemanticNodeCount,
+                "countdownActionChains" to diagnostics.countdownActionChainCount,
+                "complete" to diagnostics.isCompleteTraversal(),
+                "limit" to diagnostics.traversalLimitReason,
+            ),
+        )
+    }
+
+    private fun sample(session: CaptureSession, savedSample: CaptureSample? = null) {
+        val sample = savedSample ?: session.pendingSample
+        val nodes = sample?.nodes ?: session.pendingObservedCandidate?.nodes ?: return
+        val fields = listOf(
+            "evidence" to sample?.evidence,
+            "pendingCandidate" to (sample == null && session.pendingObservedCandidate != null),
+            "savedSample" to (savedSample != null),
+            "nodes" to nodes.size,
+            "resourceIdNodes" to nodes.count { it.resourceId != null },
+            "textNodes" to nodes.count { it.text != null },
+            "descriptionNodes" to nodes.count { it.contentDescription != null },
+            "actionableNodes" to nodes.count { it.clickable || it.supportsActionClick },
+            "uniqueSelectors" to (sample?.preClickUniqueSelectors?.size
+                ?: session.pendingObservedCandidate?.preClickUniqueSelectors?.size),
+        )
+        if (lastSample == (session.id to fields)) return
+        lastSample = session.id to fields
+        write(session.id, if (savedSample == null) "capture_sample_summary" else "sample_saved", fields)
     }
 
     /** 阶段与字段名必须使用代码常量；值仅接受状态枚举、布尔与整数。 */
+    @Synchronized
     fun stage(sessionId: Long?, name: String, vararg fields: Pair<String, Any?>) {
-        if (!enabled) return
-        if (sessionId != currentSessionId) {
-            sequence.set(0)
+        if (!enabled || sessionId == null) return
+        if (!stateObserved && currentSessionId == null) {
             currentSessionId = sessionId
+            rememberSession(sessionId)
         }
-        // 自由文本、集合与对象一律丢弃，防止新增调用点意外把页面数据写入日志。
-        val details = fields.mapNotNull { (key, value) ->
-            when (value) {
-                is Boolean, is Int, is Long -> "$key=$value"
-                is Enum<*> -> "$key=${value.name}"
-                else -> null
+        val safe = safeFields(fields.toList())
+        // 迟到协程只写自己的会话标记，不能重置当前会话的缓冲区和时序。
+        if (sessionId != currentSessionId) {
+            write(sessionId, name, safe + ("late" to true))
+            return
+        }
+        if (name in IMMEDIATE_STAGES || (name == "accessibility_event" && fields.any {
+                it.first == "type" && it.second == AccessibilityEvent.TYPE_VIEW_CLICKED
+            })
+        ) {
+            flush()
+            write(sessionId, name, safe)
+            return
+        }
+        val identity = safe.filterNot { it.first == "recordElapsedMs" }
+        val previous = repeatedStages[name]
+        val now = SystemClock.elapsedRealtime()
+        if (previous?.identity == identity) {
+            previous.repeatCount = if (previous.repeatCount == Int.MAX_VALUE) {
+                Int.MAX_VALUE
+            } else {
+                previous.repeatCount + 1
             }
-        }.joinToString(separator = " ")
-        Log.d(
-            TAG,
-            "seq=${sequence.incrementAndGet()} elapsed=${SystemClock.elapsedRealtime()} " +
-                "stage=$name $details",
-        )
+            previous.fields = safe
+            previous.lastAtElapsedMs = now
+            return
+        }
+        if (previous != null) flushStage(name, previous)
+        if (previous == null && repeatedStages.size == MAX_REPEATED_STAGES) {
+            val oldest = repeatedStages.entries.first()
+            flushStage(oldest.key, oldest.value)
+            repeatedStages.remove(oldest.key)
+        }
+        write(sessionId, name, safe)
+        repeatedStages[name] = RepeatedStage(identity, safe, firstAtElapsedMs = now, lastAtElapsedMs = now)
     }
+
+    @Synchronized
+    fun flush() {
+        if (!enabled) return
+        repeatedStages.forEach { (name, stage) -> flushStage(name, stage) }
+    }
+
+    private fun flushStage(name: String, stage: RepeatedStage) {
+        if (stage.repeatCount == 0) return
+        val sessionId = currentSessionId ?: return
+        write(
+            sessionId,
+            name,
+            stage.fields + listOf(
+                "repeatCount" to stage.repeatCount,
+                "firstRelativeMs" to relativeTime(sessionId, stage.firstAtElapsedMs),
+                "lastRelativeMs" to relativeTime(sessionId, stage.lastAtElapsedMs),
+            ),
+        )
+        stage.repeatCount = 0
+        stage.firstAtElapsedMs = stage.lastAtElapsedMs
+    }
+
+    private fun rememberSession(sessionId: Long) {
+        sessionStarts[sessionId] = SystemClock.elapsedRealtime()
+        if (sessionStarts.size > MAX_SESSION_TIMES) sessionStarts.remove(sessionStarts.keys.first())
+    }
+
+    private fun relativeTime(sessionId: Long, now: Long): Long? =
+        sessionStarts[sessionId]?.let { (now - it).coerceAtLeast(0) }
+
+    private fun safeFields(fields: List<Pair<String, Any?>>): List<Pair<String, Any?>> =
+        fields.filter { (_, value) -> value is Boolean || value is Int || value is Long || value is Enum<*> }
+
+    private fun write(sessionId: Long, name: String, fields: List<Pair<String, Any?>>) {
+        val now = SystemClock.elapsedRealtime()
+        val relative = relativeTime(sessionId, now)?.let { " relativeMs=$it" }.orEmpty()
+        val details = safeFields(fields).joinToString(" ") { (key, value) ->
+            "$key=${if (value is Enum<*>) value.name else value}"
+        }
+        Log.d(TAG, "session=$sessionId seq=${++sequence}$relative stage=$name $details")
+    }
+
+    private data class RepeatedStage(
+        val identity: List<Pair<String, Any?>>,
+        var fields: List<Pair<String, Any?>>,
+        var repeatCount: Int = 0,
+        var firstAtElapsedMs: Long,
+        var lastAtElapsedMs: Long,
+    )
 
     companion object {
         const val TAG = "FlashSkipCapture"
+        private const val MAX_REPEATED_STAGES = 24
+        private const val MAX_SESSION_TIMES = 2
+        private val IMMEDIATE_STAGES = setOf(
+            "capture_failed", "observed_candidate", "semantic_diff_candidate", "sample_captured",
+            "candidate_click_ignored", "candidate_click_matched", "candidate_click_upgrade_stale",
+            "candidate_write_failed", "candidate_click_recovery_write_failed", "click_capture", "click_semantics",
+        )
     }
+}
+
+internal enum class CaptureTraceEventRoute {
+    DISPATCHED,
+    IGNORED,
+    OBSERVED_ONLY,
+}
+
+internal enum class CaptureTraceConclusion {
+    FAILED,
+    CLICK_CAPTURED,
+    CANDIDATE_LISTENING_STOPPED,
+    SAVED,
+    CANCELLED,
+    REPLACED,
+    SERVICE_INTERRUPTED,
+    SERVICE_DESTROYED,
+    SERVICE_RECONNECTED,
 }
 
 internal enum class CaptureTraceReason {
@@ -139,4 +454,10 @@ internal enum class CaptureTraceReason {
     WINDOW_POLICY,
     NO_FRESH_SNAPSHOT,
     NO_SELECTOR_CANDIDATE,
+    CANDIDATE_WINDOW_MISMATCH,
+    CANDIDATE_IDENTITY_MISMATCH,
+    SOURCE_UNAVAILABLE,
+    SOURCE_IDENTITY_MISMATCH,
+    CANDIDATE_MISMATCH,
+    TARGET_ENTRY_UNAVAILABLE,
 }

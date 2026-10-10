@@ -9,7 +9,9 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
+import com.zhenghuaizhi.flashskip.domain.model.ObservedDismissCandidate
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
+import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -81,6 +83,51 @@ class FlashSkipAccessibilityServiceTest {
     }
 
     @Test
+    @Suppress("DEPRECATION")
+    fun candidateClickListeningConsumesOnlyClickEventsWithoutWindowReads() {
+        val service = Robolectric.buildService(FlashSkipAccessibilityService::class.java).get()
+        val shadow = Shadow.extract<ConfigurationShadow>(service)
+        val tracker = FlashSkipAccessibilityService::class.java
+            .getDeclaredField("targetWindowDiagnosticsTracker")
+            .apply { isAccessible = true }
+            .get(service) as TargetWindowDiagnosticsTracker
+        tracker.onSessionChanged(1L)
+        setCapturePhase(
+            service,
+            CapturePhase.AWAITING_CONFIRMATION,
+            candidateClickListening = true,
+        )
+        for (type in listOf(
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            AccessibilityEvent.TYPE_VIEW_CLICKED,
+        )) {
+            val event = AccessibilityEvent.obtain(type).apply { packageName = "target.example" }
+            try {
+                repeat(100) { service.onAccessibilityEvent(event) }
+            } finally {
+                event.recycle()
+            }
+        }
+        assertEquals(0, shadow.windowReads)
+        val candidateSnapshot = requireNotNull(tracker.snapshot(1L, 1L))
+        assertEquals(100, candidateSnapshot.viewClickedEventCount)
+        assertEquals(0, candidateSnapshot.contentChangedEventCount)
+        assertEquals(0, candidateSnapshot.windowStateEventCount)
+
+        setCapturePhase(service, CapturePhase.AWAITING_CONFIRMATION)
+        val ignoredClick = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_VIEW_CLICKED).apply {
+            packageName = "target.example"
+        }
+        try {
+            repeat(20) { service.onAccessibilityEvent(ignoredClick) }
+        } finally {
+            ignoredClick.recycle()
+        }
+        assertEquals(100, requireNotNull(tracker.snapshot(1L, 1L)).viewClickedEventCount)
+    }
+
+    @Test
     fun captureSubscribesOnlyToConsumedEventsAndRestoresAutomationEvents() {
         val service = Robolectric.buildService(FlashSkipAccessibilityService::class.java).get()
 
@@ -96,6 +143,13 @@ class FlashSkipAccessibilityServiceTest {
             service.serviceInfo.eventTypes,
         )
         assertNull(service.serviceInfo.packageNames)
+
+        val candidateConfigured = FlashSkipAccessibilityService::class.java
+            .getDeclaredMethod("configureForCandidateClick", String::class.java)
+            .apply { isAccessible = true }
+            .invoke(service, "private-target")
+        assertEquals(true, candidateConfigured)
+        assertEquals(AccessibilityEvent.TYPE_VIEW_CLICKED, service.serviceInfo.eventTypes)
 
         FlashSkipAccessibilityService::class.java
             .getDeclaredMethod("restoreDefaultEventConfiguration")
@@ -154,14 +208,32 @@ class FlashSkipAccessibilityServiceTest {
         service: FlashSkipAccessibilityService,
         phase: CapturePhase,
         sessionId: Long = 1L,
+        candidateClickListening: Boolean = false,
     ) {
+        val targetAppId = TargetAppId("target.example")
         val state = RuleCaptureState(
             activeSession = CaptureSession(
                 id = sessionId,
+                targetAppId = targetAppId,
                 packageName = "target.example",
                 phase = phase,
                 phaseStartedAtEpochMs = 0L,
                 deadlineAtEpochMs = 60_000L,
+                candidateClickListeningEnabled = candidateClickListening,
+                pendingObservedCandidate = if (candidateClickListening) {
+                    ObservedDismissCandidate(
+                        id = sessionId,
+                        targetAppId = targetAppId,
+                        targetAppName = "Target",
+                        activityName = "target.example.MainActivity",
+                        observedAfterTargetMs = 0L,
+                        observedAtEpochMs = 1L,
+                        nodes = emptyList(),
+                        preClickUniqueSelectors = emptyList(),
+                    )
+                } else {
+                    null
+                },
             ),
         )
         FlashSkipAccessibilityService::class.java.getDeclaredField("latestCaptureState")

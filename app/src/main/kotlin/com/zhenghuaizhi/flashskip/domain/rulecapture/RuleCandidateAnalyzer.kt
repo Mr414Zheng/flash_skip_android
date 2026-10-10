@@ -55,6 +55,7 @@ object RuleCandidateAnalyzer {
     }
 
     fun selectorCandidates(nodes: List<CapturedNode>): List<CapturedSelector> {
+        if (!CaptureRuleSafetyPolicy.accepts(nodes)) return emptyList()
         val actionTargetIndex = nodes.indexOfFirst { node ->
             node.visibleToUser &&
                 node.hasUsableBounds &&
@@ -179,7 +180,8 @@ object RuleCandidateAnalyzer {
     ): List<CaptureSample> = samples.filter {
         it.targetAppId == targetAppId &&
             it.clickedAfterTargetMs >= 0 &&
-            it.activityName.isNotBlank()
+            it.activityName.isNotBlank() &&
+            CaptureRuleSafetyPolicy.accepts(it.nodes)
     }
 
     private fun ruleGroups(samples: List<CaptureSample>): List<RuleGroup> {

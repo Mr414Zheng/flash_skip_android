@@ -7,6 +7,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
 import com.zhenghuaizhi.flashskip.domain.ports.GestureResult
+import com.zhenghuaizhi.flashskip.domain.ports.ClickResult
 import com.zhenghuaizhi.flashskip.domain.ports.MonotonicClock
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -96,6 +97,32 @@ class AccessibilityPageGatewayTest {
         assertEquals(GestureResult.Completed, result.await())
         dispatch.callback().onCancelled(dispatch.description())
         assertEquals(GestureResult.Completed, result.await())
+    }
+
+    @Test
+    fun acceptedGestureStartsObservationWithoutWaitingForCallbackOrClaimingClosure() = runTest {
+        val result = gateway.submitGesture(IDENTITY, SELECTOR, 1_000)
+        assertEquals(GestureResult.Accepted, result.result)
+        assertTrue(result.evidence != null)
+        val dispatch = shadowService.gesturesDispatched.single()
+        dispatch.callback().onCompleted(dispatch.description())
+        assertEquals(GestureResult.Accepted, result.result)
+    }
+
+    @Test
+    fun expiredNodeClickDoesNotReadRootOrPerformAction() = runTest {
+        clock.now = 1_000
+        assertEquals(ClickResult.Expired, gateway.submitClick(IDENTITY, SELECTOR, deadlineElapsedMs = 1_000).result)
+        assertEquals(0, CountingWindowShadow.rootReads)
+    }
+
+    @Test
+    fun synchronousEvidenceReadCrossingDeadlineDoesNotPerformNodeAction() = runTest {
+        clock.now = 970
+        CountingWindowShadow.onRootRead = { clock.now += 60 }
+        assertEquals(ClickResult.Expired, gateway.submitClick(IDENTITY, SELECTOR, deadlineElapsedMs = 1_000).result)
+        assertEquals(1, CountingWindowShadow.rootReads)
+        assertTrue(shadowService.gesturesDispatched.isEmpty())
     }
 
     @Test
