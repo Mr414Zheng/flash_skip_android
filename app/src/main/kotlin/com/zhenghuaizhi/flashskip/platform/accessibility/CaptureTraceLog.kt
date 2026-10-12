@@ -2,6 +2,10 @@ package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.os.SystemClock
 import android.util.Log
+import com.zhenghuaizhi.flashskip.platform.diagnostics.CaptureDiagnosticSink
+import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
+import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
+import java.io.IOException
 import android.view.accessibility.AccessibilityEvent
 import com.zhenghuaizhi.flashskip.BuildConfig
 import com.zhenghuaizhi.flashskip.domain.model.CaptureDiagnosticRecord
@@ -16,6 +20,7 @@ import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 internal object CaptureTraceLog : CaptureTraceLogger(enabled = BuildConfig.DEBUG)
 
 internal open class CaptureTraceLogger(private val enabled: Boolean) {
+    private var localSink: CaptureDiagnosticSink? = null
     private var sequence = 0L
     private var currentSessionId: Long? = null
     private var stateObserved = false
@@ -24,6 +29,71 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
     private val repeatedStages = linkedMapOf<String, RepeatedStage>()
     private var lastTrace: Pair<Long, CaptureDiagnosticTrace>? = null
     private var lastSample: Pair<Long, List<Pair<String, Any?>>>? = null
+
+    /** 本地写入器归应用进程所有，服务销毁不会取消尚未保存的诊断。 */
+    @Synchronized
+    fun installSink(sink: CaptureDiagnosticSink) {
+        if (enabled) localSink = sink
+    }
+
+    @Synchronized
+    fun beginSession(sessionId: Long) {
+        if (!enabled) return
+        try { localSink?.beginSession(sessionId) } catch (_: Exception) { }
+    }
+
+    /** 启动与服务边界没有会话时也必须留证；字段仍只接受安全元数据。 */
+    @Synchronized
+    fun lifecycle(name: String, vararg fields: Pair<String, Any?>) {
+        if (enabled) write(null, name, fields.toList(), essential = true)
+    }
+
+    @Synchronized
+    fun boundary(sessionId: Long?, name: String, vararg fields: Pair<String, Any?>) {
+        if (enabled) write(sessionId, name, fields.toList(), essential = true)
+    }
+
+    /** 应用侧观察持久状态，不改变服务侧阶段合并、时序和上下文清理顺序。 */
+    @Synchronized
+    fun persistedState(previous: RuleCaptureState?, current: RuleCaptureState) {
+        if (!enabled || previous == current) return
+        val before = previous?.activeSession
+        val session = current.activeSession
+        // DataStore 可先发布状态再恢复提交者；观察到新会话时先登记，避免先行记录被误丢弃。
+        if (session != null && before?.id != session.id) beginSession(session.id)
+        if (before != null && before.id != session?.id) {
+            val saved = current.samples.any { it.id == before.id && it !in previous.samples }
+            write(before.id, "persisted_session_ended", listOf(
+                "conclusion" to if (saved) CaptureTraceConclusion.SAVED else CaptureTraceConclusion.CANCELLED,
+                "phase" to before.phase,
+                "failure" to before.failure,
+            ), essential = true)
+        }
+        write(session?.id, "persisted_capture_state", listOf(
+            "firstRead" to (previous == null),
+            "hasSession" to (session != null),
+            "phase" to session?.phase,
+            "failure" to session?.failure,
+            "hasPendingSample" to (session?.pendingSample != null),
+            "hasObservedCandidate" to (session?.pendingObservedCandidate != null),
+            "hasFailureDiagnostics" to (session?.failureDiagnostics != null),
+            "hasTargetDiagnostics" to (session?.targetWindowDiagnostics != null),
+            "sampleCount" to current.samples.size,
+        ), essential = true)
+        if (session?.phase == CapturePhase.FAILED &&
+            (before?.id != session.id || before.failureDiagnostics != session.failureDiagnostics ||
+                before.phase != session.phase)
+        ) {
+            summary(session, CaptureTraceConclusion.FAILED,
+                diagnostics = { session.failureDiagnostics },
+                targetWindow = { session.targetWindowDiagnostics })
+        }
+    }
+
+    @Synchronized
+    fun management(sessionId: Long?, vararg fields: Pair<String, Any?>) {
+        if (enabled) write(sessionId, "rule_management", fields.toList(), essential = true)
+    }
 
     @Synchronized
     fun state(session: CaptureSession?) {
@@ -397,13 +467,21 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
     private fun safeFields(fields: List<Pair<String, Any?>>): List<Pair<String, Any?>> =
         fields.filter { (_, value) -> value is Boolean || value is Int || value is Long || value is Enum<*> }
 
-    private fun write(sessionId: Long, name: String, fields: List<Pair<String, Any?>>) {
+    private fun write(sessionId: Long?, name: String, fields: List<Pair<String, Any?>>, essential: Boolean = false) {
         val now = SystemClock.elapsedRealtime()
-        val relative = relativeTime(sessionId, now)?.let { " relativeMs=$it" }.orEmpty()
+        val relative = sessionId?.let { relativeTime(it, now) }?.let { " relativeMs=$it" }.orEmpty()
         val details = safeFields(fields).joinToString(" ") { (key, value) ->
             "$key=${if (value is Enum<*>) value.name else value}"
         }
-        Log.d(TAG, "session=$sessionId seq=${++sequence}$relative stage=$name $details")
+        val message = "session=${sessionId ?: 0} seq=${++sequence}$relative stage=$name $details"
+        val important = essential || name in ESSENTIAL_STAGES || name.endsWith("_summary")
+        // 两个目的地各自失败，不能因 Logcat 不可用或过滤而跳过本地保存。
+        try { localSink?.append(sessionId, message, important) } catch (_: Exception) { }
+        try {
+            if (name == "capture_diagnostics_ready" || name.startsWith("service_")) Log.i(TAG, message)
+            else if (name == "capture_summary" && fields.any { it.second == CaptureTraceConclusion.FAILED }) Log.w(TAG, message)
+            else Log.d(TAG, message)
+        } catch (_: Exception) { }
     }
 
     private data class RepeatedStage(
@@ -418,6 +496,10 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
         const val TAG = "FlashSkipCapture"
         private const val MAX_REPEATED_STAGES = 24
         private const val MAX_SESSION_TIMES = 2
+        private val ESSENTIAL_STAGES = setOf(
+            "capture_state", "capture_session_cleared", "capture_diagnostics", "capture_recent_record",
+            "capture_failed", "click_capture", "click_semantics", "sample_saved",
+        )
         private val IMMEDIATE_STAGES = setOf(
             "capture_failed", "observed_candidate", "semantic_diff_candidate", "sample_captured",
             "candidate_click_ignored", "candidate_click_matched", "candidate_click_upgrade_stale",
@@ -430,6 +512,20 @@ internal enum class CaptureTraceEventRoute {
     DISPATCHED,
     IGNORED,
     OBSERVED_ONLY,
+}
+
+/** 异常只留固定分类，避免异常文本携带路径、包名或页面内容。 */
+internal enum class CaptureTraceError {
+    IO, SECURITY, CANCELLED, OTHER;
+
+    companion object {
+        fun from(error: Throwable): CaptureTraceError = when (error) {
+            is IOException -> IO
+            is SecurityException -> SECURITY
+            is kotlinx.coroutines.CancellationException -> CANCELLED
+            else -> OTHER
+        }
+    }
 }
 
 internal enum class CaptureTraceConclusion {

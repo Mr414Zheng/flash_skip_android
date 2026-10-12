@@ -38,7 +38,7 @@ class PreferencesRuleCaptureStore internal constructor(
                 dataStore.edit { values ->
                     values.remove(LEGACY_STATE)
                     val raw = values[STATE] ?: return@edit
-                    val current = RuleCaptureCodec.decodeOrEmpty(raw)
+                    val current = decode(raw)
                     val sanitized = CaptureRuleSafetyPolicy.sanitize(current)
                     if (sanitized != current) values[STATE] = RuleCaptureCodec.encode(sanitized)
                 }
@@ -51,15 +51,27 @@ class PreferencesRuleCaptureStore internal constructor(
 
     override val state: Flow<RuleCaptureState> = dataStore.data
         .catch { error ->
-            if (error is IOException) emit(emptyPreferences()) else throw error
+            if (error is IOException) {
+                traceSink.recordSafely { RuleManagementTraceEvent(RuleManagementOperation.READ_CAPTURE, RuleManagementOutcome.STORAGE_FAILURE) }
+                emit(emptyPreferences())
+            } else throw error
         }
-        .map { values -> CaptureRuleSafetyPolicy.sanitize(RuleCaptureCodec.decodeOrEmpty(values[STATE])) }
+        .map { values -> CaptureRuleSafetyPolicy.sanitize(decode(values[STATE])) }
 
     override suspend fun update(transform: (RuleCaptureState) -> RuleCaptureState) {
-        dataStore.edit { values ->
-            val current = CaptureRuleSafetyPolicy.sanitize(RuleCaptureCodec.decodeOrEmpty(values[STATE]))
-            values[STATE] = RuleCaptureCodec.encode(CaptureRuleSafetyPolicy.sanitize(transform(current)))
+        try {
+            dataStore.edit { values ->
+                val current = CaptureRuleSafetyPolicy.sanitize(decode(values[STATE]))
+                values[STATE] = RuleCaptureCodec.encode(CaptureRuleSafetyPolicy.sanitize(transform(current)))
+            }
+        } catch (error: IOException) {
+            traceSink.recordSafely { RuleManagementTraceEvent(RuleManagementOperation.WRITE_CAPTURE, RuleManagementOutcome.STORAGE_FAILURE) }
+            throw error
         }
+    }
+
+    private fun decode(raw: String?) = RuleCaptureCodec.decodeOrEmpty(raw) {
+        traceSink.recordSafely { RuleManagementTraceEvent(RuleManagementOperation.DECODE_CAPTURE, RuleManagementOutcome.REJECTED) }
     }
 
     private companion object {

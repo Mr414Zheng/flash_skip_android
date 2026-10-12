@@ -45,7 +45,7 @@ object RuleCaptureCodec {
         .putNullable("activeSession", state.activeSession?.toJson())
         .toString()
 
-    fun decodeOrEmpty(raw: String?): RuleCaptureState {
+    fun decodeOrEmpty(raw: String?, onInvalid: () -> Unit = {}): RuleCaptureState {
         if (raw.isNullOrBlank()) return RuleCaptureState()
         return runCatching {
             val json = JSONObject(raw)
@@ -57,7 +57,11 @@ object RuleCaptureCodec {
                     ?.mapObjects { it.toSemanticDiffEvidence() }
                     .orEmpty(),
             )
-        }.getOrDefault(RuleCaptureState())
+        }.getOrElse {
+            // 内容不能写入诊断；只报告解码失败这一事实，保持原有安全回退。
+            try { onInvalid() } catch (_: Exception) { }
+            RuleCaptureState()
+        }
     }
 
     private fun CaptureSession.toJson() = JSONObject()

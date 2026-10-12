@@ -23,6 +23,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.onCompletion
+import com.zhenghuaizhi.flashskip.BuildConfig
 import kotlinx.coroutines.launch
 import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureExpiryKey
 import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationResult
@@ -50,8 +52,15 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     private val container
         get() = (application as FlashSkipApplication).container
 
+    override fun onCreate() {
+        super.onCreate()
+        CaptureTraceLog.lifecycle("service_created")
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
+        CaptureTraceLog.boundary(latestCaptureState.activeSession?.id, "service_connected",
+            "reconnected" to (serviceScope != null))
         latestCaptureState.activeSession?.let {
             traceCaptureSummary(it, CaptureTraceConclusion.SERVICE_RECONNECTED)
         }
@@ -401,8 +410,14 @@ class FlashSkipAccessibilityService : AccessibilityService() {
 
     private fun observeCaptureState(scope: CoroutineScope) {
         var firstEmission = true
+        CaptureTraceLog.lifecycle("service_capture_observer_started")
         scope.launch {
-            container.ruleCaptureCoordinator.state.collect { state ->
+            container.ruleCaptureCoordinator.state.onCompletion { error ->
+                CaptureTraceLog.boundary(latestCaptureState.activeSession?.id, "service_capture_observer_completed",
+                    "failed" to (error != null), "error" to error?.let(CaptureTraceError::from))
+            }.collect { state ->
+                if (firstEmission) CaptureTraceLog.boundary(state.activeSession?.id, "service_capture_first_state",
+                    "hasSession" to (state.activeSession != null), "phase" to state.activeSession?.phase)
                 // 必须先输出旧上下文，再让采集器和窗口计数器处理新会话并清空缓冲区。
                 traceCaptureTransition(latestCaptureState, state)
                 latestCaptureState = state
@@ -552,6 +567,10 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                 "capture_configuration",
                 "eventTypes" to CAPTURE_EVENT_TYPES,
             )
+        }.onSuccess {
+            traceConfiguration("capture_configuration_applied", CAPTURE_EVENT_TYPES)
+        }.onFailure { error ->
+            traceConfiguration("capture_configuration_failed", CAPTURE_EVENT_TYPES, error)
         }.isSuccess
     }
 
@@ -571,6 +590,10 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                 "capture_configuration",
                 "eventTypes" to AccessibilityEvent.TYPE_VIEW_CLICKED,
             )
+        }.onSuccess {
+            traceConfiguration("candidate_configuration_applied", AccessibilityEvent.TYPE_VIEW_CLICKED)
+        }.onFailure { error ->
+            traceConfiguration("candidate_configuration_failed", AccessibilityEvent.TYPE_VIEW_CLICKED, error)
         }.isSuccess
     }
 
@@ -580,7 +603,10 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             serviceInfo?.eventTypes == eventTypes
 
     private fun restoreDefaultEventConfiguration() {
-        if (serviceInfo == null) return
+        if (serviceInfo == null) {
+            traceConfiguration("default_configuration_unavailable", DEFAULT_EVENT_TYPES)
+            return
+        }
         runCatching {
             val info: AccessibilityServiceInfo = serviceInfo
             info.eventTypes = DEFAULT_EVENT_TYPES
@@ -593,7 +619,20 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                 "capture_configuration_restored",
                 "eventTypes" to DEFAULT_EVENT_TYPES,
             )
+        }.onSuccess {
+            traceConfiguration("default_configuration_applied", DEFAULT_EVENT_TYPES)
+        }.onFailure { error ->
+            traceConfiguration("default_configuration_failed", DEFAULT_EVENT_TYPES, error)
         }
+    }
+
+    private fun traceConfiguration(name: String, requestedTypes: Int, error: Throwable? = null) {
+        if (!BuildConfig.DEBUG) return
+        val actual = runCatching { serviceInfo }.getOrNull()
+        CaptureTraceLog.boundary(latestCaptureState.activeSession?.id, name,
+            "requestedTypes" to requestedTypes, "hasServiceInfo" to (actual != null),
+            "actualTypes" to actual?.eventTypes, "flags" to actual?.flags,
+            "error" to error?.let(CaptureTraceError::from))
     }
 
     private fun scheduleExpiry(state: RuleCaptureState) {
@@ -637,6 +676,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        CaptureTraceLog.boundary(latestCaptureState.activeSession?.id, "service_interrupted")
         latestCaptureState.activeSession?.let {
             traceCaptureSummary(it, CaptureTraceConclusion.SERVICE_INTERRUPTED)
         }
@@ -644,6 +684,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        CaptureTraceLog.boundary(latestCaptureState.activeSession?.id, "service_destroyed")
         latestCaptureState.activeSession?.let {
             traceCaptureSummary(it, CaptureTraceConclusion.SERVICE_DESTROYED)
         }

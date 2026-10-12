@@ -105,7 +105,7 @@ class RuleCaptureCoordinator(
     private var returnDiagnosticsProvider: RegisteredDiagnosticsProvider? = null
 
     /** 有未结束的采集时拒绝重复开始，避免迟到的界面操作替换当前会话。 */
-    suspend fun requestStart(): CaptureOperationResult = operation {
+    suspend fun requestStart(): CaptureOperationResult = operation(RuleManagementOperation.REQUEST_CAPTURE) {
         val previous = captureStore.state.first().activeSession
         if (previous?.blocksAutomation == true) return@operation CaptureOperationResult.Stale
         val now = wallClock.currentTimeMillis()
@@ -146,6 +146,8 @@ class RuleCaptureCoordinator(
                 failed(session, CaptureFailure.CONFIGURATION_TIMEOUT)
             }
         }
+        trace(RuleManagementOperation.AWAIT_CONFIGURATION,
+            if (configured) RuleManagementOutcome.SUCCESS else RuleManagementOutcome.REJECTED, sessionId)
         return configured
     }
 
@@ -179,7 +181,7 @@ class RuleCaptureCoordinator(
     }
 
     /** 标记真实离开；调用者必须传入发起本次外跳的 session ID。 */
-    suspend fun markLeftFlashSkip(sessionId: Long): CaptureOperationResult = operation {
+    suspend fun markLeftFlashSkip(sessionId: Long): CaptureOperationResult = operation(RuleManagementOperation.LEAVE, sessionId) {
         val active = captureStore.state.first().activeSession?.takeIf {
             it.id == sessionId && it.phase != CapturePhase.FAILED
         } ?: return@operation CaptureOperationResult.Stale
@@ -209,7 +211,7 @@ class RuleCaptureCoordinator(
     suspend fun reconcileReturn(
         expectedSessionId: Long? = null,
         observedDeparture: Boolean = false,
-    ): CaptureOperationResult = operation {
+    ): CaptureOperationResult = operation(RuleManagementOperation.RETURN, expectedSessionId) {
         val active = captureStore.state.first().activeSession ?: return@operation CaptureOperationResult.Stale
         if (expectedSessionId != null && active.id != expectedSessionId) {
             return@operation CaptureOperationResult.Stale
@@ -479,7 +481,7 @@ class RuleCaptureCoordinator(
 
 
     /** 完成前必须先持久化关闭目标开关；任一存储失败都保留采集状态以阻止自动执行。 */
-    suspend fun finish(sessionId: Long): CaptureOperationResult = operation(RuleManagementOperation.FINISH) {
+    suspend fun finish(sessionId: Long): CaptureOperationResult = operation(RuleManagementOperation.FINISH, sessionId) {
         val active = captureStore.state.first().activeSession?.takeIf { it.id == sessionId }
             ?: return@operation CaptureOperationResult.Stale
         val sample = when (active.phase) {
@@ -501,7 +503,7 @@ class RuleCaptureCoordinator(
     }
 
     /** 取消只作用于调用者看到的会话，避免旧页面关闭后续新会话。 */
-    suspend fun cancel(sessionId: Long): CaptureOperationResult = operation {
+    suspend fun cancel(sessionId: Long): CaptureOperationResult = operation(RuleManagementOperation.CANCEL, sessionId) {
         if (captureStore.state.first().activeSession?.id != sessionId) {
             return@operation CaptureOperationResult.Stale
         }
@@ -700,9 +702,14 @@ class RuleCaptureCoordinator(
         try {
             active = captureStore.state.first().activeSession
             if (expectedSessionId != null && active?.id != expectedSessionId) {
+                trace(RuleManagementOperation.SERVICE_UPDATE, RuleManagementOutcome.REJECTED,
+                    expectedSessionId, serviceOperation = operation)
                 return@withLock CaptureOperationResult.Stale
             }
             block().also { result ->
+                trace(RuleManagementOperation.SERVICE_UPDATE,
+                    if (result is CaptureOperationResult.Success) RuleManagementOutcome.SUCCESS else RuleManagementOutcome.REJECTED,
+                    active?.id ?: expectedSessionId, serviceOperation = operation)
                 val failure = mutableServiceFailure.value
                 if (result is CaptureOperationResult.Success && failure?.sessionId == active?.id &&
                     (operation == failure?.operation ||
@@ -721,23 +728,27 @@ class RuleCaptureCoordinator(
                     sessionId, operation, CaptureOperationFailure.STORAGE,
                 )
             }
-            trace(RuleManagementOperation.SERVICE_UPDATE, RuleManagementOutcome.STORAGE_FAILURE, active?.id)
+            trace(RuleManagementOperation.SERVICE_UPDATE, RuleManagementOutcome.STORAGE_FAILURE,
+                active?.id ?: expectedSessionId, serviceOperation = operation)
             CaptureOperationResult.Failure(CaptureOperationFailure.STORAGE)
         }
     }
 
     private suspend fun operation(
         traceOperation: RuleManagementOperation? = null,
+        traceSessionId: Long? = null,
         action: suspend () -> CaptureOperationResult,
     ): CaptureOperationResult = operationMutex.withLock {
         try {
             action().also { result ->
-                traceOperation?.let { trace(it, if (result is CaptureOperationResult.Success) RuleManagementOutcome.SUCCESS else RuleManagementOutcome.REJECTED) }
+                traceOperation?.let { trace(it,
+                    if (result is CaptureOperationResult.Success) RuleManagementOutcome.SUCCESS else RuleManagementOutcome.REJECTED,
+                    (result as? CaptureOperationResult.Success)?.sessionId ?: traceSessionId) }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: IOException) {
-            traceOperation?.let { trace(it, RuleManagementOutcome.STORAGE_FAILURE) }
+            traceOperation?.let { trace(it, RuleManagementOutcome.STORAGE_FAILURE, traceSessionId) }
             CaptureOperationResult.Failure(CaptureOperationFailure.STORAGE)
         }
     }
@@ -750,6 +761,10 @@ class RuleCaptureCoordinator(
         var committed: CaptureSession? = before
         captureStore.update { state -> transform(state).also { committed = it.activeSession } }
         val after = committed
+        // 与服务订阅独立，在提交成功后留证；会话清除也关联原 ID。
+        trace(RuleManagementOperation.COMMIT_CAPTURE, RuleManagementOutcome.SUCCESS,
+            after?.id ?: before?.id, phase = after?.phase, failure = after?.failure,
+            newSession = after != null && before?.id != after.id)
         if (after == null || after.phase == CapturePhase.FAILED) {
             phaseExpiry = null
         } else if (before == null || CaptureExpiryKey.from(before) != CaptureExpiryKey.from(after)) {
@@ -783,10 +798,20 @@ class RuleCaptureCoordinator(
         CapturePhase.FAILED -> 0L
     }
 
-    private fun trace(operation: RuleManagementOperation, outcome: RuleManagementOutcome, sessionId: Long? = null) {
+    private fun trace(
+        operation: RuleManagementOperation,
+        outcome: RuleManagementOutcome,
+        sessionId: Long? = null,
+        phase: CapturePhase? = null,
+        failure: CaptureFailure? = null,
+        serviceOperation: CaptureServiceOperation? = null,
+        newSession: Boolean = false,
+    ) {
         if (!traceSink.enabled) return
         try {
-            traceSink.record(RuleManagementTraceEvent(operation, outcome, sessionId?.hashCode()))
+            traceSink.record(RuleManagementTraceEvent(operation, outcome, sessionId?.hashCode(),
+                sessionId = sessionId, phase = phase, failure = failure,
+                serviceOperation = serviceOperation, newSession = newSession))
         } catch (_: Exception) {
             // 诊断后端失效不得影响业务结果。
         }

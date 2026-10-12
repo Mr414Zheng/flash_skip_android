@@ -53,7 +53,10 @@ class PreferencesFlashSkipStore internal constructor(
 
     override val preferences: Flow<FlashSkipPreferences> = dataStore.data
         .catch { error ->
-            if (error is IOException) emit(emptyPreferences()) else throw error
+            if (error is IOException) {
+                traceSink.recordSafely { RuleManagementTraceEvent(RuleManagementOperation.READ_PREFERENCES, RuleManagementOutcome.STORAGE_FAILURE) }
+                emit(emptyPreferences())
+            } else throw error
         }
         .map(::toDomain)
 
