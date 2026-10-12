@@ -1,6 +1,7 @@
 package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Build
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCoordinator
@@ -38,7 +39,17 @@ internal class AccessibilityCaptureAdapter(
     private val stateProvider: () -> RuleCaptureState,
     private val targetWindowDiagnosticsProvider: (Long) -> TargetWindowDiagnostics?,
     private val targetWindowResolutionRecorder: (CaptureWindowResolutionRecord) -> Unit,
+    private val windowVerifiedRecorder: (Long, Long) -> Unit = { _, _ -> },
+    private val scanStartedRecorder: (Long, Long) -> Unit = { _, _ -> },
+    private val pageObservationRecorder: (Long, StartupPageObservation) -> Unit = { _, _ -> },
+    private val prepareActiveWindowRead: () -> Boolean = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            service.clearCache()
+            true
+        } else false
+    },
 ) {
+    @Volatile
     private var verifiedHostIdentity: PageIdentity? = null
     private var currentScanIdentity: PageIdentity? = null
     private var latestUniqueSelectors: Set<CapturedSelector> = emptySet()
@@ -48,6 +59,7 @@ internal class AccessibilityCaptureAdapter(
     private var frozenCandidate: FrozenCandidate? = null
     private var pendingCandidateClick: PendingCandidateClick? = null
     private var observedSessionId: Long? = null
+    private var scanTimingRecordedSessionId: Long? = null
     private var verifiedTargetEnteredAtElapsedMs: Long? = null
     private var currentTargetAppName: String? = null
     private var lastWindowVerifiedAtElapsedMs: Long? = null
@@ -59,6 +71,7 @@ internal class AccessibilityCaptureAdapter(
         }
     })
     private val semanticSnapshotter = AccessibilitySemanticSnapshotter(service)
+    private val pageCapabilityCounter = StartupPageCapabilityCounter()
     private val probe = AccessibilityCaptureProbe(
         service = service,
         targetPackages = {
@@ -68,6 +81,7 @@ internal class AccessibilityCaptureAdapter(
         },
         currentIdentity = { currentScanIdentity },
         semanticSnapshotter = semanticSnapshotter,
+        onCandidateSnapshot = pageCapabilityCounter::record,
     )
     private val preClickRecovery = AccessibilityPreClickRecovery(
         elapsedRealtimeMs = coordinator::elapsedRealtimeMs,
@@ -106,17 +120,38 @@ internal class AccessibilityCaptureAdapter(
                 outcome = record.outcome,
                 isRetry = record.isRetry,
             )
-            targetWindowResolutionRecorder(record)
+            try { targetWindowResolutionRecorder(record) } catch (_: Exception) { }
             CaptureTraceLog.windowResolution(record)
         },
     )
 
     fun verifiedHostPackageName(): String? = verifiedHostIdentity?.packageName
+    fun verifiedHostWindowId(): Int? = verifiedHostIdentity?.windowId
+
+    /** 主动刷新只使用已验证宿主，不构造点击事件，也不回退到其他窗口。 */
+    fun onActiveWindowObservation(expectedSessionId: Long) {
+        val state = stateProvider()
+        val session = state.activeSession ?: return
+        if (session.id != expectedSessionId ||
+            session.phase !in setOf(CapturePhase.WAITING_FOR_TARGET, CapturePhase.OBSERVING_CLICK) ||
+            isCandidateOrClickLocked(session.id)
+        ) return
+        val host = verifiedHostIdentity ?: return
+        // 主动刷新没有对应 SDK 事件来使缓存失效，不能反复分析上一轮的缓存页面。
+        if (!prepareActiveWindowRead()) return
+        val request = requestFor(session.id, host.packageName, host.windowId,
+            allowActiveHostRootFallback = false, eventType = 0) ?: return
+        windowResolutionSession.resolve(request, null) { resolved ->
+            acceptResolvedRoot(state, request.host.toPageIdentity(resolved.node.windowId), resolved,
+                CaptureEventKind.ACTIVE_OBSERVATION, null, host.windowId, 0)
+        }
+    }
 
     fun onStateChanged(state: RuleCaptureState) {
         val session = state.activeSession
         if (session?.id != observedSessionId) {
             observedSessionId = session?.id
+            scanTimingRecordedSessionId = null
             if (session == null) {
                 diagnosticTrail.reset()
             } else {
@@ -205,14 +240,16 @@ internal class AccessibilityCaptureAdapter(
                 ?.takeIf { it.id == sessionId }
                 ?.phase == CapturePhase.OBSERVING_CLICK,
             sessionTrace = diagnosticTrail.snapshot(sessionId),
+            candidateRecheck = preClickRecovery.latestRecheckDiagnostics,
         )
     }
 
     fun onVerifiedTargetWindow(
-        event: AccessibilityEvent,
+        event: AccessibilityEvent?,
         packageName: String,
         targetAppName: String,
         activityName: String,
+        eventWindowId: Int = event?.windowId ?: -1,
     ) {
         val state = stateProvider()
         val session = state.activeSession ?: return
@@ -227,6 +264,7 @@ internal class AccessibilityCaptureAdapter(
         if (session.phase !in setOf(CapturePhase.WAITING_FOR_TARGET, CapturePhase.OBSERVING_CLICK)) {
             return
         }
+        if (eventWindowId < 0) return
         val now = coordinator.elapsedRealtimeMs()
         val enteredAt = session.targetEnteredAtElapsedMs
             ?: verifiedTargetEnteredAtElapsedMs
@@ -234,7 +272,7 @@ internal class AccessibilityCaptureAdapter(
         val identity = PageIdentity(
             packageName = packageName,
             activityName = activityName,
-            windowId = event.windowId,
+            windowId = eventWindowId,
             appVersion = null,
         )
         val previousHost = verifiedHostIdentity
@@ -247,8 +285,8 @@ internal class AccessibilityCaptureAdapter(
             diagnosticTrail.recordHostWindowUpdate(
                 sessionId = session.id,
                 occurredAtElapsedMs = now,
-                eventId = event.eventType,
-                eventWindowId = event.windowId,
+                eventId = event?.eventType ?: AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                eventWindowId = eventWindowId,
                 previousWindowId = previousHost.windowId,
                 currentWindowId = identity.windowId,
                 differenceCleared = true,
@@ -262,8 +300,8 @@ internal class AccessibilityCaptureAdapter(
             diagnosticTrail.recordHostWindowUpdate(
                 sessionId = session.id,
                 occurredAtElapsedMs = now,
-                eventId = event.eventType,
-                eventWindowId = event.windowId,
+                eventId = event?.eventType ?: AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                eventWindowId = eventWindowId,
                 previousWindowId = null,
                 currentWindowId = identity.windowId,
                 differenceCleared = false,
@@ -277,11 +315,21 @@ internal class AccessibilityCaptureAdapter(
         verifiedTargetEnteredAtElapsedMs = enteredAt
         lastWindowVerifiedAtElapsedMs = now
         lastContentChangedAtElapsedMs = null
+        // 诊断回调失败不能阻止宿主验证、节点释放或业务状态更新。
+        try { windowVerifiedRecorder(session.id, now) } catch (_: Exception) { }
         CaptureTraceLog.stage(
             session.id,
             "verified_host",
         )
-        resolveEventWindow(state, event, packageName, CaptureEventKind.WINDOW_STATE)
+        if (event != null) resolveEventWindow(state, event, packageName, CaptureEventKind.WINDOW_STATE)
+        else {
+            val request = requestFor(session.id, packageName, eventWindowId,
+                allowActiveHostRootFallback = false, eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+            if (request != null) windowResolutionSession.resolve(request, null) { resolved ->
+                acceptResolvedRoot(state, identity, resolved, CaptureEventKind.WINDOW_STATE,
+                    null, eventWindowId, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+            }
+        }
         scope.launch {
             coordinator.observeTarget(
                 sessionId = session.id,
@@ -289,7 +337,7 @@ internal class AccessibilityCaptureAdapter(
                 targetAppName = targetAppName,
                 packageName = packageName,
                 activityName = activityName,
-                windowId = event.windowId,
+                windowId = eventWindowId,
                 enteredAtElapsedMs = enteredAt,
             )
         }
@@ -381,6 +429,7 @@ internal class AccessibilityCaptureAdapter(
         packageName: String,
         identity: PageIdentity,
         verifiedRoot: AccessibilityNodeInfo,
+        budget: CaptureRoundBudget,
     ) {
         val session = state.activeSession ?: return
         clickLockedSessionId = session.id
@@ -405,14 +454,24 @@ internal class AccessibilityCaptureAdapter(
             "allowBareNumeric" to hint.allowBareNumericCountdown,
         )
         val nodes = if (source != null) {
-            semanticSnapshotter.copySemanticChain(source, packageName)
+            // 真实点击源先取得有限父链，避免被被动发现扫描耗尽本轮预算。
+            try {
+                if (budget.tryVisit() == null) {
+                    copyBudgetedChain(source, packageName, semanticSnapshotter, budget).orEmpty()
+                } else emptyList()
+            } finally {
+                source.recycle()
+            }
         } else {
             // 点击回调到达时按钮可能已经消失；即时恢复失败后仅使用同窗口的近期唯一快照。
+            val scanStartedAtElapsedMs = coordinator.elapsedRealtimeMs()
             val immediate = probe.recoverClickedSemanticChainOnVerifiedRoot(
                 expected = identity,
                 verifiedRoot = verifiedRoot,
                 hint = hint,
+                budget = budget,
             )
+            if (immediate.diagnostics.visitedNodeCount > 0) recordFirstScan(session.id, scanStartedAtElapsedMs)
             diagnosticTrail.recordScan(
                 sessionId = session.id,
                 occurredAtElapsedMs = coordinator.elapsedRealtimeMs(),
@@ -763,13 +822,34 @@ internal class AccessibilityCaptureAdapter(
         )
         lastWindowVerifiedAtElapsedMs = coordinator.elapsedRealtimeMs()
         if (kind == CaptureEventKind.WINDOW_STATE) lastContentChangedAtElapsedMs = null
+        val roundBudget = probe.newRoundBudget(deadlineAtElapsedMs)
+        if (clickEvent != null) {
+            captureResolvedClick(state, clickEvent, identity.packageName, identity, resolved.node, roundBudget)
+            return
+        }
+        val scanStartedAtElapsedMs = coordinator.elapsedRealtimeMs()
+        val scanStartedAtEpochMs = System.currentTimeMillis()
+        pageCapabilityCounter.reset()
         val refresh = preClickRecovery.refresh(
             identity = identity,
             verifiedRoot = resolved.node,
             allowBareNumericCountdown = currentWindowAllowsObservedCandidate,
             deadlineAtElapsedMs = deadlineAtElapsedMs,
+            recheckSelectorProvider = { semanticDiffTracker.selectorsForRecheck(identity) },
+            budget = roundBudget,
         )
         refresh?.diagnostics?.let { diagnostics ->
+            if (diagnostics.visitedNodeCount > 0) recordFirstScan(session.id, scanStartedAtElapsedMs)
+            if (diagnostics.visitedNodeCount > 0) {
+                try {
+                    pageObservationRecorder(session.id, StartupPageObservation(
+                        StartupObservationOutcome.OBSERVED, identity.packageName, identity.windowId,
+                        scanStartedAtElapsedMs, scanStartedAtEpochMs, pageCapabilityCounter.snapshot(),
+                        refresh.semanticCandidates.count { it.nodes.hasSafeDismissAction() }, diagnostics,
+                        hostVerified = true,
+                    ))
+                } catch (_: Exception) { }
+            }
             diagnosticTrail.recordScan(
                 sessionId = session.id,
                 occurredAtElapsedMs = coordinator.elapsedRealtimeMs(),
@@ -781,31 +861,34 @@ internal class AccessibilityCaptureAdapter(
                 diagnostics = diagnostics,
             )
         }
-        refreshUniqueEvidence(state, identity, resolved.node, deadlineAtElapsedMs)
-        if (clickEvent != null) {
-            captureResolvedClick(
-                state = state,
-                event = clickEvent,
-                packageName = identity.packageName,
-                identity = identity,
-                verifiedRoot = resolved.node,
-            )
-        } else {
-            tryRecordObservedDismissCandidate(state, identity, deadlineAtElapsedMs)
-            if (!isCandidateOrClickLocked(session.id) &&
-                allowsSemanticDiff(session, identity, resolved) &&
-                refresh != null
-            ) {
-                observeSemanticDiff(
-                    state = state,
-                    identity = identity,
-                    refresh = refresh,
-                    transitionSignal = eventWindowId != identity.windowId,
-                    eventId = eventType,
-                    eventWindowId = eventWindowId,
-                )
-            }
+        refresh?.let {
+            diagnosticTrail.recordCandidateRecheck(session.id, coordinator.elapsedRealtimeMs(),
+                eventType, eventWindowId, verifiedHostIdentity?.windowId ?: identity.windowId,
+                identity.windowId, it.recheckDiagnostics)
+            if (it.recheckDiagnostics.queryCount > 0 || it.recheckDiagnostics.unknownCount > 0)
+                CaptureTraceLog.recheck(session.id, it.recheckDiagnostics)
         }
+        refreshUniqueEvidence(state, identity, resolved.node, deadlineAtElapsedMs, roundBudget)
+        tryRecordObservedDismissCandidate(state, identity, deadlineAtElapsedMs)
+        if (!isCandidateOrClickLocked(session.id) &&
+            allowsSemanticDiff(session, identity, resolved) &&
+            refresh != null
+        ) {
+            observeSemanticDiff(
+                state = state,
+                identity = identity,
+                refresh = refresh,
+                transitionSignal = eventWindowId != identity.windowId,
+                eventId = eventType,
+                eventWindowId = eventWindowId,
+            )
+        }
+    }
+
+    private fun recordFirstScan(sessionId: Long, startedAtElapsedMs: Long) {
+        if (scanTimingRecordedSessionId == sessionId) return
+        scanTimingRecordedSessionId = sessionId
+        try { scanStartedRecorder(sessionId, startedAtElapsedMs) } catch (_: Exception) { }
     }
 
     private fun allowsObservedCandidate(
@@ -981,6 +1064,7 @@ internal class AccessibilityCaptureAdapter(
             semanticCandidatesComplete = refresh.semanticCandidatesComplete,
             transitionSignal = transitionSignal,
             priorSelectors = priorEvidence?.selectors.orEmpty(),
+            selectorEvidence = refresh.selectorEvidence,
         )
         val diagnostics = result.diagnostics
         diagnosticTrail.recordSemanticDiff(
@@ -1048,6 +1132,7 @@ internal class AccessibilityCaptureAdapter(
         identity: PageIdentity,
         verifiedRoot: AccessibilityNodeInfo,
         deadlineAtElapsedMs: Long?,
+        budget: CaptureRoundBudget? = null,
     ) {
         val session = state.activeSession ?: return
         val targetAppId = session.targetAppId ?: TargetAppId(identity.packageName)
@@ -1058,6 +1143,7 @@ internal class AccessibilityCaptureAdapter(
                 verifiedRoot = verifiedRoot,
                 selectors = selectors,
                 deadlineAtElapsedMs = deadlineAtElapsedMs,
+                budget = budget,
             )
         ) {
             is AccessibilityCaptureProbe.ProbeResult.Success -> result.selectors
@@ -1097,6 +1183,7 @@ internal class AccessibilityCaptureAdapter(
             lastWindowVerifiedAgeMs = elapsedSince(now, lastWindowVerifiedAtElapsedMs),
             lastContentChangedAgeMs = elapsedSince(now, lastContentChangedAtElapsedMs),
             sessionTrace = observedSessionId?.let(diagnosticTrail::snapshot),
+            candidateRecheck = preClickRecovery.latestRecheckDiagnostics,
         )
     }
 
@@ -1145,6 +1232,7 @@ internal class AccessibilityCaptureAdapter(
         CONTENT_CHANGED,
         VIEW_CLICKED,
         RETRY,
+        ACTIVE_OBSERVATION,
     }
 
     private data class FrozenCandidate(

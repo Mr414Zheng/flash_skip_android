@@ -31,6 +31,8 @@ android {
         unitTests.all {
             it.maxHeapSize = "2g"
             it.jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
+            // SDK 36 的共享内存初始化需要 Robolectric 访问 JDK 文件描述符接口。
+            it.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
         }
     }
 
@@ -72,4 +74,5 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

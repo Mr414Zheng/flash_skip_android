@@ -14,7 +14,12 @@ import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.ClickRecoveryDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.CandidateRecheckDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.CaptureTimingDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.CaptureEventTiming
+import com.zhenghuaizhi.flashskip.domain.model.CaptureCandidateRejection
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.CaptureStartupDiagnostics
 
 /** 采集诊断仅限 Debug 构建，且只输出状态、计数与耗时，不读取事件源节点。 */
 internal object CaptureTraceLog : CaptureTraceLogger(enabled = BuildConfig.DEBUG)
@@ -134,6 +139,7 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
         event: AccessibilityEvent,
         route: CaptureTraceEventRoute = CaptureTraceEventRoute.DISPATCHED,
         reason: CaptureTraceReason? = null,
+        timing: CaptureEventTiming? = null,
     ) {
         if (!enabled) return
         // 诊断不需要页面语义；即使已验证目标，也不读取 text、description 或 source。
@@ -148,7 +154,81 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
             "eventWindowId" to event.windowId,
             "route" to route,
             "reason" to reason,
+            "eventUptimeMs" to timing?.eventUptimeMs,
+            "receivedUptimeMs" to timing?.receivedUptimeMs,
+            "receivedElapsedMs" to timing?.receivedElapsedMs,
+            "receivedEpochMs" to timing?.receivedEpochMs,
+            "dispatchDelayMs" to timing?.dispatchDelayMs,
+            "eventClockStatus" to timing?.clockStatus,
         )
+    }
+
+    @Synchronized
+    fun timing(sessionId: Long, diagnostics: CaptureTimingDiagnostics) {
+        if (!enabled) return
+        val first = diagnostics.firstTargetEvent
+        val last = diagnostics.lastTargetEvent
+        write(sessionId, "capture_timing_summary", listOf(
+            "receivedEvents" to diagnostics.receivedEventCount,
+            "targetEvents" to diagnostics.targetEventCount,
+            "preVerificationClicks" to diagnostics.preVerificationTargetClickCount,
+            "invalidTimestamps" to diagnostics.invalidTimestampEventCount,
+            "pendingPackageEvictions" to diagnostics.pendingPackageEvictionCount,
+            "firstTargetEventUptimeMs" to first?.eventUptimeMs,
+            "firstTargetReceivedUptimeMs" to first?.receivedUptimeMs,
+            "firstTargetReceivedElapsedMs" to first?.receivedElapsedMs,
+            "firstTargetReceivedEpochMs" to first?.receivedEpochMs,
+            "firstTargetEventClockStatus" to first?.clockStatus,
+            "lastTargetEventUptimeMs" to last?.eventUptimeMs,
+            "lastTargetReceivedEpochMs" to last?.receivedEpochMs,
+            "maxTargetDispatchDelayMs" to diagnostics.maxTargetDispatchDelayMs,
+            "firstVerifiedAtElapsedMs" to diagnostics.firstVerifiedAtElapsedMs,
+            "firstVerifiedAtUptimeMs" to diagnostics.firstVerifiedAtUptimeMs,
+            "firstScanAtElapsedMs" to diagnostics.firstScanAtElapsedMs,
+            "targetEventToVerifiedUptimeMs" to diagnostics.targetEventToVerifiedUptimeMs,
+            "targetReceivedToVerifiedMs" to diagnostics.targetReceivedToVerifiedMs,
+            "verifiedToFirstScanMs" to diagnostics.verifiedToFirstScanMs,
+        ))
+    }
+
+    @Synchronized
+    fun startupPage(sessionId: Long, page: StartupPageObservation) {
+        if (!enabled) return
+        val caps = page.capabilities
+        stage(sessionId, "startup_page_observation",
+            "outcome" to page.outcome, "windowId" to page.windowId,
+            "hostVerified" to page.hostVerified,
+            "observedAtElapsedMs" to page.observedAtElapsedMs,
+            "observedAtEpochMs" to page.observedAtEpochMs,
+            "visited" to page.scan?.visitedNodeCount, "nodeReads" to page.scan?.budgetNodeReads,
+            "coverageComplete" to page.scan?.coverageComplete, "limit" to page.scan?.traversalLimitReason,
+            "strategy" to page.scan?.scanStrategy, "scanMs" to page.scan?.elapsedMs,
+            "visibleNodes" to caps.visibleNodeCount, "actionableNodes" to caps.actionableNodeCount,
+            "actionClickNodes" to caps.actionClickNodeCount, "dismissHints" to caps.dismissHintNodeCount,
+            "dismissActionChains" to caps.dismissActionChainCount,
+            "stableDismissCandidates" to page.stableDismissCandidateCount)
+    }
+
+    @Synchronized
+    fun startupSummary(sessionId: Long, startup: CaptureStartupDiagnostics) {
+        if (!enabled) return
+        write(sessionId, "startup_observation_summary", listOf(
+            "targetConfirmed" to startup.targetConfirmed,
+            "pageObservations" to startup.pageObservationCount,
+            "provisionalObservations" to startup.provisionalObservationCount,
+            "firstObservedAtElapsedMs" to startup.firstObservedAtElapsedMs,
+            "firstObservedAtEpochMs" to startup.firstObservedAtEpochMs,
+            "firstDismissActionAtEpochMs" to startup.firstDismissActionAtEpochMs,
+            "maxVisibleNodes" to startup.maxVisibleNodeCount,
+            "maxActionableNodes" to startup.maxActionableNodeCount,
+            "maxActionClickNodes" to startup.maxActionClickNodeCount,
+            "maxDismissHints" to startup.maxDismissHintNodeCount,
+            "maxDismissActionChains" to startup.maxDismissActionChainCount,
+            "maxStableDismissCandidates" to startup.maxStableDismissCandidateCount,
+            "completeScans" to startup.completeScanCount,
+            "observedBeforeFirstTargetEventReceived" to startup.observedBeforeFirstTargetEventReceived,
+            "observedBeforeVerification" to startup.observedBeforeVerification,
+            "pendingBoundaryEvictions" to startup.pendingBoundaryEvictionCount))
     }
 
     fun windowResolution(record: CaptureWindowResolutionRecord) {
@@ -218,7 +298,18 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
             "currentHostWindowId" to record.currentHostWindowId,
             "differenceCleared" to record.differenceCleared,
             "clearReason" to record.clearReason,
-        ) + if (scanDiagnostics == null) emptyList() else listOf(
+            "scanStrategy" to record.scanStrategy,
+            "coverageComplete" to record.coverageComplete,
+            "continuationDepth" to record.continuationDepth,
+            "budgetNodeReads" to record.budgetNodeReads,
+            "directedQueries" to record.directedQueryCount,
+            "directedPresent" to record.directedPresentCount,
+            "directedAbsent" to record.directedAbsentCount,
+            "directedUnknown" to record.directedUnknownCount,
+            "directedAmbiguous" to record.directedAmbiguousCount,
+            "anchorComplete" to record.directedAnchorCompleteCount,
+            "unavailableReason" to record.unavailableReason,
+        ) + rejectionFields(record.rejectedCandidateCounts) + if (scanDiagnostics == null) emptyList() else listOf(
             "allowBareNumeric" to allowBareNumericCountdown,
             "depth" to scanDiagnostics.maxDepth,
             "elapsedMs" to scanDiagnostics.elapsedMs,
@@ -226,6 +317,8 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
             "matched" to scanDiagnostics.matchedNodeCount,
             "knownDismiss" to scanDiagnostics.knownDismissNodeCount,
             "countdownActionChains" to scanDiagnostics.countdownActionChainCount,
+            "cursorReset" to scanDiagnostics.cursorReset,
+            "pendingBranches" to scanDiagnostics.pendingBranchCount,
         )
         if (terminal) write(sessionId, "capture_recent_record", fields)
         else stage(sessionId, "capture_trace_${record.kind.name.lowercase()}", *fields.toTypedArray())
@@ -262,6 +355,8 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
         )
         sample(session, savedSample)
         targetWindow()?.let { window ->
+            window.captureTiming?.let { timing(session.id, it) }
+            window.startupObservation?.let { startupSummary(session.id, it) }
             write(
                 session.id,
                 "target_window_summary",
@@ -305,10 +400,16 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
                     "diffDisappeared" to failure.semanticDiff?.disappearedCandidateCount,
                     "diffVisited" to failure.semanticDiff?.visitedNodeCount,
                     "diffTransition" to failure.semanticDiff?.transitionSignal,
+                    "directedPresent" to failure.semanticDiff?.directedPresentCount,
+                    "directedAbsent" to failure.semanticDiff?.directedAbsentCount,
+                    "directedUnknown" to failure.semanticDiff?.directedUnknownCount,
+                    "directedAmbiguous" to failure.semanticDiff?.directedAmbiguousCount,
+                    "unresolvedDismiss" to failure.semanticDiff?.unresolvedDismissCount,
                 ),
             )
             failure.immediateRecovery?.let { recovery(session.id, "immediate_recovery_summary", it) }
             failure.preClickProbe?.let { recovery(session.id, "pre_click_probe_summary", it) }
+            failure.candidateRecheck?.let { recheck(session.id, it) }
             failure.sessionTrace?.let traceSnapshot@{ trace ->
                 if (traceUnchanged) return@traceSnapshot
                 lastTrace = session.id to trace
@@ -337,7 +438,15 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
                         "totalRecords" to totals.totalRecordCount,
                         "retainedRecords" to trace.records.size,
                         "droppedRecords" to totals.droppedRecordCount,
-                    ),
+                        "continuedScans" to totals.continuedScanCount,
+                        "rechecks" to totals.candidateRecheckCount,
+                        "directedQueries" to totals.directedQueryCount,
+                        "directedPresent" to totals.directedPresentCount,
+                        "directedAbsent" to totals.directedAbsentCount,
+                        "directedUnknown" to totals.directedUnknownCount,
+                        "directedAmbiguous" to totals.directedAmbiguousCount,
+                        "anchorComplete" to totals.completedAnchorScanCount,
+                    ) + rejectionFields(totals.rejectedCandidateCounts),
                 )
                 totals.windowResolutionOutcomeCounts.forEach { (outcome, count) ->
                     write(session.id, "capture_window_outcome", listOf("outcome" to outcome, "count" to count))
@@ -365,8 +474,35 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
                 "countdownActionChains" to diagnostics.countdownActionChainCount,
                 "complete" to diagnostics.isCompleteTraversal(),
                 "limit" to diagnostics.traversalLimitReason,
-            ),
+                "scanStrategy" to diagnostics.scanStrategy,
+                "coverageComplete" to diagnostics.coverageComplete,
+                "continuationDepth" to diagnostics.continuationDepth,
+                "pendingBranches" to diagnostics.pendingBranchCount,
+                "cursorReset" to diagnostics.cursorReset,
+                "budgetNodeReads" to diagnostics.budgetNodeReads,
+                "unavailableReason" to diagnostics.unavailableReason,
+            ) + rejectionFields(diagnostics.rejectedCandidateCounts),
         )
+    }
+
+    private fun rejectionFields(counts: Map<CaptureCandidateRejection, Int>): List<Pair<String, Any?>> =
+        CaptureCandidateRejection.entries.mapNotNull { reason ->
+            counts[reason]?.takeIf { it > 0 }?.let { "reject_${reason.name}" to it }
+        }
+
+    @Synchronized
+    fun recheck(sessionId: Long, diagnostics: CandidateRecheckDiagnostics) {
+        if (!enabled) return
+        write(sessionId, "candidate_recheck_summary", listOf(
+            "queries" to diagnostics.queryCount, "anchorQueries" to diagnostics.anchorQueryCount,
+            "present" to diagnostics.presentCount, "absent" to diagnostics.absentCount,
+            "unknown" to diagnostics.unknownCount, "ambiguous" to diagnostics.ambiguousCount,
+            "emptyQueries" to diagnostics.emptyQueryCount, "anchorScans" to diagnostics.anchorScanCount,
+            "anchorComplete" to diagnostics.completedAnchorScanCount,
+            "unreadableNodes" to diagnostics.unreadableNodeCount,
+            "budgetNodeReads" to diagnostics.budgetNodeReads, "elapsedMs" to diagnostics.elapsedMs,
+            "limit" to diagnostics.traversalLimitReason,
+        ))
     }
 
     private fun sample(session: CaptureSession, savedSample: CaptureSample? = null) {
@@ -408,10 +544,12 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
             })
         ) {
             flush()
-            write(sessionId, name, safe)
+            write(sessionId, name, safe, essential = name == "accessibility_event" &&
+                safe.any { it.first == "type" && it.second == AccessibilityEvent.TYPE_VIEW_CLICKED })
             return
         }
-        val identity = safe.filterNot { it.first == "recordElapsedMs" }
+        // 时间变化不拆散同类高频事件；合并摘要保留首末事件及最大的 uptime 排队延迟。
+        val identity = safe.filterNot { it.first == "recordElapsedMs" || it.first in EVENT_TIMING_FIELDS }
         val previous = repeatedStages[name]
         val now = SystemClock.elapsedRealtime()
         if (previous?.identity == identity) {
@@ -421,6 +559,8 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
                 previous.repeatCount + 1
             }
             previous.fields = safe
+            val delay = safe.longField("dispatchDelayMs")
+            if (delay != null) previous.maxDispatchDelayMs = maxOf(previous.maxDispatchDelayMs ?: delay, delay)
             previous.lastAtElapsedMs = now
             return
         }
@@ -431,7 +571,10 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
             repeatedStages.remove(oldest.key)
         }
         write(sessionId, name, safe)
-        repeatedStages[name] = RepeatedStage(identity, safe, firstAtElapsedMs = now, lastAtElapsedMs = now)
+        repeatedStages[name] = RepeatedStage(identity, safe, firstAtElapsedMs = now, lastAtElapsedMs = now,
+            firstEventUptimeMs = safe.longField("eventUptimeMs"),
+            firstReceivedUptimeMs = safe.longField("receivedUptimeMs"),
+            maxDispatchDelayMs = safe.longField("dispatchDelayMs"))
     }
 
     @Synchronized
@@ -450,11 +593,20 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
                 "repeatCount" to stage.repeatCount,
                 "firstRelativeMs" to relativeTime(sessionId, stage.firstAtElapsedMs),
                 "lastRelativeMs" to relativeTime(sessionId, stage.lastAtElapsedMs),
+                "firstEventUptimeMs" to stage.firstEventUptimeMs,
+                "firstReceivedUptimeMs" to stage.firstReceivedUptimeMs,
+                "maxDispatchDelayMs" to stage.maxDispatchDelayMs,
             ),
         )
         stage.repeatCount = 0
         stage.firstAtElapsedMs = stage.lastAtElapsedMs
+        stage.firstEventUptimeMs = stage.fields.longField("eventUptimeMs")
+        stage.firstReceivedUptimeMs = stage.fields.longField("receivedUptimeMs")
+        stage.maxDispatchDelayMs = stage.fields.longField("dispatchDelayMs")
     }
+
+    private fun List<Pair<String, Any?>>.longField(name: String): Long? =
+        firstOrNull { it.first == name }?.second as? Long
 
     private fun rememberSession(sessionId: Long) {
         sessionStarts[sessionId] = SystemClock.elapsedRealtime()
@@ -490,12 +642,16 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
         var repeatCount: Int = 0,
         var firstAtElapsedMs: Long,
         var lastAtElapsedMs: Long,
+        var firstEventUptimeMs: Long? = null,
+        var firstReceivedUptimeMs: Long? = null,
+        var maxDispatchDelayMs: Long? = null,
     )
 
     companion object {
         const val TAG = "FlashSkipCapture"
         private const val MAX_REPEATED_STAGES = 24
         private const val MAX_SESSION_TIMES = 2
+        private val EVENT_TIMING_FIELDS = setOf("eventUptimeMs", "receivedUptimeMs", "receivedElapsedMs", "receivedEpochMs", "dispatchDelayMs")
         private val ESSENTIAL_STAGES = setOf(
             "capture_state", "capture_session_cleared", "capture_diagnostics", "capture_recent_record",
             "capture_failed", "click_capture", "click_semantics", "sample_saved",
@@ -546,6 +702,7 @@ internal enum class CaptureTraceReason {
     LOCKED_PACKAGE_MISMATCH,
     PACKAGE_IGNORED_BEFORE_TARGET,
     HOST_NOT_VERIFIED,
+    CAPTURE_PHASE_NOT_LISTENING,
     SESSION_LOCKED,
     WINDOW_POLICY,
     NO_FRESH_SNAPSHOT,

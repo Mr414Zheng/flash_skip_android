@@ -1,6 +1,8 @@
 package com.zhenghuaizhi.flashskip.data.preferences
 
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
+import com.zhenghuaizhi.flashskip.domain.model.CandidateRecheckDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.CaptureScanStrategy
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CaptureEvidence
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
@@ -26,8 +28,14 @@ import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.SnapshotRecoveryOutcome
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.CaptureStartupDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowRecognitionOutcome
 import com.zhenghuaizhi.flashskip.domain.model.TraversalLimitReason
+import com.zhenghuaizhi.flashskip.domain.model.CaptureCandidateRejection
+import com.zhenghuaizhi.flashskip.domain.model.CaptureScanUnavailableReason
+import com.zhenghuaizhi.flashskip.domain.model.CaptureEventClockStatus
+import com.zhenghuaizhi.flashskip.domain.model.CaptureEventTiming
+import com.zhenghuaizhi.flashskip.domain.model.CaptureTimingDiagnostics
 import java.util.EnumMap
 import org.json.JSONArray
 import org.json.JSONObject
@@ -93,6 +101,7 @@ object RuleCaptureCodec {
         .putNullable("preClickProbe", preClickProbe?.toJson())
         .putNullable("snapshotRecovery", snapshotRecovery?.toJson())
         .putNullable("semanticDiff", semanticDiff?.toJson())
+        .putNullable("candidateRecheck", candidateRecheck?.toJson())
         .putNullable("lastWindowVerifiedAgeMs", lastWindowVerifiedAgeMs)
         .putNullable("lastContentChangedAgeMs", lastContentChangedAgeMs)
         .put("clickDiagnosticApplicable", clickDiagnosticApplicable)
@@ -130,6 +139,15 @@ object RuleCaptureCodec {
         )
         .put("hostWindowUpdateCount", hostWindowUpdateCount)
         .put("droppedRecordCount", droppedRecordCount)
+        .put("continuedScanCount", continuedScanCount)
+        .put("candidateRecheckCount", candidateRecheckCount)
+        .put("directedQueryCount", directedQueryCount)
+        .put("directedPresentCount", directedPresentCount)
+        .put("directedAbsentCount", directedAbsentCount)
+        .put("directedUnknownCount", directedUnknownCount)
+        .put("directedAmbiguousCount", directedAmbiguousCount)
+        .put("completedAnchorScanCount", completedAnchorScanCount)
+        .put("rejectedCandidateCounts", rejectedCandidateCounts.toRejectionCountsJson())
 
     private fun CaptureDiagnosticRecord.toJson() = JSONObject()
         .put("elapsedMs", elapsedMs)
@@ -161,6 +179,18 @@ object RuleCaptureCodec {
         .putNullable("currentHostWindowId", currentHostWindowId)
         .putNullable("differenceCleared", differenceCleared)
         .putNullable("clearReason", clearReason?.name)
+        .putNullable("scanStrategy", scanStrategy?.name)
+        .putNullable("coverageComplete", coverageComplete)
+        .putNullable("continuationDepth", continuationDepth)
+        .putNullable("budgetNodeReads", budgetNodeReads)
+        .putNullable("directedQueryCount", directedQueryCount)
+        .putNullable("directedPresentCount", directedPresentCount)
+        .putNullable("directedAbsentCount", directedAbsentCount)
+        .putNullable("directedUnknownCount", directedUnknownCount)
+        .putNullable("directedAmbiguousCount", directedAmbiguousCount)
+        .putNullable("directedAnchorCompleteCount", directedAnchorCompleteCount)
+        .put("rejectedCandidateCounts", rejectedCandidateCounts.toRejectionCountsJson())
+        .putNullable("unavailableReason", unavailableReason?.name)
 
     private fun ClickRecoveryDiagnostics.toJson() = JSONObject()
         .put("outcome", outcome.name)
@@ -175,6 +205,29 @@ object RuleCaptureCodec {
         .put("countdownSemanticNodeCount", countdownSemanticNodeCount)
         .put("countdownActionChainCount", countdownActionChainCount)
         .putNullable("traversalLimitReason", traversalLimitReason?.name)
+        .put("scanStrategy", scanStrategy.name)
+        .put("coverageComplete", coverageComplete)
+        .put("continuationDepth", continuationDepth)
+        .put("pendingBranchCount", pendingBranchCount)
+        .put("cursorReset", cursorReset)
+        .put("budgetNodeReads", budgetNodeReads)
+        .put("rejectedCandidateCounts", rejectedCandidateCounts.toRejectionCountsJson())
+        .putNullable("unavailableReason", unavailableReason?.name)
+
+    private fun CandidateRecheckDiagnostics.toJson() = JSONObject()
+        .put("queryCount", queryCount)
+        .put("anchorQueryCount", anchorQueryCount)
+        .put("presentCount", presentCount)
+        .put("absentCount", absentCount)
+        .put("ambiguousCount", ambiguousCount)
+        .put("unknownCount", unknownCount)
+        .put("emptyQueryCount", emptyQueryCount)
+        .put("anchorScanCount", anchorScanCount)
+        .put("completedAnchorScanCount", completedAnchorScanCount)
+        .put("unreadableNodeCount", unreadableNodeCount)
+        .put("budgetNodeReads", budgetNodeReads)
+        .put("elapsedMs", elapsedMs)
+        .putNullable("traversalLimitReason", traversalLimitReason?.name)
 
     private fun SnapshotRecoveryDiagnostics.toJson() = JSONObject()
         .put("outcome", outcome.name)
@@ -188,6 +241,11 @@ object RuleCaptureCodec {
         .put("disappearedCandidateCount", disappearedCandidateCount)
         .put("visitedNodeCount", visitedNodeCount)
         .put("transitionSignal", transitionSignal)
+        .put("directedPresentCount", directedPresentCount)
+        .put("directedAbsentCount", directedAbsentCount)
+        .put("directedUnknownCount", directedUnknownCount)
+        .put("directedAmbiguousCount", directedAmbiguousCount)
+        .put("unresolvedDismissCount", unresolvedDismissCount)
 
     private fun SemanticDiffEvidence.toJson() = JSONObject()
         .put("targetPackageName", targetAppId.packageName)
@@ -215,6 +273,89 @@ object RuleCaptureCodec {
         .putNullable("lastMatchingWindowActive", lastMatchingWindowActive)
         .put("lastOutcome", lastOutcome.name)
         .putNullable("lastEventAgeMs", lastEventAgeMs)
+        .putNullable("captureTiming", captureTiming?.toJson())
+        .putNullable("startupObservation", startupObservation?.toJson())
+
+    private fun CaptureStartupDiagnostics.toJson() = JSONObject()
+        .put("targetConfirmed", targetConfirmed)
+        .put("pageObservationCount", pageObservationCount)
+        .put("provisionalObservationCount", provisionalObservationCount)
+        .putNullable("firstObservedAtElapsedMs", firstObservedAtElapsedMs)
+        .putNullable("firstObservedAtEpochMs", firstObservedAtEpochMs)
+        .putNullable("firstDismissActionAtEpochMs", firstDismissActionAtEpochMs)
+        .put("maxVisibleNodeCount", maxVisibleNodeCount)
+        .put("maxActionableNodeCount", maxActionableNodeCount)
+        .put("maxActionClickNodeCount", maxActionClickNodeCount)
+        .put("maxDismissHintNodeCount", maxDismissHintNodeCount)
+        .put("maxDismissActionChainCount", maxDismissActionChainCount)
+        .put("maxStableDismissCandidateCount", maxStableDismissCandidateCount)
+        .put("completeScanCount", completeScanCount)
+        .putNullable("observedBeforeFirstTargetEventReceived", observedBeforeFirstTargetEventReceived)
+        .putNullable("observedBeforeVerification", observedBeforeVerification)
+        .put("pendingBoundaryEvictionCount", pendingBoundaryEvictionCount)
+
+    private fun Map<CaptureCandidateRejection, Int>.toRejectionCountsJson() = JSONObject().apply {
+        this@toRejectionCountsJson.toSortedMap().forEach { (reason, count) -> put(reason.name, count) }
+    }
+
+    private fun JSONObject.toRejectionCounts(): Map<CaptureCandidateRejection, Int> =
+        EnumMap<CaptureCandidateRejection, Int>(CaptureCandidateRejection::class.java).apply {
+            CaptureCandidateRejection.entries.forEach { reason ->
+                val count = optLong(reason.name, -1)
+                if (count in 0..Int.MAX_VALUE.toLong()) put(reason, count.toInt())
+            }
+        }
+
+    private fun CaptureEventTiming.toJson() = JSONObject()
+        .put("eventUptimeMs", eventUptimeMs)
+        .put("receivedUptimeMs", receivedUptimeMs)
+        .put("receivedElapsedMs", receivedElapsedMs)
+        .put("receivedEpochMs", receivedEpochMs)
+        .putNullable("dispatchDelayMs", dispatchDelayMs)
+        .put("clockStatus", clockStatus.name)
+
+    private fun CaptureTimingDiagnostics.toJson() = JSONObject()
+        .put("receivedEventCount", receivedEventCount)
+        .put("targetEventCount", targetEventCount)
+        .put("preVerificationTargetClickCount", preVerificationTargetClickCount)
+        .put("invalidTimestampEventCount", invalidTimestampEventCount)
+        .put("pendingPackageEvictionCount", pendingPackageEvictionCount)
+        .putNullable("firstTargetEvent", firstTargetEvent?.toJson())
+        .putNullable("lastTargetEvent", lastTargetEvent?.toJson())
+        .putNullable("maxTargetDispatchDelayMs", maxTargetDispatchDelayMs)
+        .putNullable("firstVerifiedAtElapsedMs", firstVerifiedAtElapsedMs)
+        .putNullable("firstVerifiedAtUptimeMs", firstVerifiedAtUptimeMs)
+        .putNullable("firstScanAtElapsedMs", firstScanAtElapsedMs)
+        .putNullable("targetEventToVerifiedUptimeMs", targetEventToVerifiedUptimeMs)
+        .putNullable("targetReceivedToVerifiedMs", targetReceivedToVerifiedMs)
+        .putNullable("verifiedToFirstScanMs", verifiedToFirstScanMs)
+
+    private fun JSONObject.toEventTiming() = CaptureEventTiming(
+        eventUptimeMs = getLong("eventUptimeMs"),
+        receivedUptimeMs = getLong("receivedUptimeMs"),
+        receivedElapsedMs = getLong("receivedElapsedMs"),
+        receivedEpochMs = getLong("receivedEpochMs"),
+        dispatchDelayMs = nullableLong("dispatchDelayMs"),
+        clockStatus = runCatching { CaptureEventClockStatus.valueOf(getString("clockStatus")) }
+            .getOrDefault(CaptureEventClockStatus.INVALID_CLOCK),
+    )
+
+    private fun JSONObject.toCaptureTimingDiagnostics() = CaptureTimingDiagnostics(
+        receivedEventCount = optInt("receivedEventCount", 0),
+        targetEventCount = optInt("targetEventCount", 0),
+        preVerificationTargetClickCount = optInt("preVerificationTargetClickCount", 0),
+        invalidTimestampEventCount = optInt("invalidTimestampEventCount", 0),
+        pendingPackageEvictionCount = optInt("pendingPackageEvictionCount", 0),
+        firstTargetEvent = optJSONObject("firstTargetEvent")?.toEventTiming(),
+        lastTargetEvent = optJSONObject("lastTargetEvent")?.toEventTiming(),
+        maxTargetDispatchDelayMs = nullableLong("maxTargetDispatchDelayMs"),
+        firstVerifiedAtElapsedMs = nullableLong("firstVerifiedAtElapsedMs"),
+        firstVerifiedAtUptimeMs = nullableLong("firstVerifiedAtUptimeMs"),
+        firstScanAtElapsedMs = nullableLong("firstScanAtElapsedMs"),
+        targetEventToVerifiedUptimeMs = nullableLong("targetEventToVerifiedUptimeMs"),
+        targetReceivedToVerifiedMs = nullableLong("targetReceivedToVerifiedMs"),
+        verifiedToFirstScanMs = nullableLong("verifiedToFirstScanMs"),
+    )
 
     private fun CaptureSample.toJson() = JSONObject()
         .put("id", id)
@@ -260,6 +401,10 @@ object RuleCaptureCodec {
         .putNullable("ancestorDistance", ancestorDistance)
         .putNullable("actionAncestorDistance", actionAncestorDistance)
 
+    /** 新增或损坏的可选诊断不应让业务样本和会话一起回退为空。 */
+    private fun <T> JSONObject.optionalDiagnostic(name: String, decode: (JSONObject) -> T): T? =
+        optJSONObject(name)?.let { runCatching { decode(it) }.getOrNull() }
+
     private fun JSONObject.toSession() = CaptureSession(
         id = getLong("id"),
         targetAppId = nullableString("targetPackageName")?.let(::TargetAppId),
@@ -277,9 +422,8 @@ object RuleCaptureCodec {
         pendingObservedCandidate = optJSONObject("pendingObservedCandidate")
             ?.toObservedDismissCandidate(),
         failure = nullableString("failure")?.let(CaptureFailure::valueOf),
-        failureDiagnostics = optJSONObject("failureDiagnostics")?.toFailureDiagnostics(),
-        targetWindowDiagnostics = optJSONObject("targetWindowDiagnostics")
-            ?.toTargetWindowDiagnostics(),
+        failureDiagnostics = optionalDiagnostic("failureDiagnostics") { it.toFailureDiagnostics() },
+        targetWindowDiagnostics = optionalDiagnostic("targetWindowDiagnostics") { it.toTargetWindowDiagnostics() },
     )
 
     private fun JSONObject.toFailureDiagnostics() = CaptureFailureDiagnostics(
@@ -288,10 +432,11 @@ object RuleCaptureCodec {
         eventHasContentDescription = getBoolean("eventHasContentDescription"),
         copiedNodeCount = getInt("copiedNodeCount"),
         selectorCandidateCount = getInt("selectorCandidateCount"),
-        immediateRecovery = optJSONObject("immediateRecovery")?.toRecoveryDiagnostics(),
-        preClickProbe = optJSONObject("preClickProbe")?.toRecoveryDiagnostics(),
-        snapshotRecovery = optJSONObject("snapshotRecovery")?.toSnapshotDiagnostics(),
-        semanticDiff = optJSONObject("semanticDiff")?.toSemanticDiffDiagnostics(),
+        immediateRecovery = optionalDiagnostic("immediateRecovery") { it.toRecoveryDiagnostics() },
+        preClickProbe = optionalDiagnostic("preClickProbe") { it.toRecoveryDiagnostics() },
+        snapshotRecovery = optionalDiagnostic("snapshotRecovery") { it.toSnapshotDiagnostics() },
+        semanticDiff = optionalDiagnostic("semanticDiff") { it.toSemanticDiffDiagnostics() },
+        candidateRecheck = optionalDiagnostic("candidateRecheck") { it.toCandidateRecheckDiagnostics() },
         lastWindowVerifiedAgeMs = nullableLong("lastWindowVerifiedAgeMs"),
         lastContentChangedAgeMs = nullableLong("lastContentChangedAgeMs"),
         clickDiagnosticApplicable = optBoolean("clickDiagnosticApplicable", true),
@@ -328,6 +473,15 @@ object RuleCaptureCodec {
             ?: emptyMap(),
         hostWindowUpdateCount = optInt("hostWindowUpdateCount", 0),
         droppedRecordCount = optInt("droppedRecordCount", 0),
+        continuedScanCount = optInt("continuedScanCount", 0),
+        candidateRecheckCount = optInt("candidateRecheckCount", 0),
+        directedQueryCount = optInt("directedQueryCount", 0),
+        directedPresentCount = optInt("directedPresentCount", 0),
+        directedAbsentCount = optInt("directedAbsentCount", 0),
+        directedUnknownCount = optInt("directedUnknownCount", 0),
+        directedAmbiguousCount = optInt("directedAmbiguousCount", 0),
+        completedAnchorScanCount = optInt("completedAnchorScanCount", 0),
+        rejectedCandidateCounts = optJSONObject("rejectedCandidateCounts")?.toRejectionCounts().orEmpty(),
     )
 
     private fun JSONObject.toWindowResolutionOutcomeCounts(): Map<TargetWindowRecognitionOutcome, Int> =
@@ -372,6 +526,20 @@ object RuleCaptureCodec {
         currentHostWindowId = nullableInt("currentHostWindowId"),
         differenceCleared = nullableBoolean("differenceCleared"),
         clearReason = nullableString("clearReason")?.let(CaptureDiagnosticClearReason::valueOf),
+        scanStrategy = nullableString("scanStrategy")?.let(CaptureScanStrategy::valueOf),
+        coverageComplete = nullableBoolean("coverageComplete"),
+        continuationDepth = nullableInt("continuationDepth"),
+        budgetNodeReads = nullableInt("budgetNodeReads"),
+        directedQueryCount = nullableInt("directedQueryCount"),
+        directedPresentCount = nullableInt("directedPresentCount"),
+        directedAbsentCount = nullableInt("directedAbsentCount"),
+        directedUnknownCount = nullableInt("directedUnknownCount"),
+        directedAmbiguousCount = nullableInt("directedAmbiguousCount"),
+        directedAnchorCompleteCount = nullableInt("directedAnchorCompleteCount"),
+        rejectedCandidateCounts = optJSONObject("rejectedCandidateCounts")?.toRejectionCounts().orEmpty(),
+        unavailableReason = nullableString("unavailableReason")?.let {
+            runCatching { CaptureScanUnavailableReason.valueOf(it) }.getOrNull()
+        },
     )
 
     private fun JSONObject.toRecoveryDiagnostics() = ClickRecoveryDiagnostics(
@@ -388,6 +556,32 @@ object RuleCaptureCodec {
         countdownActionChainCount = optInt("countdownActionChainCount", 0),
         traversalLimitReason = nullableString("traversalLimitReason")
             ?.let(TraversalLimitReason::valueOf),
+        scanStrategy = nullableString("scanStrategy")?.let(CaptureScanStrategy::valueOf) ?: CaptureScanStrategy.FULL_ROOT,
+        coverageComplete = optBoolean("coverageComplete", true),
+        continuationDepth = optInt("continuationDepth", 0),
+        pendingBranchCount = optInt("pendingBranchCount", 0),
+        cursorReset = optBoolean("cursorReset", false),
+        budgetNodeReads = optInt("budgetNodeReads", 0),
+        rejectedCandidateCounts = optJSONObject("rejectedCandidateCounts")?.toRejectionCounts().orEmpty(),
+        unavailableReason = nullableString("unavailableReason")?.let {
+            runCatching { CaptureScanUnavailableReason.valueOf(it) }.getOrNull()
+        },
+    )
+
+    private fun JSONObject.toCandidateRecheckDiagnostics() = CandidateRecheckDiagnostics(
+        queryCount = optInt("queryCount", 0),
+        anchorQueryCount = optInt("anchorQueryCount", 0),
+        presentCount = optInt("presentCount", 0),
+        absentCount = optInt("absentCount", 0),
+        ambiguousCount = optInt("ambiguousCount", 0),
+        unknownCount = optInt("unknownCount", 0),
+        emptyQueryCount = optInt("emptyQueryCount", 0),
+        anchorScanCount = optInt("anchorScanCount", 0),
+        completedAnchorScanCount = optInt("completedAnchorScanCount", 0),
+        unreadableNodeCount = optInt("unreadableNodeCount", 0),
+        budgetNodeReads = optInt("budgetNodeReads", 0),
+        elapsedMs = optLong("elapsedMs", 0),
+        traversalLimitReason = nullableString("traversalLimitReason")?.let(TraversalLimitReason::valueOf),
     )
 
     private fun JSONObject.toSnapshotDiagnostics() = SnapshotRecoveryDiagnostics(
@@ -403,6 +597,11 @@ object RuleCaptureCodec {
         disappearedCandidateCount = optInt("disappearedCandidateCount", 0),
         visitedNodeCount = optInt("visitedNodeCount", 0),
         transitionSignal = optBoolean("transitionSignal", false),
+        directedPresentCount = optInt("directedPresentCount", 0),
+        directedAbsentCount = optInt("directedAbsentCount", 0),
+        directedUnknownCount = optInt("directedUnknownCount", 0),
+        directedAmbiguousCount = optInt("directedAmbiguousCount", 0),
+        unresolvedDismissCount = optInt("unresolvedDismissCount", 0),
     )
 
     private fun JSONObject.toSemanticDiffEvidence() = SemanticDiffEvidence(
@@ -429,6 +628,29 @@ object RuleCaptureCodec {
         lastMatchingWindowActive = nullableBoolean("lastMatchingWindowActive"),
         lastOutcome = TargetWindowRecognitionOutcome.valueOf(getString("lastOutcome")),
         lastEventAgeMs = nullableLong("lastEventAgeMs"),
+        captureTiming = optJSONObject("captureTiming")?.let {
+            runCatching { it.toCaptureTimingDiagnostics() }.getOrNull()
+        },
+        startupObservation = optionalDiagnostic("startupObservation") { it.toStartupObservation() },
+    )
+
+    private fun JSONObject.toStartupObservation() = CaptureStartupDiagnostics(
+        targetConfirmed = optBoolean("targetConfirmed", false),
+        pageObservationCount = optInt("pageObservationCount", 0).coerceAtLeast(0),
+        provisionalObservationCount = optInt("provisionalObservationCount", 0).coerceAtLeast(0),
+        firstObservedAtElapsedMs = nullableLong("firstObservedAtElapsedMs"),
+        firstObservedAtEpochMs = nullableLong("firstObservedAtEpochMs"),
+        firstDismissActionAtEpochMs = nullableLong("firstDismissActionAtEpochMs"),
+        maxVisibleNodeCount = optInt("maxVisibleNodeCount", 0).coerceAtLeast(0),
+        maxActionableNodeCount = optInt("maxActionableNodeCount", 0).coerceAtLeast(0),
+        maxActionClickNodeCount = optInt("maxActionClickNodeCount", 0).coerceAtLeast(0),
+        maxDismissHintNodeCount = optInt("maxDismissHintNodeCount", 0).coerceAtLeast(0),
+        maxDismissActionChainCount = optInt("maxDismissActionChainCount", 0).coerceAtLeast(0),
+        maxStableDismissCandidateCount = optInt("maxStableDismissCandidateCount", 0).coerceAtLeast(0),
+        completeScanCount = optInt("completeScanCount", 0).coerceAtLeast(0),
+        observedBeforeFirstTargetEventReceived = nullableBoolean("observedBeforeFirstTargetEventReceived"),
+        observedBeforeVerification = nullableBoolean("observedBeforeVerification"),
+        pendingBoundaryEvictionCount = optInt("pendingBoundaryEvictionCount", 0).coerceAtLeast(0),
     )
 
     private fun JSONObject.toSample() = CaptureSample(

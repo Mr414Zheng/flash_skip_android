@@ -49,6 +49,18 @@ enum class TraversalLimitReason {
     TIME,
 }
 
+enum class CaptureScanStrategy { FULL_ROOT, CONTINUATION }
+
+/** 形成稳定关闭候选时，每个语义或可点击节点至多一个主要拒绝原因，不评价真实点击样本。 */
+enum class CaptureCandidateRejection {
+    NOT_VISIBLE, UNUSABLE_BOUNDS, NO_ACTION_TARGET, NUMERIC_WITHOUT_DISMISS_HINT,
+    NO_SELECTOR, NO_STABLE_SELECTOR, NO_DISMISS_HINT, ACTION_CHAIN_UNAVAILABLE, CHAIN_NOT_INSPECTED,
+}
+
+enum class CaptureScanUnavailableReason {
+    NODE_UNREADABLE, CHILD_UNREADABLE, STRUCTURE_CHANGED, IDENTITY_CHANGED,
+}
+
 data class ClickRecoveryDiagnostics(
     val outcome: ClickRecoveryOutcome,
     val visitedNodeCount: Int = 0,
@@ -61,6 +73,61 @@ data class ClickRecoveryDiagnostics(
     val selectorCandidateNodeCount: Int = 0,
     val countdownSemanticNodeCount: Int = 0,
     val countdownActionChainCount: Int = 0,
+    val traversalLimitReason: TraversalLimitReason? = null,
+    val scanStrategy: CaptureScanStrategy = CaptureScanStrategy.FULL_ROOT,
+    val coverageComplete: Boolean = true,
+    val continuationDepth: Int = 0,
+    val pendingBranchCount: Int = 0,
+    val cursorReset: Boolean = false,
+    val budgetNodeReads: Int = 0,
+    val rejectedCandidateCounts: Map<CaptureCandidateRejection, Int> = emptyMap(),
+    val unavailableReason: CaptureScanUnavailableReason? = null,
+)
+
+enum class CaptureEventClockStatus { VALID, MISSING_TIMESTAMP, FUTURE_TIMESTAMP, INVALID_CLOCK }
+
+/** Android 事件使用 uptime；排队延迟不能与包含休眠时间的 elapsedRealtime 相减。 */
+data class CaptureEventTiming(
+    val eventUptimeMs: Long,
+    val receivedUptimeMs: Long,
+    val receivedElapsedMs: Long,
+    val receivedEpochMs: Long,
+    val dispatchDelayMs: Long? = null,
+    val clockStatus: CaptureEventClockStatus = CaptureEventClockStatus.MISSING_TIMESTAMP,
+)
+
+/** 这些时间只反映无障碍回调和本进程处理，不代表目标页面首次绘制或真实触摸时间。 */
+data class CaptureTimingDiagnostics(
+    val receivedEventCount: Int = 0,
+    val targetEventCount: Int = 0,
+    val preVerificationTargetClickCount: Int = 0,
+    val invalidTimestampEventCount: Int = 0,
+    val pendingPackageEvictionCount: Int = 0,
+    val firstTargetEvent: CaptureEventTiming? = null,
+    val lastTargetEvent: CaptureEventTiming? = null,
+    val maxTargetDispatchDelayMs: Long? = null,
+    val firstVerifiedAtElapsedMs: Long? = null,
+    val firstVerifiedAtUptimeMs: Long? = null,
+    val firstScanAtElapsedMs: Long? = null,
+    val targetEventToVerifiedUptimeMs: Long? = null,
+    val targetReceivedToVerifiedMs: Long? = null,
+    val verifiedToFirstScanMs: Long? = null,
+)
+
+/** 只保存候选定向复查的计数与耗时，不持久化 selector、路径或 Android 节点。 */
+data class CandidateRecheckDiagnostics(
+    val queryCount: Int = 0,
+    val anchorQueryCount: Int = 0,
+    val presentCount: Int = 0,
+    val absentCount: Int = 0,
+    val ambiguousCount: Int = 0,
+    val unknownCount: Int = 0,
+    val emptyQueryCount: Int = 0,
+    val anchorScanCount: Int = 0,
+    val completedAnchorScanCount: Int = 0,
+    val unreadableNodeCount: Int = 0,
+    val budgetNodeReads: Int = 0,
+    val elapsedMs: Long = 0,
     val traversalLimitReason: TraversalLimitReason? = null,
 )
 
@@ -95,6 +162,11 @@ data class SemanticDiffDiagnostics(
     val disappearedCandidateCount: Int = 0,
     val visitedNodeCount: Int = 0,
     val transitionSignal: Boolean = false,
+    val directedPresentCount: Int = 0,
+    val directedAbsentCount: Int = 0,
+    val directedUnknownCount: Int = 0,
+    val directedAmbiguousCount: Int = 0,
+    val unresolvedDismissCount: Int = 0,
 )
 
 enum class CaptureDiagnosticRecordKind {
@@ -102,6 +174,7 @@ enum class CaptureDiagnosticRecordKind {
     SEMANTIC_DIFF,
     WINDOW_RESOLUTION,
     HOST_WINDOW_UPDATE,
+    CANDIDATE_RECHECK,
 }
 
 /** 区分常规预点击扫描与缺少点击源时的即时恢复扫描。 */
@@ -152,6 +225,18 @@ data class CaptureDiagnosticRecord(
     val currentHostWindowId: Int? = null,
     val differenceCleared: Boolean? = null,
     val clearReason: CaptureDiagnosticClearReason? = null,
+    val scanStrategy: CaptureScanStrategy? = null,
+    val coverageComplete: Boolean? = null,
+    val continuationDepth: Int? = null,
+    val budgetNodeReads: Int? = null,
+    val directedQueryCount: Int? = null,
+    val directedPresentCount: Int? = null,
+    val directedAbsentCount: Int? = null,
+    val directedUnknownCount: Int? = null,
+    val directedAmbiguousCount: Int? = null,
+    val directedAnchorCompleteCount: Int? = null,
+    val rejectedCandidateCounts: Map<CaptureCandidateRejection, Int> = emptyMap(),
+    val unavailableReason: CaptureScanUnavailableReason? = null,
 )
 
 /** 汇总覆盖整个会话，确保超出近期记录上限的扫描结果仍可回溯。 */
@@ -176,6 +261,15 @@ data class CaptureDiagnosticSummary(
     val windowResolutionOutcomeCounts: Map<TargetWindowRecognitionOutcome, Int> = emptyMap(),
     val hostWindowUpdateCount: Int = 0,
     val droppedRecordCount: Int = 0,
+    val continuedScanCount: Int = 0,
+    val candidateRecheckCount: Int = 0,
+    val directedQueryCount: Int = 0,
+    val directedPresentCount: Int = 0,
+    val directedAbsentCount: Int = 0,
+    val directedUnknownCount: Int = 0,
+    val directedAmbiguousCount: Int = 0,
+    val completedAnchorScanCount: Int = 0,
+    val rejectedCandidateCounts: Map<CaptureCandidateRejection, Int> = emptyMap(),
 )
 
 /** 记录列表在创建时复制并设为只读，避免快照暴露采集器的可变缓冲区。 */
@@ -211,9 +305,16 @@ class CaptureDiagnosticTrace private constructor(
                         TargetWindowRecognitionOutcome::class.java,
                     ).apply { putAll(summary.windowResolutionOutcomeCounts) },
                 ),
+                rejectedCandidateCounts = immutableRejections(summary.rejectedCandidateCounts),
             )
-            return CaptureDiagnosticTrace(normalizedSummary, boundedRecords)
+            return CaptureDiagnosticTrace(normalizedSummary, boundedRecords.map {
+                it.copy(rejectedCandidateCounts = immutableRejections(it.rejectedCandidateCounts))
+            })
         }
+
+        private fun immutableRejections(counts: Map<CaptureCandidateRejection, Int>): Map<CaptureCandidateRejection, Int> =
+            Collections.unmodifiableMap(EnumMap<CaptureCandidateRejection, Int>(CaptureCandidateRejection::class.java)
+                .apply { putAll(counts) })
 
         private const val MAX_RECORDS = 48
     }
@@ -233,6 +334,7 @@ data class CaptureFailureDiagnostics(
     val lastContentChangedAgeMs: Long? = null,
     val clickDiagnosticApplicable: Boolean = true,
     val sessionTrace: CaptureDiagnosticTrace? = null,
+    val candidateRecheck: CandidateRecheckDiagnostics? = null,
 )
 
 enum class TargetWindowRecognitionOutcome {
@@ -273,6 +375,28 @@ data class TargetWindowDiagnostics(
     val lastOutcome: TargetWindowRecognitionOutcome =
         TargetWindowRecognitionOutcome.NO_WINDOW_STATE_EVENT,
     val lastEventAgeMs: Long? = null,
+    val captureTiming: CaptureTimingDiagnostics? = null,
+    val startupObservation: CaptureStartupDiagnostics? = null,
+)
+
+/** 主动观测只保存计数和时间，不证明页面是广告，也不替代正式宿主验证。 */
+data class CaptureStartupDiagnostics(
+    val targetConfirmed: Boolean = false,
+    val pageObservationCount: Int = 0,
+    val provisionalObservationCount: Int = 0,
+    val firstObservedAtElapsedMs: Long? = null,
+    val firstObservedAtEpochMs: Long? = null,
+    val firstDismissActionAtEpochMs: Long? = null,
+    val maxVisibleNodeCount: Int = 0,
+    val maxActionableNodeCount: Int = 0,
+    val maxActionClickNodeCount: Int = 0,
+    val maxDismissHintNodeCount: Int = 0,
+    val maxDismissActionChainCount: Int = 0,
+    val maxStableDismissCandidateCount: Int = 0,
+    val completeScanCount: Int = 0,
+    val observedBeforeFirstTargetEventReceived: Boolean? = null,
+    val observedBeforeVerification: Boolean? = null,
+    val pendingBoundaryEvictionCount: Int = 0,
 )
 
 data class CapturedNode(
