@@ -1,0 +1,57 @@
+[
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/reports/tests/testDebugUnitTest/index.html",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  },
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/test-results/testDebugUnitTest/TEST-com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureSaveTest.xml",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  },
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/test-results/testDebugUnitTest/TEST-com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureEnableInterleavingTest.xml",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  },
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/test-results/testDebugUnitTest/TEST-com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCancellationTest.xml",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  },
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/test-results/testDebugUnitTest/TEST-com.zhenghuaizhi.flashskip.ui.home.HomeViewModelSaveTest.xml",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  },
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/test-results/testDebugUnitTest/TEST-com.zhenghuaizhi.flashskip.data.preferences.CaptureSavePersistenceTest.xml",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  },
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/reports/device-validation/2026-10-13/",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  },
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/reports/device-validation/2026-10-13/environment.txt",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  },
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/reports/device-validation/2026-10-13/accessibility-final.txt",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  },
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/reports/device-validation/2026-10-13/jd-apk-provenance.md",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  },
+  {
+    "document": "specs/capture-save-retry/validation.md",
+    "url": "../../app/build/reports/device-validation/2026-10-13/cold-start-contact-sheet.jpg",
+    "reason": "已登记的本地历史证据；全新检出不包含构建产物，不能据此认定本次通过。"
+  }
+]

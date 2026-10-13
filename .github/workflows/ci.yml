@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  specs:
+    name: Specs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare report directory
+        run: mkdir -p app/build/reports/ci
+      - name: Check checker regressions
+        run: python3 -m unittest discover -s scripts/ci/tests -v 2>&1 | tee app/build/reports/ci/checker-tests.txt
+      - name: Check specifications and PR acceptance
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/check_specs.py --event-name "$GITHUB_EVENT_NAME" --event-path "$GITHUB_EVENT_PATH" 2>&1 | tee app/build/reports/ci/specs.txt
+      - name: Retain specification reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: specs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: app/build/reports/ci/*.txt
+          retention-days: 14
+          if-no-files-found: error
+
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-36.1 build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          gradle-home-cache-includes: caches/modules-2
+          dependency-graph: disabled
+      - name: Record revision and toolchain
+        run: |
+          mkdir -p app/build/reports/ci
+          {
+            git rev-parse HEAD
+            java -version
+            ./gradlew --version
+            sdkmanager --list_installed
+          } > app/build/reports/ci/environment.txt 2>&1
+      - name: Run tests, debug build and Lint
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --rerun-tasks --no-build-cache --continue --console=plain
+      - name: Reject missing, failed or skipped evidence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/check_test_results.py --require-artifacts 2>&1 | tee app/build/reports/ci/android.txt
+      - name: Retain Android reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            app/build/reports/ci/*.txt
+            app/build/test-results/testDebugUnitTest/TEST-*.xml
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.xml
+          retention-days: 14
+          if-no-files-found: error
+
+defaults:
+  run:
+    shell: bash
