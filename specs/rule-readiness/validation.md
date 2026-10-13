@@ -2,9 +2,17 @@
 
 规格：[spec.md](spec.md)；任务：[tasks.md](tasks.md)。状态：**P2 本地及远端 CI 验收通过，RR-01 已修复**。用户已批准三项政策并明确授权对应生产修复，其他默认参数沿用基线。本包专项 32 例全部通过，0 失败/错误/跳过；保留下方修复前 10 个失败反例的历史记录。
 
-## 远端 CI 验收（当前）
+## 合并与主干 CI 验收（当前）
 
-已按用户续授权提交并推送，创建 [PR #3](https://github.com/Mr414Zheng/flash_skip_android/pull/3)，保持 OPEN 且不合并。生产及测试提交为 `3a4b360253a70c82f526e734ce81426571863968`；[CI 38374303555](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38374303555) 的 Specs、Android 均成功，时间为 2026-10-13 17:09:30～17:12:42（Asia/Shanghai）。
+PR #3 最新 head `b23ac9d` 的 Specs、Android 检查再次确认通过后，于 2026-10-13 17:27:02（Asia/Shanghai）按用户授权合入 main，合并提交为 `c2a286b2c0e02515810bd8ebb8b87b40d474a820`。合并文件树与已通过检查的 PR head 相同。
+
+[主干 CI 38376388018](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38376388018) 的 Specs、Android 均通过；两组报告已下载，environment.txt 与合并 SHA 一致。201 个测试和 28 个检查器测试全部通过，0 失败/错误/跳过；201 个身份与必需清单逐项一致；18 份文档、9 个编号检查、debug 构建与产物检查通过，Lint 0 错误、15 警告。完整运行、产物和限制见 [主干验收记录](../ci.md#p2-合并与主干-ci-验收)。
+
+当前结论为 P2 已合入 main 且主干 CI 通过。此轮验收回写仅修改文档，不修改依赖、远端设置或应用构建配置。SDD-001/T-12 继续未完成且停止，离线平台证据不代表新增设备验收。
+
+## PR 远端 CI 验收（合并前）
+
+已按用户续授权提交并推送，创建 [PR #3](https://github.com/Mr414Zheng/flash_skip_android/pull/3)，该验收时点保持 OPEN 且不合并。生产及测试提交为 `3a4b360253a70c82f526e734ce81426571863968`；[CI 38374303555](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38374303555) 的 Specs、Android 均成功，时间为 2026-10-13 17:09:30～17:12:42（Asia/Shanghai）。
 
 已下载核验两组 artifact：完整 201 例及 28 个检查器测试全部通过，0 失败/错误/跳过；201 个用例身份与必需清单逐项一致，18 份文档、9 个编号及真实 PR 正文检查通过；debug 构建成功，56 个 Gradle 任务全部执行，Lint 0 错误、15 警告。SDK 36 Robolectric 证据仍不等于设备验证。
 

@@ -1,6 +1,6 @@
 # P1 持续检查与验收记录
 
-状态：本地验证与远端 Linux CI 验收均已通过，[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 已合入 main，合并提交 `2818232` 的主干 CI 通过。实施基线为 `97d3010`，首次远端验收对应分支提交 `85fcd27`，日期为 2026-10-13。以上为 P1 历史验收。P2 以 main `ad01dc7` 为基线，修复前三项政策偏差导致 197 例中 22 例失败；获得政策批准和生产修复授权后，完整重跑 201 例全部通过。P2 已提交至 PR #3，远端 CI 已通过并下载核验报告，详见下方 P2 记录。不修改远端设置或依赖，不恢复 SDD-001/T-12。
+状态：本地验证与远端 Linux CI 验收均已通过，[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 已合入 main，合并提交 `2818232` 的主干 CI 通过。实施基线为 `97d3010`，首次远端验收对应分支提交 `85fcd27`，日期为 2026-10-13。以上为 P1 历史验收。P2 以 main `ad01dc7` 为基线，修复前三项政策偏差导致 197 例中 22 例失败；获得政策批准和生产修复授权后，完整重跑 201 例全部通过。P2 已随 PR #3 合入 main（`c2a286b`），PR 最新检查及合并后的主干 CI `38376388018` 均通过，报告已下载核验，详见下方 P2 记录。不修改远端设置或依赖，不恢复 SDD-001/T-12。
 
 ## 工作流与边界
 
@@ -127,7 +127,7 @@ macOS 本轮使用 Android Studio 自带 JBR：`JAVA_HOME=/Applications/Android 
 ## 阶段结论与后续条件
 
 - P1 本地、远端验收及主干落地均已完成，证据涵盖配置、检查脚本正负例、PR 验收说明、Linux 构建/测试/Lint、报告上传下载及历史警告差异。
-- 当前 P2 授权包括规格落盘、离线测试、三项政策最小生产修复，以及后续提交、推送、创建 PR 和远端 CI 证据回写。PR #3 已创建，应用构建配置、依赖、远端设置及 CI 工作流保持不变；暂不合并。
+- 当前 P2 授权包括规格落盘、离线测试、三项政策最小生产修复，以及后续提交、推送、创建 PR 和远端 CI 证据回写。PR #3 已按后续明确授权合入 main，主干 CI 通过并回写记录；应用构建配置、依赖、远端设置及 CI 工作流保持不变。
 - PR #1 已合并，main 工作流运行成功；必需检查和分支保护未配置，后续设置变更须按实际授权处理。
 - SDD-001/T-12 未完成并继续停止。本轮不产生任何新增设备验证证据，不以 CI 通过替代设备结论。
 
@@ -171,7 +171,7 @@ P2 本地离线验收通过。没有本轮远端 CI、设备或 Compose UI 组�
 
 ## P2 PR 远端验收与证据回写
 
-用户续授权提交、推送、创建 PR 并等待远端 CI，明确暂不合并。已创建 [PR #3](https://github.com/Mr414Zheng/flash_skip_android/pull/3)，分支 `codex/p2-contract-tests`，生产及测试提交为 `3a4b360253a70c82f526e734ce81426571863968`。此前“未提交/无远端证据”的段落描述本地实施时点，当前远端状态以本节为准。
+本节记录合并前的 PR 验收；当时用户授权提交、推送、创建 PR 并等待远端 CI，明确暂不合并。已创建 [PR #3](https://github.com/Mr414Zheng/flash_skip_android/pull/3)，分支 `codex/p2-contract-tests`，生产及测试提交为 `3a4b360253a70c82f526e734ce81426571863968`。此前“未提交/无远端证据”的段落描述本地实施时点，当时远端状态以本节为准；后续合并及当前主干状态见下一节。
 
 [CI 38374303555](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38374303555) 于 2026-10-13 17:09:30～17:12:42（Asia/Shanghai）运行，Specs、Android 均成功。实际检出并测试的 PR 合并提交为 `df16b90426a7e738fa52da922073d39fba3fa03f`，父提交为 main `ad01dc7c5dc56021b00d598ea46d1797b667a544` 和上述 PR head；已与报告中的 environment.txt 核对。这里的测试合并提交不表示 PR 已合并。
 
@@ -189,4 +189,26 @@ P2 本地离线验收通过。没有本轮远端 CI、设备或 Compose UI 组�
 
 两组 artifact 均已实际下载：`specs-38374303555-1`（ID `11799898950`，966 字节）和 `android-38374303555-1`（ID `11800825682`，92280 字节），登记过期日为 2026-10-27。本机位于忽略目录 `app/build/reports/ci/remote/38374303555/`，包含检查器/规格、JUnit、测试 HTML、Lint、环境、产物检查和运行日志；新检出不含这些产物，远端链接也不承诺永久保留。
 
-P2 本地及远端 Linux CI 验收通过。此次记录回写仅修改文档，提交后由现有 PR synchronize 检查再次验证；该后续结果以 PR 最新 head 的检查为准，不将首轮运行错误归属于后续文档提交。PR 保持 OPEN，未启用自动合并、未合并；未修改远端设置、工作流、依赖或应用构建配置。SDD-001/T-12 继续未完成并停止，没有新增设备或 Compose UI 组件证据，P3 及后续阶段未启动。
+P2 本地及远端 Linux CI 验收通过。此次记录回写仅修改文档，提交后由现有 PR synchronize 检查再次验证；该后续结果以 PR 最新 head 的检查为准，不将首轮运行错误归属于后续文档提交。该验收时点 PR 保持 OPEN，未启用自动合并、未合并；未修改远端设置、工作流、依赖或应用构建配置。SDD-001/T-12 继续未完成并停止，没有新增设备或 Compose UI 组件证据，P3 及后续阶段未启动。
+
+## P2 合并与主干 CI 验收
+
+按用户后续明确授权，合并前再次读取 [PR #3](https://github.com/Mr414Zheng/flash_skip_android/pull/3) 最新 head `b23ac9d2ef84873a413d742c20e6338af9d8d994`，确认 [CI 38375185252](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38375185252) 的 Specs、Android 均成功，且 PR 为 CLEAN / MERGEABLE。此次 PR CI 的两组报告也已下载核验：201 例、28 个检查器测试、构建和 Lint 通过，Lint 0 错误 / 15 警告。
+
+于 2026-10-13 17:27:02（Asia/Shanghai）使用合并提交方式合入 main，保留 P2 实施及验收回写两次提交。合并 SHA 为 `c2a286b2c0e02515810bd8ebb8b87b40d474a820`，父提交为 main `ad01dc7c5dc56021b00d598ea46d1797b667a544` 和 PR head `b23ac9d2ef84873a413d742c20e6338af9d8d994`；合并文件树与已通过检查的 PR head 完全相同。合并请求后的网络响应曾返回 EOF，随后读取 PR 确认为 MERGED，没有重复提交合并。
+
+[主干 CI 38376388018](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38376388018) 由合并后的 main push 触发，时间为 2026-10-13 17:27:04～17:30:07（Asia/Shanghai），Specs、Android 均成功。下载报告的 environment.txt 所记 revision 与合并 SHA 完全一致。
+
+| 检查 | 主干实际结果 |
+| --- | --- |
+| Specs | 28 个检查器测试通过；18 份文档、9 个编号检查通过；push 事件不执行 PR 正文检查 |
+| JVM/Robolectric | 21 份 XML、201 例全部通过，0 失败/错误/跳过；与必需清单逐项比对，全部身份一致 |
+| 回归与专项 | 原 75 例与 P2 新增 126 例通过；SDD-002 32 例、SDD-003 94 例，其中新增平台 36 例为 SDK 36 Robolectric |
+| debug 构建 / Lint | `assembleDebug` 成功，Lint 0 错误、15 警告；未修改依赖或检查门槛 |
+| 产物门禁 | `--require-artifacts` 通过，无缺失用例或报告；两组 artifact 已实际下载并核验 |
+
+主干 Lint 警告分布与 PR CI 相同：OldTargetApi 1、AndroidGradlePluginVersion 2、GradleDependency 6、NewerVersionAvailable 3、ObsoleteSdkInt 1、MonochromeLauncherIcon 2。
+
+下载产物为 `specs-38376388018-1`（ID `11801845633`，968 字节）和 `android-38376388018-1`（ID `11801467685`，92287 字节），登记过期日 2026-10-27。本机保存在忽略目录 `app/build/reports/ci/remote/38376388018/`；初次下载网络 TLS 超时，重试下载成功，不属于产品或测试失败。
+
+P2 已合入 main，合并后的主干 CI 验收通过。此轮主干验收回写仅修改文档，作为独立提交推送到 main，并继续核对该提交的主干 CI；上述运行只归属于合并提交，不错记为后续文档提交的测试结果。未修改工作流、依赖、应用构建配置或远端设置，未扩大为 P3 授权。SDD-001/T-12 继续未完成且停止，未新增设备或 Compose UI 组件证据。
