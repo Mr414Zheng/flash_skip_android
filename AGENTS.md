@@ -20,6 +20,9 @@ Use the checked-in Gradle wrapper from the repository root. The Gradle daemon re
 - `./gradlew :app:installDebug` — install on a connected device or emulator running Android 8.0/API 26 or later.
 - `./gradlew :app:testDebugUnitTest` — run JVM unit tests.
 - `./gradlew :app:lintDebug` — run Android Lint.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci/tests -v` — validate CI checker positive and negative cases.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/check_specs.py` — check specification IDs, links, and references.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/check_test_results.py --require-artifacts` — check freshly generated JUnit/build/Lint evidence; run Gradle first as documented in the CI guide.
 
 Launch FlashSkip from the device launcher and enable its accessibility service in Android settings when validating automation.
 
@@ -29,7 +32,7 @@ Follow existing Kotlin style: four-space indentation, trailing commas in multili
 
 ## Testing Guidelines
 
-JUnit 4, Robolectric, and coroutine-test dependencies are configured. The tracked capture-save-retry suite contains five test classes and one shared fixture under `app/src/test/kotlin/`, covering coordinator contracts, cancellation and enable interleavings, HomeViewModel feedback, and real DataStore persistence. Its recorded run on 2026-10-13 passed 75 tests; this is scoped evidence, not whole-project or device coverage. No coverage threshold, tracked CI configuration, or `app/src/androidTest/` suite is currently configured.
+JUnit 4, Robolectric, and coroutine-test dependencies are configured. The tracked capture-save-retry suite contains five test classes and one shared fixture under `app/src/test/kotlin/`, covering coordinator contracts, cancellation and enable interleavings, HomeViewModel feedback, and real DataStore persistence. Its recorded run on 2026-10-13 passed 75 tests; this is scoped evidence, not whole-project or device coverage. The local GitHub Actions workflow runs specification checks, these JVM tests, debug assembly, and Android Lint; its first remote Linux run is still pending. No coverage threshold or `app/src/androidTest/` suite is configured.
 
 Add tests under `app/src/test/kotlin/`, mirroring production packages. Cover observable behavior and relevant failure, cancellation, timing, and persistence boundaries. Reuse existing evidence only when the source and applicable code state are verified. Report JVM, Robolectric, UI component, and device evidence separately; a skipped or unavailable check is not a pass.
 
@@ -37,7 +40,7 @@ Add tests under `app/src/test/kotlin/`, mirroring production packages. Cover obs
 
 Start with the [project specification index](specs/README.md), [capability inventory](specs/capabilities.md), [shared constraints](specs/constraints.md), and [phased roadmap](specs/roadmap.md). Keep approved contracts distinct from observed implementation behavior and proposed requirements. Link acceptance criteria to tasks, tests, results, and remaining limitations.
 
-P0 documentation is in place; P1 and later phases are planned, not executed or authorized by the roadmap itself. Production code must remain unchanged within the current documentation scope. SDD-001/T-12 is incomplete and stopped at the user's request: do not resume JD splash-ad reproduction investigations or the remaining device validation. Preserve that decision and do not report it as passed.
+P0 documentation and P1 local CI configuration/validation are in place; remote CI acceptance and P2 onward remain pending. See the [CI guide](specs/ci.md) for commands, required test inventory, report policy, and validation limits. The current authorization permits local CI/scripts/checker tests/docs only: do not push or change remote settings, production code, or application dependencies/build configuration. The roadmap itself does not authorize later phases. SDD-001/T-12 is incomplete and stopped at the user's request: do not resume JD splash-ad reproduction investigations or the remaining device validation. Preserve that decision and do not report it as passed.
 
 ## Commit & Pull Request Guidelines
 
