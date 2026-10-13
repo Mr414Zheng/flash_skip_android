@@ -11,6 +11,7 @@ enum class RuleValidationIssue {
     NO_ACTIVITY,
     NO_SELECTOR,
     EMPTY_SELECTOR,
+    MISSING_STABLE_STRUCTURE,
     UNSAFE_DYNAMIC_TEXT,
     INVALID_ANCESTOR,
     INVALID_ACTION_TARGET,
@@ -49,6 +50,12 @@ object RuleValidator {
                 issues += RuleValidationIssue.EMPTY_SELECTOR
             }
             if (rule.selectors.any { selector ->
+                    !selector.hasAppSpecificResourceConstraint()
+                }
+            ) {
+                issues += RuleValidationIssue.MISSING_STABLE_STRUCTURE
+            }
+            if (rule.selectors.any { selector ->
                     (selector.text == TextCondition.NumericCountdown ||
                         selector.text is TextCondition.SkipCountdown) &&
                         !selector.hasAppSpecificResourceConstraint()
@@ -83,8 +90,9 @@ object RuleValidator {
 }
 
 private fun NodeSelector.hasAppSpecificResourceConstraint(): Boolean =
-    resourceId?.startsWith(ANDROID_RESOURCE_PREFIX) == false ||
-        (ancestorResourceId?.startsWith(ANDROID_RESOURCE_PREFIX) == false &&
+    (!resourceId.isNullOrBlank() && !resourceId.startsWith(ANDROID_RESOURCE_PREFIX)) ||
+        (!ancestorResourceId.isNullOrBlank() &&
+            !ancestorResourceId.startsWith(ANDROID_RESOURCE_PREFIX) &&
             ancestorDistance?.let { it in 1..NodeSelector.MAX_ANCESTOR_DISTANCE } == true)
 
 private const val ANDROID_RESOURCE_PREFIX = "android:"

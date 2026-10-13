@@ -36,7 +36,7 @@ internal object PostActionObserver {
         val supportingEvent = if ((observation as? TargetObservation.Absent)?.proof ==
             AbsenceProof.ORIGINAL_WINDOW_REMOVED
         ) lastWindowEventAt else lastEventAt
-        val hasLaterEvent = supportingEvent != null && supportingEvent > pending.acceptedAt
+        val hasLaterEvent = supportingEvent != null && supportingEvent > pending.lastActionAt
         if (now >= current.deadlineAt) return ObservationDecision.Unconfirmed(current)
         if (observation is TargetObservation.Absent && hasLaterEvent && sameEvidence &&
             now - current.stableSince >= STABLE_EVIDENCE_MS
