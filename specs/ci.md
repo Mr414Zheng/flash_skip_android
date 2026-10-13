@@ -1,6 +1,6 @@
 # P1 持续检查与验收记录
 
-状态：本地验证与远端 Linux CI 验收均已通过，[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 保持草稿，尚未合入 main。实施基线为 `97d3010`，远端验收对应分支提交 `85fcd27`，日期为 2026-10-13。本轮按续授权回写验收文档，检查后提交并推送到当前草稿 PR，再确认 CI；不合并、不修改远端设置或生产代码，不恢复 SDD-001/T-12。
+状态：本地验证与远端 Linux CI 验收均已通过，[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 已合入 main，合并提交 `2818232` 的主干 CI 通过。实施基线为 `97d3010`，首次远端验收对应分支提交 `85fcd27`，日期为 2026-10-13。本轮按续授权同步本地 main、回写合并与主干证据，检查后提交并创建新的文档 PR；不修改远端设置、生产代码或依赖，不恢复 SDD-001/T-12。
 
 ## 工作流与边界
 
@@ -80,7 +80,7 @@ macOS 本轮使用 Android Studio 自带 JBR：`JAVA_HOME=/Applications/Android 
 
 ## 远端 CI 验收记录
 
-2026-10-13 已将保存契约测试 `e354a99`、P0 文档 `97d3010`、P1 配置 `85fcd27` 推送至 `codex/p1-ci-acceptance`，创建面向 main 的草稿 PR #1。本节是该分支提交的验收快照；文档回写提交会另外触发 CI，其状态以 [PR 最新 Checks](https://github.com/Mr414Zheng/flash_skip_android/pull/1/checks) 为准，不把下列旧运行当作新提交的执行证据。
+2026-10-13 将保存契约测试 `e354a99`、P0 文档 `97d3010`、P1 配置 `85fcd27` 推送至 `codex/p1-ci-acceptance`，当时创建面向 main 的草稿 PR #1。本节保留该分支提交的历史验收快照；后续文档提交、转为 Ready、合并及主干运行独立记录在下方，不把旧运行当作新提交的执行证据。
 
 | 运行 | 目的与输入 | 实际结果 |
 | --- | --- | --- |
@@ -95,7 +95,7 @@ macOS 本轮使用 Android Studio 自带 JBR：`JAVA_HOME=/Applications/Android 
 - Runner 为 `ubuntu-24.04` / Linux amd64，Temurin JDK 21.0.12.1，Gradle 9.4.1；所需 SDK 36.1 和 Build Tools 36.0.0 已安装。应用、测试及依赖版本与本地验收相同。
 - 首轮作业开始于 14:32:23，Android 于 14:36:12 完成；恢复后的最终运行于 14:42:30 开始，14:47:11 全部完成（Asia/Shanghai）。状态监听曾发生一次网络 EOF，随后直接查询确认运行成功，不将监听连接错误归为构建失败。
 
-最终成功运行的产物：
+该阶段最终成功运行的产物：
 
 | Artifact | 下载核对内容 | 保留情况 |
 | --- | --- | --- |
@@ -104,11 +104,29 @@ macOS 本轮使用 Android Studio 自带 JBR：`JAVA_HOME=/Applications/Android 
 
 此外，`specs-38357804291-1` 已下载，确认包含受控负例的明确失败原因。原始下载文件位于本机 `app/build/reports/ci/remote/<run-id>/`，不提交到仓库；验收摘要在文档中保留，不能把“曾下载成功”扩展为未来永久可访问。
 
-验收前只读确认 Actions 已启用并允许当前使用的 Actions，默认工作流令牌权限为 read；本工作流的只读声明与上传产物已实际运行成功。未修改 Actions 策略或分支保护。当前 PR 为 OPEN / draft、未合并，远端 main 仍为 `3fa4dc0`；PR 检查通过不代表主干已经部署持续检查。
+验收前只读确认 Actions 已启用并允许当前使用的 Actions，默认工作流令牌权限为 read；本工作流的只读声明与上传产物已实际运行成功。该验收快照时 PR 为 OPEN / draft，远端 main 为 `3fa4dc0`；这只是合并前状态，当前结果见下节。全过程未修改 Actions 策略或分支保护。
+
+## 合并与主干 CI
+
+按用户授权将 PR #1 转为 Ready for review，确认新一轮检查成功后，于 2026-10-13 15:23:07（Asia/Shanghai）合并到 main。采用合并提交保留原有 4 个提交；合并 SHA 为 `2818232319bdd0f6dcd0c9dfe0851a36ce065931`，父提交为原 main `3fa4dc02af7496dbf4e32be9043b038930ad8d89` 与 PR head `3c426ca42c1ddf75a655efbde681de6fc922b06a`。合并文件树与审核通过的 PR head 相同，生产代码、应用构建配置及依赖均未改变。
+
+| 运行 | 对应版本与事件 | 实际结果 |
+| --- | --- | --- |
+| [38360031219](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38360031219) | 首次文档回写 `3c426ca`，PR 同步事件；实际测试合并提交 `648cfc2` | Specs、Android 成功；28 + 75 例通过，debug 构建成功，Lint 0 错误 / 15 警告；报告已下载核对 |
+| [38361748800](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38361748800) | 同一 head `3c426ca`，转为 Ready for review 触发 | Specs、Android 均成功；合并前再次确认两项最新检查通过、head 与 base 未变化 |
+| [38362313424](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38362313424) | main 的 push 事件，实际检出 `2818232319bdd0f6dcd0c9dfe0851a36ce065931` | Specs、Android 成功；28 个检查器测试、10 份文档 / 9 个编号检查通过；75 个必需 JVM/Robolectric 用例无失败、错误或跳过；debug 构建及报告检查通过；Lint 0 错误 / 15 警告 |
+
+主干两组报告均已上传、下载并核对，按工作流的 14 天策略保留：
+
+- `specs-38362313424-1`：28 个检查器测试及仓库规格检查输出。main 的 push 事件没有 PR 正文，报告中的 `PR 检查：False` 符合工作流定义。
+- `android-38362313424-1`：5 份 JUnit XML 共 75 例，按完整必需用例身份核对；测试 HTML、Lint XML/HTML 和报告校验输出齐全；`environment.txt` 中提交 SHA 与 main 合并提交一致。Lint 分布与上方远端列相同。
+- 原始下载位于本机 `app/build/reports/ci/remote/38362313424/`，不提交到仓库。这些证据仅对应上述已完成运行，本次新文档 PR 的 CI 须独立核对。
+
+主干工作流已实际运行。只读核对时 main 未启用分支保护，也没有必需检查或强制审批规则；本次未调整这些设置，不将 CI 通过写成强制合并门禁已配置。
 
 ## 阶段结论与后续条件
 
-- P1 本地与远端验收均已通过，证据涵盖配置、检查脚本正负例、PR 验收说明、Linux 构建/测试/Lint、报告上传下载及历史警告差异。
-- 当前授权仅回写文档、提交并推送到既有草稿 PR、确认新提交 CI；不修改生产代码、业务测试或 CI 配置。
-- 草稿 PR 尚未合并；main 的工作流落地和必需检查设置尚未执行，不把验收通过写成主干治理已完成。后续合并或设置变更须按实际授权处理。
+- P1 本地、远端验收及主干落地均已完成，证据涵盖配置、检查脚本正负例、PR 验收说明、Linux 构建/测试/Lint、报告上传下载及历史警告差异。
+- 当前授权为同步本地 main、回写文档、提交并创建新的文档 PR；不修改生产代码、业务测试或 CI 配置，新 PR 的合并另行授权。
+- PR #1 已合并，main 工作流运行成功；必需检查和分支保护未配置，后续设置变更须按实际授权处理。
 - SDD-001/T-12 未完成并继续停止。本轮不产生任何新增设备验证证据，不以 CI 通过替代设备结论。
