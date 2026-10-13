@@ -1,6 +1,6 @@
-# P1 持续检查与本地验证
+# P1 持续检查与验收记录
 
-状态：本地配置与验证已落实，远端 CI 尚未运行；P1 的 Linux 新检出验收仍待后续授权。实施基线为 `97d3010`，日期为 2026-10-13。用户授权本地 CI 配置、检查脚本、负例验证和文档更新；不推送、不修改远端设置，不修改生产代码，不恢复 SDD-001/T-12。
+状态：本地验证与远端 Linux CI 验收均已通过，[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 保持草稿，尚未合入 main。实施基线为 `97d3010`，远端验收对应分支提交 `85fcd27`，日期为 2026-10-13。本轮按续授权回写验收文档，检查后提交并推送到当前草稿 PR，再确认 CI；不合并、不修改远端设置或生产代码，不恢复 SDD-001/T-12。
 
 ## 工作流与边界
 
@@ -31,19 +31,21 @@
 
 ## Lint 与报告保留
 
-本轮历史警告清单如下。Lint 错误阻断，警告完整报告；首版不启用 `warningsAsErrors`、不添加 Lint baseline、不自动升级或修改生产代码。新增警告需要评审，目前不按警告差量自动阻断。
+本地与远端警告清单如下，均为 0 错误。Lint 错误阻断，警告完整报告；首版不启用 `warningsAsErrors`、不添加 Lint baseline、不自动升级或修改生产代码。新增警告需要评审，目前不按警告差量自动阻断。
 
-| Lint ID | 数量 |
-| --- | --- |
-| OldTargetApi | 1 |
-| AndroidGradlePluginVersion | 1 |
-| GradleDependency | 5 |
-| NewerVersionAvailable | 1 |
-| ObsoleteSdkInt | 1 |
-| MonochromeLauncherIcon | 2 |
-| 合计 | 11 |
+| Lint ID | 本地 | 远端 Linux |
+| --- | --- | --- |
+| OldTargetApi | 1 | 1 |
+| AndroidGradlePluginVersion | 1 | 2 |
+| GradleDependency | 5 | 6 |
+| NewerVersionAvailable | 1 | 3 |
+| ObsoleteSdkInt | 1 | 1 |
+| MonochromeLauncherIcon | 2 | 2 |
+| 合计 | 11 | 15 |
 
-每次运行按 run ID 和 attempt 分别保存 Specs 与 Android artifact，保留 14 天。包含检查器输出、提交与工具链信息、JUnit XML、测试 HTML、Lint HTML/XML。缺少必需报告会失败；不会上传 APK、设备截图、DataStore 导出或设备诊断日志。Artifact 上传的实际权限和下载可用性须由首次远端运行验证。
+远端比本地多出的 4 项均为版本更新提示：Gradle 9.4.1 → 9.8.1、Core KTX 1.18.0 → 1.19.1、Compose 编译器插件 2.3.21 → 2.4.21、coroutines 1.10.2 → 1.11.0。这是两次报告中观察到的差异，不代表依赖已变更，也不在本轮顺带升级。
+
+每次运行按 run ID 和 attempt 分别保存 Specs 与 Android artifact，保留 14 天。包含检查器输出、提交与工具链信息、JUnit XML、测试 HTML、Lint HTML/XML。缺少必需报告会失败；不会上传 APK、设备截图、DataStore 导出或设备诊断日志。成功运行和受控失败运行的上传、下载均已实际验证；产物过期后不能仅凭链接认定仍可下载。
 
 ## 本地执行与验证记录
 
@@ -58,7 +60,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/check_test_results.py --require-art
 
 macOS 本轮使用 Android Studio 自带 JBR：`JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home`。本地模拟 PR 检查时传入 `--event-name pull_request --event-path /path/to/event.json`，JSON 中填写 `pull_request.body`；内容作为数据读取，不插入 shell。
 
-2026-10-13 本轮实际验证结果如下；生产及业务测试代码均与 `97d3010` 相同。
+2026-10-13 本地实施阶段的实际验证结果如下；生产及业务测试代码均与 `97d3010` 相同。以下保留历史执行范围，后续远端验收独立记录。
 
 | 检查 | 实际结果 |
 | --- | --- |
@@ -70,16 +72,43 @@ macOS 本轮使用 Android Studio 自带 JBR：`JAVA_HOME=/Applications/Android 
 | JVM / Robolectric | 75 例通过，0 失败/错误/跳过；JUnit 报告时间为 12:06:44～12:06:52（Asia/Shanghai） |
 | Debug APK 与报告 | APK、测试 HTML、Lint HTML/XML 均生成并通过产物检查 |
 | Lint | 12:07:07 重新生成，0 错误、11 警告，分布与上表一致 |
-| 改动边界 | `app/src`、应用/根构建脚本、`gradle/`、Gradle 属性和 settings 均无差异；没有执行推送或远端设置变更 |
+| 改动边界 | 本地实施阶段的 `app/src`、应用/根构建脚本、`gradle/`、Gradle 属性和 settings 均无差异；该阶段尚未执行推送或远端设置变更 |
 
 检查器测试覆盖缺少报告、XML 损坏、零用例、必需参数化用例消失、同数量替换、重复用例、失败/错误/跳过、Lint 错误、错误链接/锚点/引用及空 PR 模板。Gradle 输出中的 `preDebugAndroidTestBuild SKIPPED` 是未配置设备测试的准备任务，不是 JUnit 用例跳过，也不提供设备验证证据。
 
-本地原始报告位于 `app/build/test-results/testDebugUnitTest/`、`app/build/reports/tests/testDebugUnitTest/`、`app/build/reports/lint-results-debug.*`；P1 检查输出位于 `app/build/reports/ci/`。这些产物被 Git 忽略，全新检出不包含它们。远端 artifact 仍未生成。
+本地原始报告位于 `app/build/test-results/testDebugUnitTest/`、`app/build/reports/tests/testDebugUnitTest/`、`app/build/reports/lint-results-debug.*`；P1 检查输出位于 `app/build/reports/ci/`。这些产物被 Git 忽略，全新检出不包含它们。
+
+## 远端 CI 验收记录
+
+2026-10-13 已将保存契约测试 `e354a99`、P0 文档 `97d3010`、P1 配置 `85fcd27` 推送至 `codex/p1-ci-acceptance`，创建面向 main 的草稿 PR #1。本节是该分支提交的验收快照；文档回写提交会另外触发 CI，其状态以 [PR 最新 Checks](https://github.com/Mr414Zheng/flash_skip_android/pull/1/checks) 为准，不把下列旧运行当作新提交的执行证据。
+
+| 运行 | 目的与输入 | 实际结果 |
+| --- | --- | --- |
+| [38357267880](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38357267880) | 初次 Linux 新检出，完整 PR 验收说明 | Specs、Android 均成功；28 个检查器测试和 75 个 JVM/Robolectric 测试通过；56 个 Gradle 任务全部执行，debug 构建成功，Lint 0 错误 / 15 警告；两组产物均下载核对 |
+| [38357804291](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38357804291) | 仅把 PR 的“验证结果”改为“待填写”，代码不变 | 整体按预期失败：Specs 指出缺少验证说明并退出 1，28 个检查器测试通过，Android 成功；失败 artifact 上传及下载正常，没有被报告步骤掩盖 |
+| [38358229099](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38358229099) | 恢复完整正文并补充首轮及负例证据，代码不变 | Specs、Android 均成功；28 + 75 例通过且无失败/错误/跳过，debug 构建与报告检查通过，Lint 0 错误 / 15 警告；最新 PR 检查恢复通过 |
+
+代码与工具链对应关系：
+
+- 分支 head：`85fcd279f318612a46f04ee9bd5223c8c18a46a5`。
+- 实际检出并测试的 PR 合并提交：`e7d9da8b785943bb76f8ab125cb1dd22f7ab4722`；父提交为远端 main `3fa4dc02af7496dbf4e32be9043b038930ad8d89` 和上述 head，已核对 GitHub 提交信息与 artifact 内 `environment.txt`。
+- Runner 为 `ubuntu-24.04` / Linux amd64，Temurin JDK 21.0.12.1，Gradle 9.4.1；所需 SDK 36.1 和 Build Tools 36.0.0 已安装。应用、测试及依赖版本与本地验收相同。
+- 首轮作业开始于 14:32:23，Android 于 14:36:12 完成；恢复后的最终运行于 14:42:30 开始，14:47:11 全部完成（Asia/Shanghai）。状态监听曾发生一次网络 EOF，随后直接查询确认运行成功，不将监听连接错误归为构建失败。
+
+最终成功运行的产物：
+
+| Artifact | 下载核对内容 | 保留情况 |
+| --- | --- | --- |
+| `specs-38358229099-1` | 28 例检查器结果、10 份规格文档 / 9 个编号以及 PR 正文检查通过 | 已上传并下载，登记过期日为 2026-10-27 |
+| `android-38358229099-1` | 5 份 JUnit XML 共 75 例，按完整用例身份核对；测试 HTML、Lint XML/HTML、工具链和报告校验输出齐全 | 已上传并下载，登记过期日为 2026-10-27 |
+
+此外，`specs-38357804291-1` 已下载，确认包含受控负例的明确失败原因。原始下载文件位于本机 `app/build/reports/ci/remote/<run-id>/`，不提交到仓库；验收摘要在文档中保留，不能把“曾下载成功”扩展为未来永久可访问。
+
+验收前只读确认 Actions 已启用并允许当前使用的 Actions，默认工作流令牌权限为 read；本工作流的只读声明与上传产物已实际运行成功。未修改 Actions 策略或分支保护。当前 PR 为 OPEN / draft、未合并，远端 main 仍为 `3fa4dc0`；PR 检查通过不代表主干已经部署持续检查。
 
 ## 阶段结论与后续条件
 
-- 本地交付包括 CI 配置、检查脚本、负例测试、PR 模板、历史警告登记及项目说明更新。
-- 未推送、未创建 PR、未修改 Actions 策略或分支保护；本地两次既有提交仍未推送。
-- 本地 macOS 的执行与工作流静态检查不能替代 Linux 全新检出。首次远端运行、artifact 下载和 Actions 启用策略仍待验证，因此 P1 整体不标记全部完成。
-- 后续获授权后推送包含既有测试/P0 文档的变更，验证 Linux 全新检出运行；再按管理授权把 `Specs`、`Android` 配为 main 必需检查。
+- P1 本地与远端验收均已通过，证据涵盖配置、检查脚本正负例、PR 验收说明、Linux 构建/测试/Lint、报告上传下载及历史警告差异。
+- 当前授权仅回写文档、提交并推送到既有草稿 PR、确认新提交 CI；不修改生产代码、业务测试或 CI 配置。
+- 草稿 PR 尚未合并；main 的工作流落地和必需检查设置尚未执行，不把验收通过写成主干治理已完成。后续合并或设置变更须按实际授权处理。
 - SDD-001/T-12 未完成并继续停止。本轮不产生任何新增设备验证证据，不以 CI 通过替代设备结论。

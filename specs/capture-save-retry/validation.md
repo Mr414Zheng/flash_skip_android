@@ -1,5 +1,7 @@
 # 保存契约验证记录
 
+本文件保留 SDD-001 初次实施与收尾时的本地及设备证据。2026-10-13 的 P1 远端 Linux 回归再次执行相同 75 例并全部通过，未恢复 T-12；分支提交、实际测试的 PR 合并提交、运行链接与报告下载结果见 [P1 远端验收](../ci.md#远端-ci-验收记录)。后续 CI 结果不改变下述设备验证未完成的结论。
+
 2026-10-13，用户审定规格后完成测试支撑及协调器契约测试，随后按续授权完成 T-09 UI 反馈与重试绑定及 T-10 真实存储与目录集成测试。生产基线为 `3fa4dc02af7496dbf4e32be9043b038930ad8d89`，本次提交新增测试支撑、5 个测试类及配套规格文档。未修改运行代码、端口、依赖或构建配置。随后按用户续授权新建 Android 模拟器并安装京东，解除无设备阻塞；实际检查后仍缺少可重复的开屏关闭页面，用户随后要求停止排查京东广告复现原因及 T-12 剩余验证；T-12 保留未完成状态，T-13 已记录停止决定。
 
 ## 收尾决定与提交范围
@@ -18,7 +20,7 @@
 env JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :app:testDebugUnitTest --console=plain
 ```
 
-最新完整执行时间：2026-10-13 10:51:20～10:51:26（Asia/Shanghai）。Gradle 返回 `BUILD SUCCESSFUL`，`:app:compileDebugUnitTestKotlin` 和 `:app:testDebugUnitTest` 均实际执行，测试任务未命中缓存。XML 结果如下：
+SDD-001 初次收尾时的完整执行时间：2026-10-13 10:51:20～10:51:26（Asia/Shanghai）。Gradle 返回 `BUILD SUCCESSFUL`，`:app:compileDebugUnitTestKotlin` 和 `:app:testDebugUnitTest` 均实际执行，测试任务未命中缓存。XML 结果如下：
 
 | 测试类 | 执行数 | 失败 / 错误 / 跳过 |
 | --- | --- | --- |
