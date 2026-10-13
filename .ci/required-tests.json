@@ -1,5 +1,5 @@
 {
-  "baseline": "e354a99",
+  "baseline": "ad01dc7",
   "required_cases": {
     "com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCancellationTest": [
       "ac03_ac04_cancellationBetweenCommitsPreservesEvidenceAndReleasesLockForRetry[AWAITING_CONFIRMATION]",
@@ -65,6 +65,164 @@
       "ac03_ac04_ac07_partialFailurePreservesPayloadThenRetrySurvivesReopen",
       "ac08_cancelAfterRealCommitSurvivesReopenAndReplayWritesNothing",
       "ac08_ignoredSuccessfulReturnSurvivesReopenAndReplayWritesNothing"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.automation.ActionRetryPolicyTest": [
+      "ac06_observationDeadlineIsExclusiveAndLastAcceptedActionControlsWait",
+      "ac06_retryRequiresNodeMethodEvidenceUniquenessRevisionAndRemainingAttempt",
+      "ac06_retryWaitsForResponseAndStableTargetWithExactThresholds"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.automation.AutomationCatalogIntegrationTest": [
+      "ac03_ac08_realCatalogDowngradePreservesAcceptedButUnconfirmedRecord",
+      "ac03_realCatalogDeletionWhileQuerySuspendedPreventsClick"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.automation.AutomationEngineActionTest": [
+      "ac01_queryReturningAtAbsoluteDeadlineCannotSubmit",
+      "ac02_ambiguityOrPageChangeStopsWithoutActionAndDoesNotRearm",
+      "ac02_unreadableAndTraversalLimitedSelectorsAllowOtherSelectorsAndRetry",
+      "ac04_notActionableNeverFallsBackToGestureButCanReactToLaterEvent",
+      "ac04_onlyUnsupportedClickFallsBackAndAcceptedOrCompletedGestureIsNotClosed",
+      "ac04_rejectedCancelledAndTimedOutGesturesAreNeverAcceptedRecords",
+      "ac04_suspendedGestureTimesOutAndLateCompletionCannotRestoreSession",
+      "ac07_disableWhileQuerySuspendedPreventsSubmission"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.automation.AutomationEngineCatalogTest": [
+      "ac03_ac08_removalDuringSuspendedFirstActionPreservesReturnedAcceptance",
+      "ac03_ac08_removalDuringSuspendedRetryPreservesAcceptedActionWithoutFurtherWork",
+      "ac03_displayMetadataAndOtherTargetChangesDoNotInvalidate",
+      "ac03_executionFieldChangeInvalidatesBeforeClick",
+      "ac03_invalidatedSessionDoesNotRearmWhenRulesReturnInSameForeground",
+      "ac03_observedRemovalThenRestorationCannotReviveSuspendedQuery",
+      "ac03_removalAfterAcceptedActionStopsRetryAndRecordsUnconfirmed",
+      "ac03_removalBetweenUnsupportedClickAndGesturePreventsFallback",
+      "ac03_removalDuringSuspendedObservationPreventsCloseOrRetry",
+      "ac03_removalWhileQuerySuspendedPreventsFirstClick",
+      "ac03_removedRuleCannotTurnStableAbsenceIntoClosedRecord",
+      "ac03_reorderedRulesInvalidateOriginalPriorityBeforeClick"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.automation.AutomationEngineInvalidationTest": [
+      "ac07_ac08_acceptedActionIsPreservedAsUnconfirmedAcrossEachInvalidation",
+      "ac07_closeCancelsSuspendedQueryAndLateResultCannotAct",
+      "ac07_engineCloseBoundsUnconfirmedRecordCleanup",
+      "ac07_leavingTargetCancelsScheduledQueryAndOldTimerCannotAct",
+      "ac07_mailboxOverflowDuringSuspendedQueryInvalidatesQueuedAction",
+      "ac07_pauseAcknowledgementStopsPendingActionsAndResumeAloneDoesNotAct",
+      "ac07_versionChangeInvalidatesPendingQueryWithoutRearm",
+      "ac08_recordCancellationPropagatesAndEngineRejectsFurtherBarriers",
+      "ac08_recordFailureDoesNotRearmTerminalSession"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.automation.AutomationEngineObservationTest": [
+      "ac01_ac05_observationCannotExtendOriginalForegroundDeadline",
+      "ac05_ac08_acceptedClickNeedsStableAbsenceAndLaterEventBeforeClosedRecord",
+      "ac05_pageFallbackIsDelayedAndLimitedToTwoReads",
+      "ac05_withoutLaterEventStableAbsenceRemainsUnconfirmedUntilDeadline",
+      "ac06_changedPageIdentityPreventsRetryEvenIfTargetReportedPresent",
+      "ac06_eventBeforeAcceptedRetryCannotCloseAfterRetry",
+      "ac06_newEventAfterRetryCanSupportCloseButDeadlineStillStartsAtFirstClick",
+      "ac06_presentTargetCanBeRetriedOnlyOnceAndFailedRetryConsumesAttempt",
+      "ac08_onlyConfirmedCloseStartsRuleCooldownAndOtherRulesRemainIndependent",
+      "ac08_unconfirmedActionDoesNotStartCooldown"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.automation.AutomationEngineSessionTest": [
+      "ac01_activityMustBeAllowedBeforeAnyQuery",
+      "ac01_disabledTargetAndMissingRulesDoNotQueryOrAct",
+      "ac01_expiredEntryOrDelayAtDeadlineCannotAct",
+      "ac01_samePackageWindowChangeDoesNotExtendOrRearmExpiredSession",
+      "ac01_startupDelayUsesForegroundTimeAndExecutesAtThreshold",
+      "ac01_unknownOrDifferentVersionCannotStartBoundRule",
+      "ac02_contentBurstUpdatesIdentityWithoutPostponingFirstQuery"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.automation.PostActionObserverTest": [
+      "ac05_absenceNeedsTwoStableObservationsAndLaterEvent",
+      "ac05_evidenceChangeResetsStabilityAndDeadlineWinsAtEquality",
+      "ac05_originalWindowRemovalRequiresWindowEventInsteadOfContentEvent",
+      "ac05_presentAndInsufficientNeverConfirmClosed",
+      "ac06_eventAfterRetryAcceptanceConfirmsWithoutExtendingOriginalDeadline",
+      "ac06_eventAtRetryAcceptanceCannotConfirm",
+      "ac06_eventBeforeRetryAcceptanceCannotConfirmEvenAfterStableAbsence"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.automation.SelectorMatcherTest": [
+      "ac03_allSpecifiedConditionsVisibilityAndBoundsMustMatch",
+      "ac03_ancestorMustMatchExactDistanceAndRemainVisibleWithBounds",
+      "ac03_countdownsDoNotMatchOrdinaryTextOrOversizedNumbers"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.rulecapture.RuleCandidateAnalyzerTest": [
+      "ac01_groupsKeepActivitiesSeparateAndNewestEvidenceFirst",
+      "ac01_singleEligibleSampleNeedsNoPreClickUniqueEvidence",
+      "ac01_wrongTargetNegativeTimeBlankActivityAndEmptyNodesProduceNoRules",
+      "ac02_frameworkResourceDoesNotProvideStableStructure",
+      "ac02_genericDismissRequiresAppResourceOrStableAncestor",
+      "ac02_plainDescriptionRemainsCandidate",
+      "ac02_plainTextRemainsCandidateEvenWithManualConfirmation",
+      "ac02_stablePrimaryCannotCarryUnconstrainedFallbackSelectors",
+      "ac02_textAndDescriptionWithoutStructureRemainCandidate",
+      "ac03_countdownConversionKeepsOrdinaryTextExactAndRequiresStructure",
+      "ac03_numericHintOnActionNodeProducesConstrainedCountdown",
+      "ac03_numericNeedsDismissSemanticsWithinActualActionChain"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.rules.CompositeRuleCatalogTest": [
+      "ac04_duplicateAcrossTargetsDropsAllLocalRulesButKeepsReadyAnalysis",
+      "ac04_invalidLocalRuleIsFilteredWithoutDroppingUnrelatedValidRule",
+      "ac04_localRulesPrecedeBuiltinAndSnapshotContainsSameSamplesAndAnalysis",
+      "ac05_newSamplesCancelInFlightComputationAndDeletionNeverResurrectsOldRules",
+      "ac05_sessionOnlyChangeDoesNotPublishAnotherRuleSnapshot"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.rules.RuleCatalogSnapshotTest": [
+      "ac06_boundRulesRequireExactNameAndCodeWhileUnboundRulesRemainApplicable",
+      "ac06_copyRebuildsIndexesAndPreservesPriorityAndTargetIsolation"
+    ],
+    "com.zhenghuaizhi.flashskip.domain.rules.RuleValidatorTest": [
+      "ac02_combinedTextAndDescriptionCannotEnterBuiltinCatalog",
+      "ac02_frameworkIdCannotBypassStableStructurePolicy",
+      "ac02_plainDescriptionCannotEnterBuiltinCatalog",
+      "ac02_plainTextCannotEnterBuiltinCatalog",
+      "ac02_stablePrimaryCannotAuthorizeUnconstrainedFallbackSelector",
+      "ac02_stableResourceAndStableAncestorAreAccepted",
+      "ac03_ac04_ancestorAndActionDistancesAreOneThroughFour",
+      "ac03_dynamicTextNeedsAppSpecificStructure",
+      "ac04_duplicateIdsInvalidateEntireBuiltinSet",
+      "ac04_rejectsEachMalformedRuleField"
+    ],
+    "com.zhenghuaizhi.flashskip.platform.accessibility.AccessibilityActionEvidenceTest": [
+      "ac05_changedCompleteLocalRegionCanProveContainerRemoval",
+      "ac05_emptyIndexWithoutIndependentScanCannotProveAbsence",
+      "ac05_freshOriginalTargetIsPresentAndUnique",
+      "ac05_fullPageScanNeedsPriorContextAndCompleteAbsence",
+      "ac05_hiddenTargetIsNotProofOfRemoval",
+      "ac05_incompleteLocalScanDoesNotAuthorizeRetryAsUnique",
+      "ac05_pageNodeDepthAndTimeLimitsRemainInsufficient",
+      "ac05_removingOnlyButtonWithoutChangingContextDoesNotProveDismissal",
+      "ac05_renamedTargetIsNotProofOfRemoval",
+      "ac05_unreadableSubtreeCannotProveAbsenceOrUniqueness",
+      "ac05_wrongWindowOrRefreshFailureCannotProveAbsence"
+    ],
+    "com.zhenghuaizhi.flashskip.platform.accessibility.AccessibilityCandidateFinderTest": [
+      "ac02_ancestorConstraintIsRecheckedAfterRefresh",
+      "ac02_depthBudgetPreventsUnboundedTraversal",
+      "ac02_elapsedScanBudgetProducesTraversalLimitNotAbsence",
+      "ac02_emptyIndexFallsBackToTreeAndFullSelectorControlsUniqueness",
+      "ac02_multipleMatchingIndexedCandidatesAreAmbiguousAndCallbackNeverRuns",
+      "ac02_nodeBudgetPreventsUnboundedTraversal",
+      "ac02_refreshChangingPackageRejectsCachedMatch",
+      "ac02_refreshChangingTextCannotUseCachedSelectorMatch",
+      "ac02_unreadableCandidateCannotProveUniqueOrAbsent",
+      "ac02_unreadableChildMakesFallbackUnavailableEvenWithKnownMatch"
+    ],
+    "com.zhenghuaizhi.flashskip.platform.accessibility.AccessibilityPageGatewayTest": [
+      "ac02_ac04_wrongIdentityPackageOrWindowCannotQueryOrClick",
+      "ac02_duplicateWindowMetadataAndUnreadableRootAreRejected",
+      "ac04_cancellationDuringScanPropagatesBeforeSubmission",
+      "ac04_cancelledWaitIgnoresLateGestureCompletion",
+      "ac04_clickSubmitsActionAndReturnsEvidenceWithoutClaimingClosed",
+      "ac04_deadlineBeforeAndDuringScanPreventsClickAndGesture",
+      "ac04_expectedOriginalEvidenceRejectsChangedTargetBeforeRetry",
+      "ac04_gestureAcceptanceReturnsImmediatelyAndCallbackCannotChangeItsResult",
+      "ac04_notActionableAndUnsupportedAreDistinct",
+      "ac04_pageChangeDuringRefreshCannotSubmitAction",
+      "ac04_rejectedGestureHasNoAcceptedEvidence",
+      "ac04_selectedChildActsOnlyOnCapturedActionAncestor",
+      "ac04_waitingGestureDistinguishesCompletedAndCancelledCallbacks",
+      "ac05_replacementWindowStillContainingTargetCannotProveClose",
+      "ac05_windowChangeAloneIsInsufficientButVerifiedRemovalHasSpecificProof"
     ],
     "com.zhenghuaizhi.flashskip.ui.home.HomeViewModelSaveTest": [
       "ac01_ac06_savedFeedbackTracksCatalogLagAndReadyWithoutAutomaticEnable[phase=AWAITING_CONFIRMATION]",

@@ -221,20 +221,8 @@ object RuleCandidateAnalyzer {
         targetAppVersion = null,
     )
 
-    private fun CapturedSelector.isStrongEnough(): Boolean {
-        val hasGenericDismissSemantic = listOf(text, contentDescription).any { semantic ->
-            DismissSemantics.isKnown(semantic) ||
-                DismissSemantics.isBareNumericCountdown(semantic)
-        }
-        if (hasGenericDismissSemantic) {
-            return hasStableResourceId() || hasStableAncestor()
-        }
-        if (hasStableResourceId()) return true
-        if (hasStableAncestor() && (text != null || contentDescription != null)) return true
-        if (text != null && contentDescription != null) return true
-        val semantic = text ?: contentDescription ?: return false
-        return semantic.isNotBlank()
-    }
+    private fun CapturedSelector.isStrongEnough(): Boolean =
+        hasStableResourceId() || hasStableAncestor()
 
     private fun MutableList<CapturedSelector>.addIfUsable(selector: CapturedSelector) {
         if (selector.conditionCount > 0) add(selector)

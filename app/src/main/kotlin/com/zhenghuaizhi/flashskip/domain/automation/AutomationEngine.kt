@@ -30,6 +30,8 @@ import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.ports.QueryResult
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalog
+import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalogSnapshot
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -38,6 +40,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
@@ -115,6 +118,9 @@ class AutomationEngine(
                     is Command.Content -> handleContent(command)
                     is Command.QueryDue -> handleQueryDue(command)
                     is Command.ObserveAction -> handleObserveAction(command)
+                    is Command.CatalogChanged -> session?.takeIf { it.id == command.sessionId }?.let {
+                        ensureCatalogCurrent(it)
+                    }
                     is Command.CapturePause -> handleCapturePause(command)
                     is Command.Barrier -> command.deferred.complete(Unit)
                 }
@@ -163,7 +169,7 @@ class AutomationEngine(
             previous.packageName == signal.identity.packageName
         if (isSameForegroundTarget) {
             val active = session?.takeIf { it.target.id == target.id } ?: return
-            if (active.terminal) return
+            if (active.terminal || !ensureCatalogCurrent(active)) return
             if (signal.identity.appVersion != active.identity.appVersion) {
                 invalidateWithActionRecord(active, AutomationStopReason.VERSION_CHANGED)
                 session = null
@@ -221,6 +227,7 @@ class AutomationEngine(
             invalidateWithActionRecord(active, AutomationStopReason.APP_DISABLED)
             return
         }
+        if (!ensureCatalogCurrent(active)) return
         if (active.pendingObservation != null) {
             active.identity = command.identity
             noteObservationEvent(active, command.occurredAtElapsedMs)
@@ -247,6 +254,12 @@ class AutomationEngine(
             overflowEpochAtStart = overflowEpoch.get(),
         ).also {
             trace(it, AutomationTraceStage.SESSION_START)
+            // 独立监听可在平台调用挂起时记住撤销；目录恢复也不能重新武装旧会话。
+            it.catalogJob = scope.launch(actorJob) {
+                catalog.snapshot.first { snapshot -> !hasSameExecutionRules(it, snapshot) }
+                it.catalogInvalidated.set(true)
+                mailbox.send(Command.CatalogChanged(it.id))
+            }
             scheduleQuery(it)
         }
     }
@@ -301,6 +314,7 @@ class AutomationEngine(
             return
         }
 
+        if (!ensureCatalogCurrent(active)) return
         val readyRules = active.rules.filter { rule ->
             isRuleReady(rule, active, now)
         }
@@ -351,6 +365,7 @@ class AutomationEngine(
     ): Evaluation {
         var traversalLimited = false
         for (selector in rule.selectors) {
+            if (!ensureCatalogCurrent(active)) return Evaluation.TERMINAL
             val queriedAt = monotonicClock.elapsedRealtimeMs()
             if (active.firstQueryAtElapsedMs == null) active.firstQueryAtElapsedMs = queriedAt
             active.selectorQueryCount++
@@ -359,6 +374,7 @@ class AutomationEngine(
                 active, AutomationTraceStage.QUERY, rule, selector,
                 result = result.traceResult(), durationMs = traceDuration(queriedAt),
             )
+            if (!ensureCatalogCurrent(active)) return Evaluation.TERMINAL
             when (result) {
                 QueryResult.None -> Unit
                 QueryResult.Unique -> {
@@ -386,7 +402,7 @@ class AutomationEngine(
         command: Command.QueryDue,
     ): Evaluation {
         if (!canAct(active, command)) {
-            return abandon(active, rule, ActionReason.QUERY_STALE)
+            return if (active.terminal) Evaluation.TERMINAL else abandon(active, rule, ActionReason.QUERY_STALE)
         }
         val startedAt = if (traceSink.enabled) monotonicClock.elapsedRealtimeMs() else 0L
         val submission = pageGateway.submitClick(active.identity, selector, deadlineElapsedMs = active.deadlineElapsedMs)
@@ -412,7 +428,7 @@ class AutomationEngine(
         }
     }
 
-    private fun beginObservation(
+    private suspend fun beginObservation(
         active: Session,
         rule: AdRule,
         selector: NodeSelector,
@@ -435,6 +451,7 @@ class AutomationEngine(
         active.pendingObservation = pending
         trace(active, AutomationTraceStage.ACTION_ACCEPTED, rule, selector,
             result = AutomationTraceResult.ACCEPTED, method = method, attempt = 1)
+        if (!ensureCatalogCurrent(active)) return Evaluation.TERMINAL
         scheduleObservation(active, pending, PostActionObserver.FIRST_DELAY_MS)
         return Evaluation.PENDING
     }
@@ -481,6 +498,7 @@ class AutomationEngine(
             invalidateWithActionRecord(active, AutomationStopReason.STALE_VERIFICATION)
             return
         }
+        if (!ensureCatalogCurrent(active)) return
         val now = monotonicClock.elapsedRealtimeMs()
         if (now >= pending.deadlineAt) {
             finishUnconfirmed(active, pending)
@@ -500,6 +518,7 @@ class AutomationEngine(
             invalidateWithActionRecord(active, AutomationStopReason.STALE_VERIFICATION)
             return
         }
+        if (!ensureCatalogCurrent(active)) return
         pending = pending.copy(fallbackAttempts = pending.fallbackAttempts + if (fallback) 1 else 0)
         trace(active, AutomationTraceStage.TARGET_OBSERVATION, pending.rule, pending.selector,
             result = when (observation) {
@@ -525,6 +544,7 @@ class AutomationEngine(
                     retryAllowed = retry, attempt = next.attempts, method = next.method,
                     eventRevision = active.eventRevision)
                 if (retry) {
+                    if (!ensureCatalogCurrent(active)) return
                     val submission = pageGateway.submitClick(
                         active.identity, next.selector, next.evidence, deadlineElapsedMs = next.deadlineAt,
                     )
@@ -540,6 +560,7 @@ class AutomationEngine(
                     )
                 }
                 active.pendingObservation = next
+                if (!ensureCatalogCurrent(active)) return
                 scheduleObservation(active, next, PostActionObserver.TIMER_DELAY_MS)
             }
         }
@@ -557,7 +578,7 @@ class AutomationEngine(
         command: Command.QueryDue,
     ): Evaluation {
         if (!canAct(active, command)) {
-            return abandon(active, rule, ActionReason.QUERY_STALE)
+            return if (active.terminal) Evaluation.TERMINAL else abandon(active, rule, ActionReason.QUERY_STALE)
         }
         val startedAt = monotonicClock.elapsedRealtimeMs()
         val gestureDeadline = minOf(active.deadlineElapsedMs, startedAt + GESTURE_TIMEOUT_MS)
@@ -591,13 +612,29 @@ class AutomationEngine(
             active.isCurrent(command) &&
             command.overflowEpoch == overflowEpoch.get() &&
             monotonicClock.elapsedRealtimeMs() < active.deadlineElapsedMs &&
-            store.isAppEnabled(active.target.id)
+            store.isAppEnabled(active.target.id) &&
+            ensureCatalogCurrent(active)
+
+    private fun hasSameExecutionRules(active: Session, snapshot: RuleCatalogSnapshot): Boolean {
+        val current = snapshot.rulesForPackage(active.target.packageName, active.identity.appVersion)
+        return current.size == active.rules.size && current.zip(active.rules).all { (latest, original) ->
+            latest.copy(targetAppName = original.targetAppName) == original
+        }
+    }
+
+    private suspend fun ensureCatalogCurrent(active: Session): Boolean {
+        if (active.terminal) return false
+        if (!active.catalogInvalidated.get() && hasSameExecutionRules(active, catalog.snapshot.value)) return true
+        invalidateWithActionRecord(active, AutomationStopReason.CATALOG_CHANGED)
+        return false
+    }
 
     private suspend fun succeed(
         active: Session,
         rule: AdRule,
         method: ActionMethod,
     ): Evaluation {
+        if (!ensureCatalogCurrent(active)) return Evaluation.TERMINAL
         lastSuccessByRule[rule.id] = monotonicClock.elapsedRealtimeMs()
         return finish(active, rule, ActionOutcome.CLOSED, method, null, ActionObservationStatus.CONFIRMED)
     }
@@ -628,6 +665,7 @@ class AutomationEngine(
             method = method, outcome = outcome, reason = reason, observation = observation,
         )
         active.terminal = true
+        active.catalogJob?.cancel()
         active.queryJob?.cancel()
         active.observationJob?.cancel()
         active.pendingObservation = null
@@ -669,6 +707,7 @@ class AutomationEngine(
 
     private fun invalidate(active: Session, reason: AutomationStopReason) {
         if (!active.terminal) trace(active, AutomationTraceStage.INVALIDATED, stopReason = reason)
+        active.catalogJob?.cancel()
         active.queryJob?.cancel()
         active.observationJob?.cancel()
         active.pendingObservation = null
@@ -777,6 +816,8 @@ class AutomationEngine(
         val enteredAtElapsedMs: Long,
         val deadlineElapsedMs: Long,
         val overflowEpochAtStart: Long,
+        val catalogInvalidated: AtomicBoolean = AtomicBoolean(false),
+        var catalogJob: Job? = null,
         var terminal: Boolean = false,
         var generation: Long = 0,
         var queryJob: Job? = null,
@@ -816,6 +857,7 @@ class AutomationEngine(
     }
 
     private sealed interface Command {
+        data class CatalogChanged(val sessionId: Long) : Command
         data class Foreground(val signal: ForegroundSignal) : Command
         data class Content(val identity: PageIdentity, val occurredAtElapsedMs: Long) : Command
         data class QueryDue(

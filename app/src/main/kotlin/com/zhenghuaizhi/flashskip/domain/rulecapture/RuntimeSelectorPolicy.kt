@@ -32,12 +32,12 @@ internal fun CapturedSelector.toRuntimeSelector(): NodeSelector {
 }
 
 internal fun CapturedSelector.hasStableAncestor(): Boolean =
-    ancestorResourceId != null &&
+    !ancestorResourceId.isNullOrBlank() &&
         !ancestorResourceId.startsWith(ANDROID_RESOURCE_PREFIX) &&
         ancestorDistance != null &&
         ancestorDistance in 1..NodeSelector.MAX_ANCESTOR_DISTANCE
 
 internal fun CapturedSelector.hasStableResourceId(): Boolean =
-    resourceId != null && !resourceId.startsWith(ANDROID_RESOURCE_PREFIX)
+    !resourceId.isNullOrBlank() && !resourceId.startsWith(ANDROID_RESOURCE_PREFIX)
 
 private const val ANDROID_RESOURCE_PREFIX = "android:"
