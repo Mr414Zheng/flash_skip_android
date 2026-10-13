@@ -7,7 +7,7 @@
 - 单个 Android `app` 模块，81 个已跟踪生产 Kotlin 文件：根目录 3、application 4、data 4、domain 24、platform 40、ui 6。
 - P1 基线为 6 个测试 Kotlin 文件（5 个类、1 个支撑文件）、75 例。本轮新增 18 个测试文件（16 个类、2 个支撑文件）；工作区共 21 个类、201 例全部通过，0 失败/错误/跳过。原 75 例本轮全部通过，不能代替 P2 专项验收。
 - 已配置 JUnit 4、Robolectric 和协程测试；P1 GitHub Actions 已通过远端 Linux 验收，并随 PR #1 合入 main。主干运行 `38362313424` 的 28 个检查器测试及现有 75 例均通过，报告上传和下载已核对。尚未配置必需检查或分支保护；没有已跟踪的 `app/src/androidTest/` 测试或覆盖率门槛，分项证据见 [持续检查](ci.md)。
-- P0 时只有 `capture-save-retry` 功能规格包；本轮以 main `ad01dc7` 新增 [规则就绪](rule-readiness/spec.md) 与 [自动执行](automation-execution/spec.md) 规格及离线测试，三项政策已审定并完成生产修复，具体结果分别登记，不把规格落盘当作验收通过。
+- P0 时只有 `capture-save-retry` 功能规格包；本轮以 main `ad01dc7` 新增 [规则就绪](rule-readiness/spec.md) 与 [自动执行](automation-execution/spec.md) 规格及离线测试，三项政策已审定并完成生产修复，具体结果分别登记；PR #3 首轮远端 CI 已通过并下载核验 201 例及构建/Lint 报告，见 [CI 记录](ci.md#p2-pr-远端验收与证据回写)。PR 未合并，无新增设备证据。
 
 ## 职责与状态来源
 
