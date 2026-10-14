@@ -394,3 +394,23 @@ Release 单测任务缺失继续阻塞，静态配置经源指纹核对后复用
 原始 ZIP、展开报告、run／jobs／artifact 元数据、检出提交、构建日志、核验摘要与哈希清单位于本机忽略目录 `app/build/reports/ci/p5/remote-38526504633/`；新检出不含这些产物。远端保留 14 天，到期时间见 artifact 元数据；不承诺链接永久可用。工作流未上传 APK 二进制，因此本机下载的是报告；构建成功及 APK 非空由远端日志和门禁证明。
 
 本节数据归属产品 head 及上述成功 run。证据文档提交推送后，必须再核验最新 head 自身的 Specs、Android 和两组报告，最终结果在交接与 PR 最新检查中提供，避免为记录文档运行而无限回写。PR 保持未合并。Release 单测任务缺失仍阻塞，生成配置仅作静态证据；没有独立评审／QA、Compose 或设备证据。不改持久化格式、依赖、构建、工作流或远端设置，T-12 未完成且继续停止，P6 未启动。
+
+## P5 合并与主干 CI 验收
+
+2026-10-14 用户授权重新确认 PR #8 最新检查后合并、等待 main CI、下载核验报告，并通过独立文档 PR 回写证据。合并前最新 head `799f2670df53c22cae181e065ee32070c256c3ef` 的 Specs、Android 均为 completed／success，无其他提交状态失败；[最新 PR CI 38527250834](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38527250834) 两组报告亦已下载核验。使用匹配该 head 的合并请求，[PR #8](https://github.com/Mr414Zheng/flash_skip_android/pull/8) 于 `2026-10-14T07:44:12Z` 合入 main，提交 `5aafcdf40aaf4d56e5d4336f33e48c495590983f`；合并树与已验收 PR head 相同。此前“保持未合并”描述 PR 交付阶段。
+
+[主干 CI 38530285304](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38530285304) 为该合并 SHA 的 push 运行，Specs、Android 全部通过。报告 environment 首行精确匹配上述 main 提交；本节使用新下载的主干报告，没有将 PR 测试合并提交的结果替代主干证据。
+
+- 61 份 JUnit XML、735 个完整测试身份与必需清单及本地验收报告一致，全部通过，0 失败／错误／跳过；原 701 身份与 19 个原失败均通过。
+- 28 个检查器测试、42 份文档／9 个规格编号检查通过；push 事件 `PR 检查：False` 表示没有 PR 正文检查对象，不是失败。
+- Debug 构建成功，远端产物门禁确认 APK 非空及测试／Lint 报告齐全。Lint 0 错误／15 警告，与 PR 远端分布一致。
+- P5 累计新增 141 例继续分列为 54 JVM、28 JVM 真实文件、48 Robolectric SDK 36 组件、11 Robolectric 真实服务／AppContainer／实际 DataStore 集成；不扩大为设备或 Compose 控件证据。
+
+| artifact | ID | 字节 | API digest／实际下载 ZIP SHA-256 |
+| --- | --- | --- | --- |
+| `specs-38530285304-1` | `11878021070` | 969 | `sha256:0bdf5bf95e269ade61c02f42e86d21b475146e45ba7f7bb28260561dfc227250` |
+| `android-38530285304-1` | `11877796526` | 208665 | `sha256:afcf64ec135e9018170a4f63dca97c70da2f0a1ac8fbba7659f625fa28aea47c` |
+
+两组 ZIP 已下载并核对 API 大小及 SHA-256；展开后核验 JUnit／HTML、Lint XML／HTML、环境、门禁及构建日志，并保存逐文件哈希。原始 ZIP、展开报告、run／jobs／artifact 元数据、实际检出提交、构建日志、核验摘要及哈希清单位于忽略目录 `app/build/reports/ci/p5/remote-38530285304/`。远端保留 14 天，到期时间见 artifact 元数据；新检出不含本机产物。工作流未上传 APK 二进制，本次没有下载或安装远端 APK，构建及非空由远端日志和门禁证明。
+
+证据通过独立文档 PR 回写；验证该文档 head 自身 CI 后保持未合并供用户审阅。上述实测结果只归属主干合并提交 `5aafcdf`，文档检查不改变其来源。不改持久化格式、依赖、构建配置、工作流或远端设置；Release 单测任务缺失继续阻塞，静态配置不替代实际 Release 运行。无新增独立评审／QA、设备或 Compose 证据，T-12 未完成且继续停止，P6 未启动。

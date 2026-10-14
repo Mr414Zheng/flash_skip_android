@@ -78,3 +78,9 @@ Release 单测任务缺失继续阻塞，静态配置经源指纹核对后复用
 ## P5 PR 交付与远端验收
 
 用户续授权的分支、提交、推送及 [PR #8](https://github.com/Mr414Zheng/flash_skip_android/pull/8) 已完成；产品 head `a81b712` 通过 [CI 38526504633](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38526504633)。735 例、28 检查器、规格／PR、Debug 构建与产物门禁通过，Lint 0 错误／15 警告。两组报告已下载并核验摘要、完整测试身份及检出提交，见 [P5 远端 CI](ci.md#p5-pr-与远端-linux-ci-验收)。证据文档 head 另验最新 CI，PR 保持未合并。Release 单测阻塞、Compose／设备与独立 QA 缺口不变，T-12 未完成且停止，P6 未启动；不改持久化格式、依赖、构建或远端设置。
+
+## P5 合并与主干验收
+
+PR #8 最新 head `799f267` 的 Specs／Android 全部成功后，已按续授权合入 main（`5aafcdf`）。[主干 CI 38530285304](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38530285304) 的 735 例、28 个检查器、规格、构建及产物门禁通过，Lint 0 错误／15 警告；两组报告已下载核验完整测试身份、摘要和实际 main 检出 SHA。见 [P5 主干 CI](ci.md#p5-合并与主干-ci-验收)。此前 PR 未合并表述为历史阶段。
+
+证据通过独立文档 PR 回写，验证其自身 CI 后保持未合并供用户审阅；Release 单测阻塞和 Compose／设备证据限制保留，完整分层验收仍未完成。T-12 未完成且停止，P6 未启动，不改持久化格式、依赖、构建或远端设置。

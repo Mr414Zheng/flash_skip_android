@@ -1,6 +1,6 @@
 # FlashSkip 项目规格索引
 
-本目录按业务能力组织规范驱动开发（SDD）的规格、实施任务和验收证据。项目基线为 `e354a99`，P1 实施基线为 `97d3010`，首次远端验收对应 `85fcd27`，更新日期为 2026-10-14。P0 文档及 P1 本地、远端 CI 验收已完成；[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 已合入 main，合并提交为 `2818232`，[主干 CI](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38362313424) 通过。P2 三项政策已审定并完成生产修复，本地、PR 及合并后主干 CI 验收通过，P3 最小生产修复及真实服务集成完成，本地、PR 与合并后主干 CI 验收通过，PR #4 已合入 main（`471ccd2`），P4 最小生产修复、本地、PR 及合并后主干 CI 契约验收已通过，PR #6 已合入 main（`d51fab4`），P5 最小生产修复与本地自动化验收已通过，完整分层验收仍有限制，P6 尚未执行，不代表全项目已完成 SDD 改造。
+本目录按业务能力组织规范驱动开发（SDD）的规格、实施任务和验收证据。项目基线为 `e354a99`，P1 实施基线为 `97d3010`，首次远端验收对应 `85fcd27`，更新日期为 2026-10-14。P0 文档及 P1 本地、远端 CI 验收已完成；[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 已合入 main，合并提交为 `2818232`，[主干 CI](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38362313424) 通过。P2 三项政策已审定并完成生产修复，本地、PR 及合并后主干 CI 验收通过，P3 最小生产修复及真实服务集成完成，本地、PR 与合并后主干 CI 验收通过，PR #4 已合入 main（`471ccd2`），P4 最小生产修复、本地、PR 及合并后主干 CI 契约验收已通过，PR #6 已合入 main（`d51fab4`），P5 最小生产修复、本地、PR 及合并后主干 CI 自动化验收已通过，完整分层验收仍有限制，P6 尚未执行，不代表全项目已完成 SDD 改造。
 
 P2 基线为 main `ad01dc7`（文档 PR #2 已合并）。用户已批准稳定结构、目录失效和最近接受动作事件三项政策并授权最小生产修复。本轮完整重跑 201 例全部通过，包括原 75 例和 P2 新增 126 例；构建、Lint 及证据检查结果见验收记录。其余契约参数沿用基线，不扩大为后续阶段授权。已按续授权将 [PR #3](https://github.com/Mr414Zheng/flash_skip_android/pull/3) 合入 main（`c2a286b`），主干 CI `38376388018` 通过且报告已下载核验，见 [主干验收记录](ci.md#p2-合并与主干-ci-验收)，不修改远端设置、应用依赖或构建配置。`capture-save-retry` 的 T-12 未完成，已按用户要求停止；不继续排查京东广告复现原因，也不恢复剩余设备验证。
 
@@ -75,3 +75,9 @@ Release 单测任务缺失继续阻塞，静态配置经源指纹核对后复用
 ## P5 PR 交付与远端验收
 
 用户续授权的分支、提交、推送及 [PR #8](https://github.com/Mr414Zheng/flash_skip_android/pull/8) 已完成；产品 head `a81b712` 通过 [CI 38526504633](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38526504633)。735 例、28 检查器、规格／PR、Debug 构建与产物门禁通过，Lint 0 错误／15 警告。两组报告已下载并核验摘要、完整测试身份及检出提交，见 [P5 远端 CI](ci.md#p5-pr-与远端-linux-ci-验收)。证据文档 head 另验最新 CI，PR 保持未合并。Release 单测阻塞、Compose／设备与独立 QA 缺口不变，T-12 未完成且停止，P6 未启动；不改持久化格式、依赖、构建或远端设置。
+
+## P5 合并与主干验收
+
+PR #8 最新 head `799f267` 的 Specs／Android 全部成功后，已按续授权合入 main（`5aafcdf`）。[主干 CI 38530285304](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38530285304) 的 735 例、28 个检查器、规格、构建及产物门禁通过，Lint 0 错误／15 警告；两组报告已下载核验完整测试身份、摘要和实际 main 检出 SHA。见 [P5 主干 CI](ci.md#p5-合并与主干-ci-验收)。此前 PR 未合并表述为历史阶段。
+
+证据通过独立文档 PR 回写，验证其自身 CI 后保持未合并供用户审阅；Release 单测阻塞和 Compose／设备证据限制保留，完整分层验收仍未完成。T-12 未完成且停止，P6 未启动，不改持久化格式、依赖、构建或远端设置。
