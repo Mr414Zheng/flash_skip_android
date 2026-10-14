@@ -251,7 +251,7 @@ P2 已合入 main，合并后的主干 CI 验收通过。此轮主干验收回�
 
 ## P3 PR 与远端 Linux CI 验收
 
-2026-10-14 用户续授权新分支提交、推送、创建 PR、等待远端 CI 并核验产物，暂不合并。P3 已提交为 `a5e7ddf186df18edd88741ee95b54421a3edf9e6`，分支 `codex/p3-capture-contracts`，[PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 当前 OPEN，未启用自动合并。此前“未提交／无远端证据”描述本地实施时点；此节为后续远端结果。
+本节保留合并前的 PR 验收时点，后续合并与主干结果见下节。2026-10-14 用户先续授权新分支提交、推送、创建 PR、等待远端 CI 并核验产物，当时暂不合并。P3 已提交为 `a5e7ddf186df18edd88741ee95b54421a3edf9e6`，分支 `codex/p3-capture-contracts`，[PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 当时 OPEN，未启用自动合并。此前“未提交／无远端证据”描述本地实施时点；此节为后续远端结果。
 
 [CI 38491677713](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38491677713) 于 2026-10-14 08:42:25～08:45:37（Asia/Shanghai）运行，Specs、Android 均成功。报告 environment.txt 的实际检出为 PR 测试合并提交 `323cb4da86213edce847984c4ca31d77c6aeb180`，已核对父提交为 main `34dc1027db15fe95ac3de09cf3a001be6a1e60ff` 与上述 P3 head；这是 CI 测试提交，PR 尚未合并。
 
@@ -267,3 +267,24 @@ P2 已合入 main，合并后的主干 CI 验收通过。此轮主干验收回�
 远端警告较本地 12 条多出 3 条版本可用性提示，没有修改依赖或降低检查门槛。现有工作流只上传报告，不上传 APK 二进制：APK 生成／非空由远端门禁及成功日志证明，本机没有下载远端 APK，也未做安装或设备验证。下载文件、运行日志、产物元数据、父提交核对和摘要位于本机忽略目录 `app/build/reports/ci/remote/38491677713/`；GitHub 产物按既有策略保留 14 天，新检出不含本机下载。
 
 本次证据回写仅修改文档，推送后由 PR synchronize 检查验证；本节数据准确归属于上述 head 和运行，后续文档 head 的结果以 PR 最新检查为准。本地与远端 Linux P3 验收通过，不代表独立 QA、设备或 Compose 控件验收。依赖、构建配置、工作流及远端设置保持不变；SDD-001/T-12 未完成且继续停止，P4 以后未启动。
+
+## P3 合并与主干 CI 验收
+
+按用户后续授权，合并前重新读取 [PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 最新 head `0e36333dc65823df70a30fbc7668c39127c8699c`，确认 [CI 38492187179](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38492187179) 的最新 Specs、Android 均 SUCCESS，PR 为 CLEAN／MERGEABLE。该轮两组报告也已下载，核验 479 例、28 个检查器、构建及 Lint（0 错误／15 警告）。同 head 较早的 `38492175565` 被正文更新后的运行替代而取消，不是最新检查失败。
+
+于 2026-10-14 09:00:40（Asia/Shanghai）使用合并提交方式合入 main，合并 SHA 为 `471ccd23d064ed6babd9fcd4f52e3c3aa44852e7`，父提交为原 main `34dc1027db15fe95ac3de09cf3a001be6a1e60ff` 与上述 PR head。已核对合并文件树与验收通过的 PR head 完全一致，保留实现和证据提交。
+
+[主干 CI 38493360255](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38493360255) 于 2026-10-14 09:00:42～09:04:10（Asia/Shanghai）运行，Specs、Android 均成功。下载报告的 environment.txt、运行 head 和本地合并 SHA 三者一致；这是合并后的主干 push 验证。
+
+| 检查 | 主干执行与下载核验 |
+| --- | --- |
+| JUnit | 41 份 XML、479 例全部通过，0 失败／错误／跳过；全部必需身份逐一核对，含原 453 例及原 201 例 |
+| 分层 | P3 新增 207 JVM、57 Robolectric SDK 36 组件、14 真实 service／AppContainer／实际 DataStore 的 Robolectric 集成例均通过；不扩大为设备证据 |
+| 检查器与规格 | 28 例通过，26 份文档／9 个编号通过；push 事件无 PR 正文，报告 `PR 检查：False` 符合工作流定义 |
+| 构建与门禁 | `assembleDebug` 成功，完整 Gradle 56 项任务全部执行；远端门禁核对 APK 非空、报告齐全、测试无失败或跳过 |
+| Lint | 0 错误、15 警告，分布与 PR CI 相同 |
+| 下载 | `specs-38493360255-1`、`android-38493360255-1` 均下载；JUnit XML／HTML、Lint XML／HTML、环境和门禁报告已核验，另保留运行日志、产物元数据及文件 SHA-256 |
+
+本机原始证据位于忽略目录 `app/build/reports/ci/remote/38493360255/`，不提交源码仓库；GitHub 产物仍按现有 14 天保留策略。工作流上传报告而不上传 APK 二进制，APK 生成／非空由远端门禁证明，没有下载 APK 或新增安装、设备与 Compose 控件结论。
+
+P3 已合入 main，合并后的主干验收通过。本轮回写仅修改文档；按用户选择创建独立文档 PR，核对其 CI 后保持未合并，等待用户审阅；上述结果仅归属于合并提交，不错记为后续文档 head。依赖、构建配置、工作流与远端设置未改；没有独立 QA 或新增设备验证，SDD-001/T-12 未完成且继续停止，P4 以后未启动。

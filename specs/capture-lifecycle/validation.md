@@ -1,10 +1,18 @@
 # 验证记录：SDD-004：采集生命周期
 
-状态：五类政策最小修复及内部接缝已完成，本地及远端 Linux 契约验收通过。本包 196 例全部通过。
+状态：五类政策最小修复及内部接缝已完成，本地、PR 及合并后主干 CI 验收通过。本包 196 例全部通过。
+
+## 合并与主干验收
+
+[PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 已于 2026-10-14 09:00:40（Asia/Shanghai）合入 main，合并提交 `471ccd23d064ed6babd9fcd4f52e3c3aa44852e7`。合并前再次确认最新 head `0e36333` 的两项检查通过，合并文件树与该 head 一致。
+
+[主干 CI 38493360255](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38493360255) 的 Specs／Android 均通过：479 例无失败／错误／跳过、28 个检查器、规格检查、debug 构建及产物门禁通过，Lint 0 错误／15 警告。两组报告已下载，逐一核对必需身份及合并 SHA；当前包全部用例通过，真实服务仍为 Robolectric SDK 36 层级。APK 非空由远端门禁核验，未上传或下载 APK 二进制。
+
+详细时间、证据定位和本次文档回写范围见 [主干 CI 记录](../ci.md#p3-合并与主干-ci-验收)。以下 PR／本地记录保留历史时点；SDD-001/T-12 未完成且继续停止，没有新增设备证据。
 
 ## PR 与远端验收
 
-P3 分支 `codex/p3-capture-contracts` 已推送，[PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 保持 OPEN、未合并。2026-10-14 的 [CI 38491677713](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38491677713) 对 head `a5e7ddf186df18edd88741ee95b54421a3edf9e6` 通过：479 例无失败／错误／跳过，28 个检查器、规格／PR 检查、debug 构建和产物门禁通过；Lint 0 错误／15 警告。
+P3 分支 `codex/p3-capture-contracts` 已推送，[PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 在该验收时点保持 OPEN、未合并。2026-10-14 的 [CI 38491677713](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38491677713) 对 head `a5e7ddf186df18edd88741ee95b54421a3edf9e6` 通过：479 例无失败／错误／跳过，28 个检查器、规格／PR 检查、debug 构建和产物门禁通过；Lint 0 错误／15 警告。
 
 两组报告已下载，并逐身份核验 XML 与必需清单；真实服务的 14 例仍属于 Robolectric SDK 36 集成。APK 存在且非空由远端门禁检查，工作流未上传 APK 二进制，无安装或设备结论。检出 SHA、产物位置与警告详情见 [CI 验收记录](../ci.md#p3-pr-与远端-linux-ci-验收)。以下本地及修复前记录保留历史范围；本次文档回写将由 PR 最新 CI 单独验证。SDD-001/T-12 继续停止。
 
