@@ -334,3 +334,23 @@ Debug 构建、28 个检查器测试、规格检查与必需身份／产物门�
 产物元数据的过期时间为 2026-10-28；保留策略仍为 14 天。原始 ZIP、展开报告、run／jobs／artifact 元数据、merge 父提交、构建日志、核验摘要与文件哈希清单位于本机忽略目录 `app/build/reports/ci/p4/remote-38503118760/`，新检出不含这些报告，不承诺链接永久可用。工作流上传报告而没有上传 APK 二进制；本机没有下载远端 APK，构建成功及非空由远端日志和门禁证明。
 
 本节数据只归属上述产品提交和成功 run。文档回写提交推送后须再次核对最新 head 的 Specs、Android 并下载核验报告，最终运行记录交接与 PR 最新检查，以免为记录文档运行再触发无限回写。没有独立评审、独立 QA、设备或 Compose 控件证据；持久化格式、依赖、构建、工作流和远端设置未改，SDD-001/T-12 未完成且停止，P5 未启动，PR 保持未合并。
+
+## P4 合并与主干 CI 验收
+
+2026-10-14 用户授权确认 PR #6 最新检查全部通过后合并、等待 main CI、下载核验报告并回写证据。合并前重新读取 head `400897575517201cd427c64c0f25bd4d16acd975`，其 [CI 38503884707](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38503884707) 的 Specs、Android 均成功，PR 为可合并状态。使用匹配该 head 的合并操作，[PR #6](https://github.com/Mr414Zheng/flash_skip_android/pull/6) 于 03:09:27 UTC 合入 main，合并提交 `d51fab428110e58c313b9263aa5893e8639fb80f`；合并树与已验收 PR head 相同。此前保持未合并的表述属于 PR 交付阶段。
+
+[主干 CI 38504787335](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38504787335) 为该提交的 push 运行，Specs、Android 全部成功。下载报告中的 environment 首行就是上述 main 合并 SHA，未复用 PR 测试合并提交的结果。
+
+- 49 份 JUnit XML、594 个完整测试身份与必需清单完全一致，全部通过，0 失败／错误／跳过；包含原 574 个身份及 28 个原红例。
+- 28 个 CI 检查器测试、34 份规格／9 个编号检查通过。push 事件的 `PR 检查：False` 表示无 PR 正文检查对象，不是失败。
+- Debug 构建成功，远端产物门禁确认 APK 非空；测试 HTML、Lint XML／HTML、环境、门禁和构建日志齐全。Lint 为 0 错误、15 警告，与 PR 远端分布一致。
+- P4 115 个新增用例仍按 38 JVM、24 Robolectric Codec、48 实际 DataStore、5 真实服务／AppContainer／DataStore 集成分层；后 3 组在 Robolectric SDK 36 下运行，不扩大为设备或 Compose 控件证据。
+
+| artifact | ID | 字节 | API digest／实际下载 ZIP SHA-256 |
+| --- | --- | --- | --- |
+| `android-38504787335-1` | `11867812183` | 179869 | `sha256:c6a7591998b329fc998003fbaf4cc6563ed7efedc3367c6f18b77b4566dc9395` |
+| `specs-38504787335-1` | `11867241733` | 967 | `sha256:390d59cee2479cafe9291867ef26f2f755c2f99921ba82328b5141c9f6294715` |
+
+两组 ZIP 已下载，大小和 SHA-256 与 API 元数据匹配；展开后逐项核验测试身份及报告内容，并保存逐文件哈希。原始 ZIP、展开报告、run／jobs／artifact 元数据、实际检出提交、构建日志、核验摘要和哈希清单位于忽略目录 `app/build/reports/ci/p4/remote-38504787335/`。远端保留 14 天，元数据到期日为 2026-10-28；新检出不包含本机报告。工作流没有上传 APK 二进制，因此本轮下载的是报告，构建及非空证据来自远端日志和门禁。
+
+主干证据通过独立文档 PR 回写，沿用此前审阅流程，须核对该文档 head 自身 CI 并留待用户审阅，不直接推送 main。上述实测数据归属 `d51fab4`，后续文档检查不改变其来源。不改持久化格式、依赖、构建配置、工作流和远端设置；没有新增独立评审、独立 QA 或设备证据。SDD-001/T-12 未完成且继续停止，P5 未启动。

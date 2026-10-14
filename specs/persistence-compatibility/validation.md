@@ -1,6 +1,6 @@
 # 验证记录：SDD-006
 
-状态：P4 最小生产修复、本地及 PR 远端契约验收通过。本包 68 例全部通过，修复前失败记录保留。
+状态：P4 最小生产修复、本地、PR 及合并后主干 CI 契约验收通过。本包 68 例全部通过，修复前失败记录保留。
 
 ## 修复后完整本地验收
 
@@ -57,6 +57,12 @@ Gradle 返回 0，56 个任务实际执行；debug 构建、28 个检查器测�
 两组报告已下载，ZIP 大小及 SHA-256 与 GitHub artifact digest 一致，JUnit／HTML、Lint、环境、门禁及构建日志已核验。environment 的测试合并提交 `bc4b5ee6583aaa6cad2ac0150ec876603c8124f7` 父提交为 main `40e6080` 与上述产品 head。完整元数据、摘要、文件哈希及下载边界见 [P4 CI 记录](../ci.md#p4-pr-与远端-linux-ci-验收)，本机原始证据在忽略目录 `app/build/reports/ci/p4/remote-38503118760/`。
 
 本轮证据回写仅改文档，其后 head 需要单独核对最新 CI；上述实测数据只归属产品 head。工作流没有上传 APK，下载内容为报告；无设备、Compose 控件、独立评审或独立 QA 结论。T-12 继续停止，P5 未启动，PR 保持未合并。
+
+## 合并与主干验收
+
+[PR #6](https://github.com/Mr414Zheng/flash_skip_android/pull/6) 已在重新核对最新 head `4008975` 的 Specs、Android 全部成功后合入 main（`d51fab428110e58c313b9263aa5893e8639fb80f`）。[主干 CI 38504787335](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38504787335) 全部通过：49 类、594 例，0 失败／错误／跳过；全部必需身份保留。28 检查器、规格、Debug 构建及产物门禁通过，Lint 0 错误／15 警告。
+
+两组报告已实际下载，核对 ZIP 大小／SHA-256、完整测试身份、报告内容及 environment 中的 main 合并 SHA。主干报告保存在忽略目录 `app/build/reports/ci/p4/remote-38504787335/`；artifact ID、摘要和限制见 [主干 CI 记录](../ci.md#p4-合并与主干-ci-验收)。前述未合并状态仅代表当时阶段。证据回写为独立文档 PR，其 CI 单独验证并留待用户审阅。没有远端 APK 下载或新增设备／Compose／独立 QA 证据；T-12 继续停止，P5 未启动。
 
 ## 修复前历史记录（以下不代表当前状态）
 

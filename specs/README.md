@@ -1,6 +1,6 @@
 # FlashSkip 项目规格索引
 
-本目录按业务能力组织规范驱动开发（SDD）的规格、实施任务和验收证据。项目基线为 `e354a99`，P1 实施基线为 `97d3010`，首次远端验收对应 `85fcd27`，更新日期为 2026-10-14。P0 文档及 P1 本地、远端 CI 验收已完成；[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 已合入 main，合并提交为 `2818232`，[主干 CI](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38362313424) 通过。P2 三项政策已审定并完成生产修复，本地、PR 及合并后主干 CI 验收通过，P3 最小生产修复及真实服务集成完成，本地、PR 与合并后主干 CI 验收通过，PR #4 已合入 main（`471ccd2`），P4 最小生产修复、本地及 PR 远端契约验收已通过，P5～P6 尚未执行，不代表全项目已完成 SDD 改造。
+本目录按业务能力组织规范驱动开发（SDD）的规格、实施任务和验收证据。项目基线为 `e354a99`，P1 实施基线为 `97d3010`，首次远端验收对应 `85fcd27`，更新日期为 2026-10-14。P0 文档及 P1 本地、远端 CI 验收已完成；[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 已合入 main，合并提交为 `2818232`，[主干 CI](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38362313424) 通过。P2 三项政策已审定并完成生产修复，本地、PR 及合并后主干 CI 验收通过，P3 最小生产修复及真实服务集成完成，本地、PR 与合并后主干 CI 验收通过，PR #4 已合入 main（`471ccd2`），P4 最小生产修复、本地、PR 及合并后主干 CI 契约验收已通过，PR #6 已合入 main（`d51fab4`），P5～P6 尚未执行，不代表全项目已完成 SDD 改造。
 
 P2 基线为 main `ad01dc7`（文档 PR #2 已合并）。用户已批准稳定结构、目录失效和最近接受动作事件三项政策并授权最小生产修复。本轮完整重跑 201 例全部通过，包括原 75 例和 P2 新增 126 例；构建、Lint 及证据检查结果见验收记录。其余契约参数沿用基线，不扩大为后续阶段授权。已按续授权将 [PR #3](https://github.com/Mr414Zheng/flash_skip_android/pull/3) 合入 main（`c2a286b`），主干 CI `38376388018` 通过且报告已下载核验，见 [主干验收记录](ci.md#p2-合并与主干-ci-验收)，不修改远端设置、应用依赖或构建配置。`capture-save-retry` 的 T-12 未完成，已按用户要求停止；不继续排查京东广告复现原因，也不恢复剩余设备验证。
 
@@ -56,4 +56,6 @@ SDD-001 的 [计划](capture-save-retry/plan.md)、[任务](capture-save-retry/t
 
 ## P4 当前交付
 
-[PR #6](https://github.com/Mr414Zheng/flash_skip_android/pull/6) 保持未合并，产品 head `da412ed` 的 [CI 38503118760](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38503118760) 通过；594 例、28 个检查器、规格、构建及 Lint（0 错误／15 警告）已下载核验。两规格包验证与 [CI 记录](ci.md#p4-pr-与远端-linux-ci-验收) 保留本地和修复前历史并新增远端证据；文档回写 head 另查最新 CI，不扩展设备或独立 QA 结论。T-12 停止，P5 未启动。
+[PR #6](https://github.com/Mr414Zheng/flash_skip_android/pull/6) 已按续授权合入 main（`d51fab4`），产品 head `da412ed` 的 [CI 38503118760](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38503118760) 通过；594 例、28 个检查器、规格、构建及 Lint（0 错误／15 警告）已下载核验。两规格包验证与 [CI 记录](ci.md#p4-pr-与远端-linux-ci-验收) 保留本地和修复前历史并新增远端证据；文档回写 head 另查最新 CI，不扩展设备或独立 QA 结论。T-12 停止，P5 未启动。
+
+合并前最新 head `4008975` 的检查已重新确认通过；[主干 CI 38504787335](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38504787335) 全部通过，594 例、28 检查器、构建及 Lint（0 错误／15 警告）报告已下载核验。详见 [主干验收](ci.md#p4-合并与主干-ci-验收)。本轮仅通过独立文档 PR 回写证据，其 CI 单独核对并留待审阅。
