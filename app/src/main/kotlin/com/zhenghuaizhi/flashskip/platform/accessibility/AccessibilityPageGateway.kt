@@ -5,6 +5,7 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
 import android.util.Log
+import com.zhenghuaizhi.flashskip.platform.diagnostics.ProcessDiagnosticIdentifiers
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.zhenghuaizhi.flashskip.BuildConfig
@@ -211,9 +212,10 @@ class AccessibilityPageGateway(
             selectorMatcher.check(node, selector, refreshAncestors = true) == CandidateMatchResult.MATCH
         val original = semantic && actionEvidence.matchesOriginal(node, evidence)
         if (BuildConfig.DEBUG) runCatching {
+            val identifiers = ProcessDiagnosticIdentifiers.Process
             Log.d(AutomationTraceLog.TAG,
-                "source=platform stage=ACTION_REVALIDATED targetHash=${identity.packageName.hashCode().toUInt().toString(16)} " +
-                    "windowId=${identity.windowId} selectorHash=${selector.hashCode().toUInt().toString(16)} " +
+                "source=platform process=${identifiers.scope} stage=ACTION_REVALIDATED targetToken=${identifiers.token("target", identity.packageName.hashCode())} " +
+                    "windowId=${identity.windowId} selectorToken=${identifiers.token("selector", selector.hashCode())} " +
                     "refreshed=$refreshed boundary=$boundary semantic=$semantic original=$original")
         }
         return original
@@ -221,9 +223,10 @@ class AccessibilityPageGateway(
 
     private fun traceGestureCallback(identity: PageIdentity, selector: NodeSelector, result: String) {
         if (BuildConfig.DEBUG) runCatching {
-            Log.d(AutomationTraceLog.TAG, "source=platform stage=GESTURE_CALLBACK " +
-                "targetHash=${identity.packageName.hashCode().toUInt().toString(16)} windowId=${identity.windowId} " +
-                "selectorHash=${selector.hashCode().toUInt().toString(16)} result=$result")
+            val identifiers = ProcessDiagnosticIdentifiers.Process
+            Log.d(AutomationTraceLog.TAG, "source=platform process=${identifiers.scope} stage=GESTURE_CALLBACK " +
+                "targetToken=${identifiers.token("target", identity.packageName.hashCode())} windowId=${identity.windowId} " +
+                "selectorToken=${identifiers.token("selector", selector.hashCode())} result=$result")
         }
     }
 

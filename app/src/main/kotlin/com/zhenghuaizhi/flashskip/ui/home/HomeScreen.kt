@@ -35,6 +35,9 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zhenghuaizhi.flashskip.R
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
@@ -48,12 +51,15 @@ fun FlashSkipRoute(
     onGoHome: () -> NavigationLaunchResult,
 ) {
     val state = viewModel.uiState.collectAsStateWithLifecycle().value
-    LaunchedEffect(viewModel, onGoHome) {
-        viewModel.effects.collect { effect ->
-            when (effect) {
-                is HomeViewModel.HomeEffect.GoHome -> {
-                    if (onGoHome() == NavigationLaunchResult.UNAVAILABLE) {
-                        viewModel.reportGoHomeFailure(effect.sessionId)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(viewModel, onGoHome, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.effects.collect { effect ->
+                when (effect) {
+                    is HomeViewModel.HomeEffect.GoHome -> {
+                        if (onGoHome() == NavigationLaunchResult.UNAVAILABLE) {
+                            viewModel.reportGoHomeFailure(effect.sessionId)
+                        }
                     }
                 }
             }

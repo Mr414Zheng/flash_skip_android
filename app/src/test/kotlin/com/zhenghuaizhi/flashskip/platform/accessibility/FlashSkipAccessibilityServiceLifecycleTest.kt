@@ -2,6 +2,9 @@ package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import android.app.Application
 import android.content.ComponentName
 import android.content.pm.PackageManager
@@ -417,6 +420,129 @@ class FlashSkipAccessibilityServiceLifecycleTest {
             assertServiceCanAct(f)
         }
     }
+
+    @Test fun p5WaitingForFirstStorageReadMustNotReportReady() = runTest {
+        withService { f ->
+            val status = homeServiceStatus(f)
+            val gate = CompletableDeferred<Unit>()
+            f.captureData.readGate = gate
+            try {
+                f.connect()
+                assertNotEquals(com.zhenghuaizhi.flashskip.domain.model.ServiceStatus.RUNNING, status.status.value)
+            } finally { gate.complete(Unit) }
+        }
+    }
+
+    @Test fun p5InterruptedServiceMustNotReportReady() = runTest {
+        withService { f ->
+            val status = homeServiceStatus(f)
+            f.connect(); f.service.onInterrupt(); runCurrent()
+            assertNotEquals(com.zhenghuaizhi.flashskip.domain.model.ServiceStatus.RUNNING, status.status.value)
+        }
+    }
+
+    @Test fun p5UnavailablePreferencesMustNotReportReady() = runTest {
+        withService { f ->
+            val status = homeServiceStatus(f)
+            f.flashData.readFailure = IOException("unavailable")
+            f.connect()
+            assertNotEquals(com.zhenghuaizhi.flashskip.domain.model.ServiceStatus.RUNNING, status.status.value)
+        }
+    }
+
+    @Test fun p5FailedRecoveryMustNotReportReady() = runTest {
+        withService(phase = CapturePhase.AWAITING_CONFIRMATION) { f ->
+            val status = homeServiceStatus(f)
+            f.captureData.beforeUpdate = { throw IOException("recovery") }
+            f.connect()
+            assertNotEquals(com.zhenghuaizhi.flashskip.domain.model.ServiceStatus.RUNNING, status.status.value)
+        }
+    }
+
+    @Test fun p5NormalPendingSaveDoesNotMakeReadyServiceAbnormal() = runTest {
+        withService { f ->
+            val status = homeServiceStatus(f)
+            f.connect()
+            assertEquals(CapturePhase.CAPTURED, f.state().activeSession!!.phase)
+            assertEquals(com.zhenghuaizhi.flashskip.domain.model.ServiceStatus.RUNNING, status.status.value)
+        }
+    }
+
+    @Test fun p5DestroyedServiceIsNotReady() = runTest {
+        withService { f ->
+            val status = homeServiceStatus(f)
+            f.connect(); f.destroy(); runCurrent()
+            assertNotEquals(com.zhenghuaizhi.flashskip.domain.model.ServiceStatus.RUNNING, status.status.value)
+        }
+    }
+
+    @Test fun p5RecoveredStorageRestoresReadyStatus() = runTest {
+        withService { f ->
+            val status = homeServiceStatus(f)
+            f.flashData.readFailure = IOException("unavailable"); f.connect()
+            f.flashData.readFailure = null; advanceTimeBy(1_000); runCurrent()
+            assertEquals(com.zhenghuaizhi.flashskip.domain.model.ServiceStatus.RUNNING, status.status.value)
+        }
+    }
+
+    @Test fun p5InterruptedServiceBlocksHomeStartEvenWhenCaptureIsEmpty() = runTest {
+        withService { f ->
+            val status = homeServiceStatus(f)
+            f.connect(); f.container.ruleCaptureCoordinator.cancel(SESSION_ID); runCurrent()
+            val vm = com.zhenghuaizhi.flashskip.ui.home.HomeViewModel(f.flash, f.container.ruleCatalog, status, f.container.ruleCaptureCoordinator)
+            val collector = backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect { } }
+            try {
+                f.service.onInterrupt(); runCurrent()
+                assertFalse(vm.uiState.value.capture.canStart)
+                vm.startCapture(); runCurrent()
+                assertNull(f.state().activeSession)
+            } finally {
+                collector.cancel(); vm.viewModelScope.cancel(); runCurrent()
+            }
+        }
+    }
+
+    @Test fun p5ReadyServiceDowngradesOnUnknownStorageAndRecoversAfterRepair() = runTest {
+        withService { f ->
+            val status = homeServiceStatus(f)
+            f.connect(); assertEquals(com.zhenghuaizhi.flashskip.domain.model.ServiceStatus.RUNNING, status.status.value)
+            f.flashData.replaceRaw("action_records_v2", """{"version":99,"records":[]}""")
+            runCurrent()
+            assertFalse(status.isReady)
+            assertNotEquals(com.zhenghuaizhi.flashskip.domain.model.ServiceStatus.RUNNING, status.status.value)
+            f.flashData.replaceRaw("action_records_v2", """{"version":2,"records":[]}""")
+            runCurrent(); assertTrue(status.isReady)
+        }
+    }
+
+    @Test fun p5ReconnectCannotReusePriorReadinessWhileNewReadIsBlocked() = runTest {
+        withService { f ->
+            val status = homeServiceStatus(f)
+            f.connect(); assertTrue(status.isReady)
+            val gate = CompletableDeferred<Unit>(); f.captureData.readGate = gate
+            try {
+                f.connect(); assertFalse(status.isReady)
+            } finally { gate.complete(Unit) }
+            runCurrent(); assertTrue(status.isReady)
+        }
+    }
+
+    @Test fun p5InterruptedServiceStaysUnavailableAcrossStorageUpdatesUntilReconnect() = runTest {
+        withService { f ->
+            val status = homeServiceStatus(f)
+            f.connect(); f.service.onInterrupt(); runCurrent()
+            f.capture.update { it.copy(activeSession = null) }; runCurrent()
+            assertFalse(status.isReady)
+            f.connect(); assertTrue(status.isReady)
+        }
+    }
+
+    private fun TestScope.homeServiceStatus(f: ServiceFixture) =
+        com.zhenghuaizhi.flashskip.application.ServiceStatusCoordinator(
+            com.zhenghuaizhi.flashskip.application.SystemServiceStatusReader { true },
+            f.container.serviceConnections,
+            backgroundScope,
+        ).also { it.refresh(); runCurrent() }
 
     private suspend fun TestScope.assertServiceCannotAct(f: ServiceFixture) {
         f.sendTargetWindowEvent()

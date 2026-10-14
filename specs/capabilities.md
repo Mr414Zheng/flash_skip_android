@@ -24,8 +24,8 @@
 | C05 采集证据与目标识别 / 高 | [AccessibilityCaptureAdapter](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/platform/accessibility/AccessibilityCaptureAdapter.kt)、[AccessibilityCaptureProbe](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/platform/accessibility/AccessibilityCaptureProbe.kt)、[CaptureRuleSafetyPolicy](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/domain/rulecapture/CaptureRuleSafetyPolicy.kt) | 包/窗口身份、真实点击恢复、候选和语义差分、扫描预算及覆盖情况；向协调器提交证据 | [SDD-005](capture-evidence/spec.md) 已落盘，证据测试组织 82 例全部通过；结果见 [验证](capture-evidence/validation.md) |
 | C06 持久化与兼容 / 高 | [PreferencesRuleCaptureStore](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/data/preferences/PreferencesRuleCaptureStore.kt)、[PreferencesFlashSkipStore](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/data/preferences/PreferencesFlashSkipStore.kt)、[RuleCaptureCodec](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/data/preferences/RuleCaptureCodec.kt)、[ActionRecordCodec](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/data/preferences/ActionRecordCodec.kt) | 文件提交、编码、安全过滤、初始化清理、读取降级及记录保留 | P4 最小修复已合入 main，本地、PR 及主干专项 68 例通过；[验证](persistence-compatibility/validation.md) 含条目隔离、写保护、可用性与服务恢复证据 |
 | C07 规则管理 / 高 | [RuleCaptureCoordinator](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/application/rulecapture/RuleCaptureCoordinator.kt)：setAppEnabled、clearTarget、clearAll | 显式开关、单目标/全部删除、无关数据隔离；写开关并清除样本与会话 | P4 已合入 main，本地、PR 及主干专项 47 例通过；[验证](rule-management/validation.md) 含不可用读取阻断、锁内重试校验与部分提交证据 |
-| C08 服务与首页交互 / 中 | [ServiceStatusCoordinator](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/application/ServiceStatusCoordinator.kt)、[HomeViewModel](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/ui/home/HomeViewModel.kt)、[HomeScreen](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/ui/home/HomeScreen.kt) | 系统授权与连接状态、页面生命周期、控件和反馈、导航失败；将用户操作传入协调器 | 已有 18 例保存相关 ViewModel 测试；未覆盖完整服务状态、实际 Compose 控件及系统生命周期 |
-| C09 诊断与数据边界 / 中 | [CaptureDiagnosticJournal](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/platform/diagnostics/CaptureDiagnosticJournal.kt)、[CaptureTraceLog](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/platform/accessibility/CaptureTraceLog.kt)、AppContainer、[Manifest](../app/src/main/AndroidManifest.xml) | 诊断开关、元数据筛选、队列与文件上限、写入失败、备份边界；诊断文件副作用 | 有实现和历史诊断资料，无专项契约测试；不把日志存在视为诊断安全或完整性的证明 |
+| C08 服务与首页交互 / 中 | [ServiceStatusCoordinator](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/application/ServiceStatusCoordinator.kt)、[HomeViewModel](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/ui/home/HomeViewModel.kt)、[HomeScreen](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/ui/home/HomeScreen.kt) | 系统授权与连接状态、页面生命周期、控件和反馈、导航失败；将用户操作传入协调器 | [SDD-008](service-and-home/spec.md) 最小修复后累计新增 67 例全部通过；原 13 个红例关闭，修复前报告保留；实际 Compose／设备未验证 |
+| C09 诊断与数据边界 / 中 | [CaptureDiagnosticJournal](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/platform/diagnostics/CaptureDiagnosticJournal.kt)、[CaptureTraceLog](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/platform/accessibility/CaptureTraceLog.kt)、AppContainer、[Manifest](../app/src/main/AndroidManifest.xml) | 诊断开关、元数据筛选、队列与文件上限、写入失败、备份边界；诊断文件副作用 | [SDD-009](diagnostics/spec.md) 最小修复后累计新增 74 例全部通过；原 6 个红例关闭，修复前报告保留；Release 单测任务缺失 |
 
 优先级基于错误点击、证据失真和数据丢失的影响；“中”不代表可省略。间接覆盖不能据此宣称整个能力通过，也不在缺少测量时声称全项目覆盖率。
 
@@ -51,7 +51,7 @@ P2 三项政策已按后续授权修复；其他条目是后续规格的决策�
 | 采集恢复与期限 | P3 已批准未过期待保存载荷在断连／恢复时保留与单调硬截止；已按续授权修复并通过本地契约验证 | P3 / SDD-004 |
 | 数据兼容与回退 | P4 已批准保留 v2 缺省、弃用 v1、坏条目隔离与不可用原文防覆盖；最小修复完成，原空值回退失败保留为历史 | P4 / SDD-006 |
 | 删除部分失败 | P4 已批准部分停用保留、失败即停止、旧删除重试范围变化失效；最小修复及本地验收通过 | P4 / SDD-007 |
-| 诊断承诺 | 当前诊断有队列与容量边界；允许记录什么、丢失如何表达、release 行为需独立规定 | P5 / SDD-009 |
+| 诊断承诺 | P5 已确认仅进程内关联、禁止稳定内容散列、损坏索引保留与尽力记录；最小修复与本地自动化验收通过，Release 证据仍阻塞 | P5 / SDD-009 |
 
 T-12 停止决定不是待审定事项；不得因上述清单重新启动京东排查或设备验证。
 
@@ -62,3 +62,15 @@ T-12 停止决定不是待审定事项；不得因上述清单重新启动京东
 本地、PR 及主干 CI 契约验收通过，[PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 已合入 main（`471ccd2`）。[CI 38491677713](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38491677713) 的 479 例、构建、Lint 及报告核验通过；没有设备或 Compose 证据。依赖、构建配置和远端设置未改，SDD-001/T-12 继续停止。
 
 [主干 CI 38493360255](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38493360255) 的 479 例、28 个检查器、构建、Lint 与产物门禁通过，两组报告已下载并核验合并 SHA；详情见 [主干验收](ci.md#p3-合并与主干-ci-验收)。
+
+## P5 首轮本地证据（历史）
+
+main `0c9a53f` 上新增 8 个测试类并在既有真实服务类追加 8 例，共 107 例；全量 701 例中 19 失败，原 594 例全部通过。新增层级为 33 JVM、28 JVM 真实文件、38 Robolectric SDK 36 组件及 8 Robolectric 真实服务／AppContainer／实际 DataStore 集成。原服务 19 例仅为回归。结果见两包 validation；不修改生产或构建，不宣称独立评审／QA、设备、Compose 或远端 CI。
+
+## P5 最小修复与本地验收
+
+2026-10-14 用户续授权 19 个失败对应的最小生产修复和必要内部接缝，保留 701 个测试身份及预期。当前完整 61 类、735 例全部通过，零失败／错误／跳过；新增 34 回归，P5 累计 141 例：54 JVM、28 JVM 真实文件、48 Robolectric SDK 36 组件、11 Robolectric 真实服务／AppContainer／实际 DataStore 集成。原 19 个失败全部关闭；修复前报告和测试源码快照保留。
+
+Debug 构建、28 个检查器测试、规格和必需身份／产物门禁通过，Lint 0 错误／12 个既有警告。服务就绪周期、固定确认期限、前台会话导航、反馈归属及诊断进程关联／异常隔离已修复。证据位于本机忽略目录 `app/build/reports/p5-contracts/repaired-final/`，失败历史保留在 `full/`；具体 AC 及证据层级见 [SDD-008](service-and-home/validation.md#修复后本地验收)、[SDD-009](diagnostics/validation.md#修复后本地验收)。
+
+Release 单测任务缺失继续阻塞，静态配置经源指纹核对后复用首轮证据；真实 Compose／设备未验证，完整分层 P5 验收未完成。无提交／推送／PR、远端 CI 或独立评审／QA，不改持久化格式、依赖、构建、工作流或远端设置。T-12 未完成且继续停止，P6 未启动。

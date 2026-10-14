@@ -1,12 +1,17 @@
 package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.util.Log
+import com.zhenghuaizhi.flashskip.platform.diagnostics.ProcessDiagnosticIdentifiers
 import com.zhenghuaizhi.flashskip.domain.ports.AutomationTraceEvent
 import com.zhenghuaizhi.flashskip.domain.ports.AutomationTraceSink
 import com.zhenghuaizhi.flashskip.domain.ports.AutomationTraceStage
 import java.util.concurrent.atomic.AtomicLong
 
-internal class AutomationTraceLog(override val enabled: Boolean) : AutomationTraceSink {
+internal class AutomationTraceLog(
+    override val enabled: Boolean,
+    private val identifiers: ProcessDiagnosticIdentifiers = ProcessDiagnosticIdentifiers.Process,
+    private val output: (String) -> Unit = { Log.d(TAG, it) },
+) : AutomationTraceSink {
     private val engineId = nextEngineId.incrementAndGet()
     private var sequence = 0L
     private var sessionId: Long? = null
@@ -66,18 +71,19 @@ internal class AutomationTraceLog(override val enabled: Boolean) : AutomationTra
 
     private fun write(event: AutomationTraceEvent, repeatCount: Int = 0) {
         val fields = listOf(
+            "process" to identifiers.scope,
             "engine" to engineId,
-            "session" to event.sessionId,
+            "sessionToken" to identifiers.token("automation-session", event.sessionId),
             "seq" to ++sequence,
             "relativeMs" to event.elapsedMs,
             "stage" to event.stage,
-            "targetHash" to event.targetHash.toUInt().toString(16),
+            "targetToken" to identifiers.token("target", event.targetHash),
             "windowId" to event.windowId,
-            "ruleHash" to event.ruleHash?.toUInt()?.toString(16),
+            "ruleToken" to event.ruleHash?.let { identifiers.token("rule", it) },
             "selectorIndex" to event.selectorIndex,
-            "selectorHash" to event.selectorHash?.toUInt()?.toString(16),
-            "resourceIdHash" to event.resourceIdHash?.toUInt()?.toString(16),
-            "ancestorIdHash" to event.ancestorIdHash?.toUInt()?.toString(16),
+            "selectorToken" to event.selectorHash?.let { identifiers.token("selector", it) },
+            "resourceIdToken" to event.resourceIdHash?.let { identifiers.token("resource", it) },
+            "ancestorIdToken" to event.ancestorIdHash?.let { identifiers.token("resource", it) },
             "textKind" to event.textKind,
             "hasDescription" to event.hasDescription,
             "ancestorDistance" to event.ancestorDistance,
@@ -101,7 +107,7 @@ internal class AutomationTraceLog(override val enabled: Boolean) : AutomationTra
             "retryAllowed" to event.retryAllowed,
             "repeatCount" to repeatCount.takeIf { it > 0 },
         )
-        Log.d(TAG, fields.filter { it.second != null }.joinToString(" ") { "${it.first}=${it.second}" })
+        try { output(fields.filter { it.second != null }.joinToString(" ") { "${it.first}=${it.second}" }) } catch (_: Exception) { }
     }
 
     private data class Repeated(

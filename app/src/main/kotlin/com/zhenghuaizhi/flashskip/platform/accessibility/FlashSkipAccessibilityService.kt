@@ -54,7 +54,12 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     private var captureConfigured = false
     private var automationPaused: Boolean? = null
     private var serviceInterrupted = false
+    private var connectionCycle = 0L
     private var serviceStateReady = false
+        set(value) {
+            field = value
+            if (connectionCycle != 0L) container.serviceConnections.setReady(connectionCycle, value)
+        }
     internal var runtimeFactory: (() -> AppContainer)? = null
     internal var automationEngineFactory: ((AppContainer, PageGateway, CoroutineScope) -> AutomationEngine)? = null
     private val targetWindowDiagnosticsTracker = TargetWindowDiagnosticsTracker()
@@ -79,6 +84,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         serviceStateReady = false
         super.onServiceConnected()
+        connectionCycle = container.serviceConnections.beginConnection()
         CaptureTraceLog.boundary(latestCaptureState.activeSession?.id, "service_connected",
             "reconnected" to (serviceScope != null))
         latestCaptureState.activeSession?.let {
@@ -212,7 +218,6 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                 if (snapshot.targetPackages.isNotEmpty()) replayPendingForegroundWindow()
             }
         }
-        container.serviceConnections.setConnected(true)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -541,6 +546,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     }
 
     private fun observeCaptureState(scope: CoroutineScope) {
+        val observedCycle = connectionCycle
         var firstEmission = true
         CaptureTraceLog.lifecycle("service_capture_observer_started")
         scope.launch {
@@ -548,6 +554,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                 container.ruleCaptureCoordinator.reads,
                 container.store.reads.map { it.available }.distinctUntilChanged(),
             ) { capture, preferencesAvailable -> capture to preferencesAvailable }.onCompletion { error ->
+                if (connectionCycle == observedCycle) serviceStateReady = false
                 CaptureTraceLog.boundary(latestCaptureState.activeSession?.id, "service_capture_observer_completed",
                     "failed" to (error != null), "error" to error?.let(CaptureTraceError::from))
             }.collect { (read, preferencesAvailable) ->
@@ -905,7 +912,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             container.ruleCaptureCoordinator.unregisterReturnDiagnosticsProvider(it)
         }
         diagnosticsProviderRegistrationId = null
-        container.serviceConnections.setConnected(false)
+        container.serviceConnections.endConnection(connectionCycle)
         restoreDefaultEventConfiguration()
         captureExpiryJob?.cancel()
         captureExpiryJob = null

@@ -34,7 +34,7 @@ internal class RuleManagementTraceLog(override val enabled: Boolean) : RuleManag
         if (event.newSession && event.sessionId != null) CaptureTraceLog.beginSession(event.sessionId)
         CaptureTraceLog.management(event.sessionId,
             "operation" to event.operation, "outcome" to event.outcome,
-            "sessionHash" to event.sessionHash, "ruleCount" to event.ruleCount,
+            "ruleCount" to event.ruleCount,
             "durationMs" to event.durationMs, "repeatCount" to repeats,
             "phase" to event.phase, "failure" to event.failure,
             "serviceOperation" to event.serviceOperation, "newSession" to event.newSession)
