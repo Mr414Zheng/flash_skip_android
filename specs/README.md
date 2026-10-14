@@ -1,5 +1,15 @@
 # FlashSkip 项目规格索引
 
+## 当前状态（P6 本地文档）
+
+截至 2026-10-14，代码基线为 main `625091dba52797b699ac13b5a5db1c9505d2b0ea`。[PR #8](https://github.com/Mr414Zheng/flash_skip_android/pull/8) 产品修复和 [PR #9](https://github.com/Mr414Zheng/flash_skip_android/pull/9) 证据文档均已合并。最新已核验主干 [CI 38531810742](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38531810742) 通过：61 类／735 例，零失败、错误、跳过；28 个检查器测试、Debug 构建及原有门禁通过；Lint 0 错误／15 警告。详细来源见 [CI 证据](ci.md#p6-盘点所用主干证据)。
+
+P6 文档流程已完成本地交付：[日常开发流程](development-workflow.md)、[全部 66 条 AC 追踪](traceability.md)、[证据缺口](evidence-gaps.md)。P6 本地流程验收通过，结果见流程记录。用户随后于 2026-10-14 授权新建分支、提交、推送、创建 PR，并等待远端 CI、下载核验报告后交接；保持 PR 未合并。远端沿用完整 CI，本地不重跑 Android。P5 两包 T-05 仍未完成：Release 单测阻塞、Compose／真实系统等分层证据缺口保留；SDD-001/T-12 未完成且按用户要求停止。P6 流程完成不代表 P5 全部分层通过或发布就绪。
+
+以下旧基线、原失败、当时授权及“当前／本轮／未启动”措辞均属于所标阶段的历史记录，不覆盖本节。能力包中的契约全文和详细验证记录仍是事实来源，项目摘要不重写产品要求。
+
+## P0～P5 阶段背景（历史）
+
 本目录按业务能力组织规范驱动开发（SDD）的规格、实施任务和验收证据。项目基线为 `e354a99`，P1 实施基线为 `97d3010`，首次远端验收对应 `85fcd27`，更新日期为 2026-10-14。P0 文档及 P1 本地、远端 CI 验收已完成；[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 已合入 main，合并提交为 `2818232`，[主干 CI](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38362313424) 通过。P2 三项政策已审定并完成生产修复，本地、PR 及合并后主干 CI 验收通过，P3 最小生产修复及真实服务集成完成，本地、PR 与合并后主干 CI 验收通过，PR #4 已合入 main（`471ccd2`），P4 最小生产修复、本地、PR 及合并后主干 CI 契约验收已通过，PR #6 已合入 main（`d51fab4`），P5 最小生产修复、本地、PR 及合并后主干 CI 自动化验收已通过，完整分层验收仍有限制，P6 尚未执行，不代表全项目已完成 SDD 改造。
 
 P2 基线为 main `ad01dc7`（文档 PR #2 已合并）。用户已批准稳定结构、目录失效和最近接受动作事件三项政策并授权最小生产修复。本轮完整重跑 201 例全部通过，包括原 75 例和 P2 新增 126 例；构建、Lint 及证据检查结果见验收记录。其余契约参数沿用基线，不扩大为后续阶段授权。已按续授权将 [PR #3](https://github.com/Mr414Zheng/flash_skip_android/pull/3) 合入 main（`c2a286b`），主干 CI `38376388018` 通过且报告已下载核验，见 [主干验收记录](ci.md#p2-合并与主干-ci-验收)，不修改远端设置、应用依赖或构建配置。`capture-save-retry` 的 T-12 未完成，已按用户要求停止；不继续排查京东广告复现原因，也不恢复剩余设备验证。
@@ -12,6 +22,9 @@ P2 基线为 main `ad01dc7`（文档 PR #2 已合并）。用户已批准稳定�
 | [公共约束](constraints.md) | 授权边界、术语、已有契约、实现事实与证据规则 |
 | [分阶段计划](roadmap.md) | P0～P6 的依赖、产出、完成标准与当前状态 |
 | [持续检查](ci.md) | P1 工作流、阻断规则、本地与远端验证证据及主干落地限制 |
+| [日常开发流程](development-workflow.md) | 分类、验证、评审、PR 示例、交接与 P6 本地验收 |
+| [全量 AC 追踪](traceability.md) | 九包 66 条 AC 的实现、任务、测试、结果和证据边界 |
+| [证据缺口](evidence-gaps.md) | 未验证、阻塞、停止与历史偏差关闭依据 |
 | [仓库说明](../AGENTS.md) | 目录约定、构建命令、测试和提交要求 |
 
 ## 规格登记表
@@ -27,8 +40,8 @@ P2 基线为 main `ad01dc7`（文档 PR #2 已合并）。用户已批准稳定�
 | SDD-005 / C05 采集证据与目标识别 | [capture-evidence](capture-evidence/spec.md) | 五项政策已确认；其余沿用基线 | 82 例全部通过；见 [验证](capture-evidence/validation.md) | P3 |
 | SDD-006 / C06 持久化与兼容 | [persistence-compatibility](persistence-compatibility/spec.md) | P4 政策与最小修复已授权 | 68 例全部通过；见 [验证](persistence-compatibility/validation.md) | P4 |
 | SDD-007 / C07 规则管理 | [rule-management](rule-management/spec.md) | P4 政策与最小修复已授权 | 47 例全部通过；见 [验证](rule-management/validation.md) | P4 |
-| SDD-008 / C08 服务与首页交互 | [service-and-home](service-and-home/spec.md) | P5 最小生产修复完成 | 累计新增 67 例全部通过；Compose／设备未验证；见 [验证](service-and-home/validation.md) | P5 本地修复 |
-| SDD-009 / C09 诊断与数据边界 | [diagnostics](diagnostics/spec.md) | P5 最小生产修复完成 | 累计新增 74 例全部通过；Release 单测阻塞；见 [验证](diagnostics/validation.md) | P5 本地修复 |
+| SDD-008 / C08 服务与首页交互 | [service-and-home](service-and-home/spec.md) | P5 最小生产修复完成 | 累计新增 67 例全部通过；Compose／设备未验证；见 [验证](service-and-home/validation.md) | P5 主干自动化通过，分层未完成 |
+| SDD-009 / C09 诊断与数据边界 | [diagnostics](diagnostics/spec.md) | P5 最小生产修复完成 | 累计新增 74 例全部通过；Release 单测阻塞；见 [验证](diagnostics/validation.md) | P5 主干自动化通过，分层未完成 |
 
 SDD-001 的 [计划](capture-save-retry/plan.md)、[任务](capture-save-retry/tasks.md) 和 [验证记录](capture-save-retry/validation.md) 保留为该试点的事实来源。2026-10-13 本地及 P1 远端 Linux 均执行了现有 75 例测试并全部通过；P0 本身没有重跑测试，不将该结果扩展到其他能力。
 

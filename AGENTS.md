@@ -1,5 +1,15 @@
 # Repository Guidelines
 
+## Current Baseline and P6 Workflow
+
+As of 2026-10-14, main is `625091dba52797b699ac13b5a5db1c9505d2b0ea`. Product PR #8 and evidence-document PR #9 are merged. Main CI `38531810742` passed all 735 cases in 61 classes, 28 checker tests, specs, debug assembly and artifact gates; Lint had 0 errors and 15 warnings. Both report archives were downloaded and verified against the exact checkout and test identities. See [current CI evidence](specs/ci.md#p6-盘点所用主干证据).
+
+For daily work, use the [development workflow](specs/development-workflow.md), [all 66 AC mappings](specs/traceability.md) and [evidence gaps](specs/evidence-gaps.md). P6 remains documentation-only: no production or test changes, required-test inventory changes, new checker, product specification ID, dependency/build/workflow changes or remote settings. On 2026-10-14 the user additionally authorized a new branch, commits, push, PR creation, remote CI completion and downloaded-report verification. Leave the PR unmerged. Earlier no-commit/no-push/no-PR statements describe the completed local delivery phase. P6 local process acceptance passed: 66 AC mappings, four walkthroughs, 45-document specification check, 28 checker tests and documentation-only scope verification. This is separate from product acceptance. Reuse existing authorization for future tasks and classify changes before implementation; an approved roadmap alone does not authorize later work.
+
+P5 full layered acceptance remains incomplete: both T-05 tasks remain unchecked; Release unit tests are blocked, and Compose controls, actual Android/OEM/process behavior and other recorded evidence gaps remain unverified. SDD-001/T-12 remains incomplete and stopped at the user's request; do not resume JD investigations or device validation, schedule them, or create a renamed substitute. P6 does not waive these limits or establish release readiness.
+
+The older baselines, counts and authorization statements below are historical by phase, including references to P5/P6 not having started or PRs being unmerged. Preserve their original evidence; this section is the current summary. Historical P2/P3 independent static reviews do not constitute independent review/QA of P4, P5 or P6.
+
 ## Project Structure & Module Organization
 
 FlashSkip is a single-module Android application built with Kotlin and Jetpack Compose. Source lives in `app/src/main/kotlin/com/zhenghuaizhi/flashskip/`:
