@@ -26,6 +26,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import java.io.IOException
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.first
@@ -540,95 +544,119 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         var firstEmission = true
         CaptureTraceLog.lifecycle("service_capture_observer_started")
         scope.launch {
-            container.ruleCaptureCoordinator.state.onCompletion { error ->
+            combine(
+                container.ruleCaptureCoordinator.reads,
+                container.store.reads.map { it.available }.distinctUntilChanged(),
+            ) { capture, preferencesAvailable -> capture to preferencesAvailable }.onCompletion { error ->
                 CaptureTraceLog.boundary(latestCaptureState.activeSession?.id, "service_capture_observer_completed",
                     "failed" to (error != null), "error" to error?.let(CaptureTraceError::from))
-            }.collect { emittedState ->
-                var state = emittedState
-                if (firstEmission) CaptureTraceLog.boundary(state.activeSession?.id, "service_capture_first_state",
-                    "hasSession" to (state.activeSession != null), "phase" to state.activeSession?.phase)
-                if (firstEmission) {
-                    state.activeSession?.takeUnless { it.phase == CapturePhase.FAILED }?.let { session ->
-                        setAutomationPaused(true)
-                        val restored = container.ruleCaptureCoordinator.restoreServiceSession(session.id)
-                        if (restored is CaptureOperationResult.Failure) {
-                            // 关闭监听的持久化没有提交时，不消费旧快照继续采集。
-                            restoreDefaultEventConfiguration()
-                            captureObservationLoop?.cancel()
-                            captureAdapter?.cancelPendingWindowResolution()
-                            return@collect
-                        }
-                        // 有效载荷及 CONFIGURING 的恢复可能不写状态，必须直接推进这次配置。
-                        state = container.ruleCaptureCoordinator.state.first()
-                    }
-                    firstEmission = false
-                }
-                // 必须先输出旧上下文，再让采集器和窗口计数器处理新会话并清空缓冲区。
-                traceCaptureTransition(latestCaptureState, state)
-                latestCaptureState = state
-                CaptureTraceLog.state(state.activeSession)
-                targetWindowDiagnosticsTracker.onSessionChanged(state.activeSession?.id)
-                captureAdapter?.onStateChanged(state)
-                scheduleExpiry(state)
-                val session = state.activeSession
-                if (serviceInterrupted) {
-                    restoreDefaultEventConfiguration()
-                    setAutomationPaused(true)
+            }.collect { (read, preferencesAvailable) ->
+                if (!read.available || !preferencesAvailable) {
+                    firstEmission = true
+                    blockForUnavailableStorage()
                     return@collect
                 }
-                captureObservationLoop?.update(session)
-                when (session?.phase) {
-                    CapturePhase.CONFIGURING -> {
-                        setAutomationPaused(true)
-                        if (configureForCapture(session.packageName)) {
-                            container.ruleCaptureCoordinator.markConfigured(session.id)
-                        } else {
-                            container.ruleCaptureCoordinator.fail(
-                                session.id,
-                                CaptureFailure.SERVICE_UNAVAILABLE,
-                            )
+                try {
+                    var state = read.requireAvailable()
+                    if (firstEmission) CaptureTraceLog.boundary(state.activeSession?.id, "service_capture_first_state",
+                        "hasSession" to (state.activeSession != null), "phase" to state.activeSession?.phase)
+                    if (firstEmission) {
+                        state.activeSession?.takeUnless { it.phase == CapturePhase.FAILED }?.let { session ->
+                            setAutomationPaused(true)
+                            val restored = container.ruleCaptureCoordinator.restoreServiceSession(session.id)
+                            if (restored is CaptureOperationResult.Failure) {
+                                // 关闭监听的持久化没有提交时，不消费旧快照继续采集。
+                                restoreDefaultEventConfiguration()
+                                captureObservationLoop?.cancel()
+                                captureAdapter?.cancelPendingWindowResolution()
+                                return@collect
+                            }
+                            // 有效载荷及 CONFIGURING 的恢复可能不写状态，必须直接推进这次配置。
+                            state = container.ruleCaptureCoordinator.state.first()
                         }
+                        firstEmission = false
                     }
-
-                    CapturePhase.WAITING_FOR_TARGET,
-                    CapturePhase.OBSERVING_CLICK,
-                    -> {
-                        setAutomationPaused(true)
-                        if (!configureForCapture(session.packageName)) {
-                            container.ruleCaptureCoordinator.fail(
-                                session.id,
-                                CaptureFailure.SERVICE_UNAVAILABLE,
-                            )
-                        }
-                    }
-
-                    CapturePhase.CAPTURED -> {
+                    // 必须先输出旧上下文，再让采集器和窗口计数器处理新会话并清空缓冲区。
+                    traceCaptureTransition(latestCaptureState, state)
+                    latestCaptureState = state
+                    CaptureTraceLog.state(state.activeSession)
+                    targetWindowDiagnosticsTracker.onSessionChanged(state.activeSession?.id)
+                    captureAdapter?.onStateChanged(state)
+                    scheduleExpiry(state)
+                    val session = state.activeSession
+                    if (serviceInterrupted) {
                         restoreDefaultEventConfiguration()
                         setAutomationPaused(true)
+                        return@collect
                     }
-
-                    CapturePhase.AWAITING_CONFIRMATION -> {
-                        setAutomationPaused(true)
-                        if (session.listensForCandidateClick) {
-                            if (!configureForCandidateClick(session.packageName)) {
+                    captureObservationLoop?.update(session)
+                    when (session?.phase) {
+                        CapturePhase.CONFIGURING -> {
+                            setAutomationPaused(true)
+                            if (configureForCapture(session.packageName)) {
+                                container.ruleCaptureCoordinator.markConfigured(session.id)
+                            } else {
                                 container.ruleCaptureCoordinator.fail(
                                     session.id,
                                     CaptureFailure.SERVICE_UNAVAILABLE,
                                 )
                             }
-                        } else {
+                        }
+
+                        CapturePhase.WAITING_FOR_TARGET,
+                        CapturePhase.OBSERVING_CLICK,
+                        -> {
+                            setAutomationPaused(true)
+                            if (!configureForCapture(session.packageName)) {
+                                container.ruleCaptureCoordinator.fail(
+                                    session.id,
+                                    CaptureFailure.SERVICE_UNAVAILABLE,
+                                )
+                            }
+                        }
+
+                        CapturePhase.CAPTURED -> {
                             restoreDefaultEventConfiguration()
+                            setAutomationPaused(true)
+                        }
+
+                        CapturePhase.AWAITING_CONFIRMATION -> {
+                            setAutomationPaused(true)
+                            if (session.listensForCandidateClick) {
+                                if (!configureForCandidateClick(session.packageName)) {
+                                    container.ruleCaptureCoordinator.fail(
+                                        session.id,
+                                        CaptureFailure.SERVICE_UNAVAILABLE,
+                                    )
+                                }
+                            } else {
+                                restoreDefaultEventConfiguration()
+                            }
+                        }
+
+                        CapturePhase.FAILED, null -> {
+                            restoreDefaultEventConfiguration()
+                            setAutomationPaused(false)
                         }
                     }
-
-                    CapturePhase.FAILED, null -> {
-                        restoreDefaultEventConfiguration()
-                        setAutomationPaused(false)
-                    }
+                    serviceStateReady = true
+                } catch (_: IOException) {
+                    // 恢复期间的再次读取也可能失败，不能让旧的可用标记继续放行事件。
+                    firstEmission = true
+                    blockForUnavailableStorage()
                 }
-                serviceStateReady = true
             }
         }
+    }
+
+    private suspend fun blockForUnavailableStorage() {
+        serviceStateReady = false
+        setAutomationPaused(true)
+        captureExpiryJob?.cancel()
+        captureObservationLoop?.cancel()
+        captureAdapter?.cancelPendingWindowResolution()
+        deferredCaptureWindow = null
+        restoreDefaultEventConfiguration()
     }
 
     private fun traceCaptureTransition(previous: RuleCaptureState, next: RuleCaptureState) {
@@ -778,7 +806,12 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         captureExpiryJob = serviceScope?.launch {
             val key = CaptureExpiryKey.from(session)
             while (true) {
-                val plan = container.ruleCaptureCoordinator.expiryPlan(key) ?: return@launch
+                val plan = try {
+                    container.ruleCaptureCoordinator.expiryPlan(key)
+                } catch (_: IOException) {
+                    // 当前会话已经暂停自动执行；等待有效存储发射重新安排期限。
+                    return@launch
+                } ?: return@launch
                 delay((plan.deadlineAtElapsedMs - container.monotonicClock.elapsedRealtimeMs()).coerceAtLeast(0))
                 val targetWindowDiagnostics = targetWindowDiagnosticsTracker.snapshot(
                     expectedSessionId = session.id,

@@ -9,11 +9,12 @@ import com.zhenghuaizhi.flashskip.application.rulecapture.recordSafely
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.ports.RuleCaptureStore
+import com.zhenghuaizhi.flashskip.domain.ports.StorageRead
+import com.zhenghuaizhi.flashskip.domain.ports.retryStorageReads
 import com.zhenghuaizhi.flashskip.domain.rulecapture.CaptureRuleSafetyPolicy
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
@@ -38,7 +39,9 @@ class PreferencesRuleCaptureStore internal constructor(
                 dataStore.edit { values ->
                     values.remove(LEGACY_STATE)
                     val raw = values[STATE] ?: return@edit
-                    val current = decode(raw)
+                    val decoded = decode(raw)
+                    if (!decoded.available) return@edit
+                    val current = decoded.requireAvailable()
                     val sanitized = CaptureRuleSafetyPolicy.sanitize(current)
                     if (sanitized != current) values[STATE] = RuleCaptureCodec.encode(sanitized)
                 }
@@ -49,19 +52,25 @@ class PreferencesRuleCaptureStore internal constructor(
         }
     }
 
-    override val state: Flow<RuleCaptureState> = dataStore.data
+    override val reads: Flow<StorageRead<RuleCaptureState>> = dataStore.data
         .catch { error ->
             if (error is IOException) {
                 traceSink.recordSafely { RuleManagementTraceEvent(RuleManagementOperation.READ_CAPTURE, RuleManagementOutcome.STORAGE_FAILURE) }
-                emit(emptyPreferences())
-            } else throw error
+            }
+            throw error
         }
-        .map { values -> CaptureRuleSafetyPolicy.sanitize(decode(values[STATE])) }
+        .map { values ->
+            val decoded = decode(values[STATE])
+            decoded.copy(value = decoded.value?.let(CaptureRuleSafetyPolicy::sanitize))
+        }
+        .retryStorageReads()
+
+    override val state: Flow<RuleCaptureState> = reads.map { it.requireAvailable() }
 
     override suspend fun update(transform: (RuleCaptureState) -> RuleCaptureState) {
         try {
             dataStore.edit { values ->
-                val current = CaptureRuleSafetyPolicy.sanitize(decode(values[STATE]))
+                val current = CaptureRuleSafetyPolicy.sanitize(decode(values[STATE]).requireAvailable())
                 values[STATE] = RuleCaptureCodec.encode(CaptureRuleSafetyPolicy.sanitize(transform(current)))
             }
         } catch (error: IOException) {
@@ -70,7 +79,7 @@ class PreferencesRuleCaptureStore internal constructor(
         }
     }
 
-    private fun decode(raw: String?) = RuleCaptureCodec.decodeOrEmpty(raw) {
+    private fun decode(raw: String?) = RuleCaptureCodec.decode(raw) {
         traceSink.recordSafely { RuleManagementTraceEvent(RuleManagementOperation.DECODE_CAPTURE, RuleManagementOutcome.REJECTED) }
     }
 

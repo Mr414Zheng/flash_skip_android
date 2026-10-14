@@ -36,6 +36,8 @@ import com.zhenghuaizhi.flashskip.domain.model.CaptureScanUnavailableReason
 import com.zhenghuaizhi.flashskip.domain.model.CaptureEventClockStatus
 import com.zhenghuaizhi.flashskip.domain.model.CaptureEventTiming
 import com.zhenghuaizhi.flashskip.domain.model.CaptureTimingDiagnostics
+import com.zhenghuaizhi.flashskip.domain.ports.StorageRead
+import java.io.IOException
 import java.util.EnumMap
 import org.json.JSONArray
 import org.json.JSONObject
@@ -53,23 +55,42 @@ object RuleCaptureCodec {
         .putNullable("activeSession", state.activeSession?.toJson())
         .toString()
 
-    fun decodeOrEmpty(raw: String?, onInvalid: () -> Unit = {}): RuleCaptureState {
-        if (raw.isNullOrBlank()) return RuleCaptureState()
-        return runCatching {
+    fun decodeOrEmpty(raw: String?, onInvalid: () -> Unit = {}): RuleCaptureState =
+        decode(raw, onInvalid).value ?: RuleCaptureState()
+
+    internal fun decode(raw: String?, onInvalid: () -> Unit = {}): StorageRead<RuleCaptureState> {
+        if (raw.isNullOrBlank()) return StorageRead(RuleCaptureState())
+        var rejected = false
+        val result = try {
             val json = JSONObject(raw)
             require(json.getInt("version") == VERSION)
-            RuleCaptureState(
-                samples = json.getJSONArray("samples").mapObjects { it.toSample() },
-                activeSession = json.optJSONObject("activeSession")?.toSession(),
-                semanticDiffEvidence = json.optJSONArray("semanticDiffEvidence")
-                    ?.mapObjects { it.toSemanticDiffEvidence() }
-                    .orEmpty(),
+            fun <T> JSONArray.recoverEntries(decode: (JSONObject) -> T): List<T> = buildList {
+                repeat(length()) { index ->
+                    val entry = runCatching { decode(getJSONObject(index)) }
+                    if (entry.isFailure) rejected = true
+                    entry.getOrNull()?.let(::add)
+                }
+            }
+            val samples = json.getJSONArray("samples").recoverEntries { it.toSample() }
+            val evidence = if (!json.has("semanticDiffEvidence") || json.isNull("semanticDiffEvidence")) {
+                emptyList()
+            } else json.getJSONArray("semanticDiffEvidence").recoverEntries { it.toSemanticDiffEvidence() }
+            val session = runCatching {
+                if (json.isNull("activeSession")) null else json.getJSONObject("activeSession").toSession()
+            }
+            // 坏会话只隔离其载荷；合法样本可展示，但必须保留不可用标记以阻止执行与覆盖。
+            StorageRead(
+                RuleCaptureState(samples, session.getOrNull(), evidence),
+                if (session.isFailure) IOException("Unreadable capture session") else null,
             )
-        }.getOrElse {
-            // 内容不能写入诊断；只报告解码失败这一事实，保持原有安全回退。
-            try { onInvalid() } catch (_: Exception) { }
-            RuleCaptureState()
+        } catch (_: Exception) {
+            StorageRead(RuleCaptureState(), IOException("Unsupported or unreadable capture storage envelope"))
         }
+        if (rejected || !result.available) {
+            // 不把原始内容放入诊断。
+            try { onInvalid() } catch (_: Exception) { }
+        }
+        return result
     }
 
     private fun CaptureSession.toJson() = JSONObject()
@@ -418,13 +439,17 @@ object RuleCaptureCodec {
         targetEnteredAtElapsedMs = nullableLong("targetEnteredAtElapsedMs"),
         leftFlashSkipAtEpochMs = nullableLong("leftFlashSkipAtEpochMs"),
         candidateClickListeningEnabled = optBoolean("candidateClickListeningEnabled", false),
-        pendingSample = optJSONObject("pendingSample")?.toSample(),
-        pendingObservedCandidate = optJSONObject("pendingObservedCandidate")
-            ?.toObservedDismissCandidate(),
+        pendingSample = if (isNull("pendingSample")) null else getJSONObject("pendingSample").toSample(),
+        pendingObservedCandidate = if (isNull("pendingObservedCandidate")) null else
+            getJSONObject("pendingObservedCandidate").toObservedDismissCandidate(),
         failure = nullableString("failure")?.let(CaptureFailure::valueOf),
         failureDiagnostics = optionalDiagnostic("failureDiagnostics") { it.toFailureDiagnostics() },
         targetWindowDiagnostics = optionalDiagnostic("targetWindowDiagnostics") { it.toTargetWindowDiagnostics() },
-    )
+    ).also { session ->
+        // 完成阶段缺少其必需载荷是坏会话，不能在服务恢复时转成无阻塞状态。
+        require(session.phase != CapturePhase.CAPTURED || session.pendingSample != null)
+        require(session.phase != CapturePhase.AWAITING_CONFIRMATION || session.pendingObservedCandidate != null)
+    }
 
     private fun JSONObject.toFailureDiagnostics() = CaptureFailureDiagnostics(
         sourceAvailable = getBoolean("sourceAvailable"),

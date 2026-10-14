@@ -7,6 +7,7 @@ import com.zhenghuaizhi.flashskip.application.ServiceStatusCoordinator
 import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationFailure
 import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationResult
 import com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCoordinator
+import com.zhenghuaizhi.flashskip.application.rulecapture.RuleDeletionRequest
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
@@ -14,6 +15,7 @@ import com.zhenghuaizhi.flashskip.domain.model.SemanticDiffOutcome
 import com.zhenghuaizhi.flashskip.domain.model.ServiceStatus
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
+import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipPreferences
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalog
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalogSnapshot
 import kotlinx.coroutines.CancellationException
@@ -44,20 +46,23 @@ class HomeViewModel(
     private var returnedWhileCaptureStartPending = false
 
     private val currentCatalog = combine(
-        captureCoordinator.state,
+        captureCoordinator.reads,
         ruleCatalog.snapshot,
-    ) { capture, snapshot ->
+    ) { read, snapshot ->
+        val capture = read.value ?: RuleCaptureState()
         // 同时检查采集状态与目录版本，目录计算期间不得操作旧规则开关。
-        CatalogUiState(capture, snapshot, snapshot.sourceSamples == capture.samples)
+        CatalogUiState(capture, snapshot, read.available && snapshot.sourceSamples == capture.samples, read.available)
     }
 
     val uiState = combine(
-        store.preferences,
+        store.reads,
         serviceStatusCoordinator.status,
         currentCatalog,
         operationState,
         captureCoordinator.serviceFailure,
-    ) { preferences, serviceStatus, catalog, operation, serviceFailure ->
+    ) { preferenceRead, serviceStatus, catalog, operation, serviceFailure ->
+        val preferences = preferenceRead.value ?: FlashSkipPreferences()
+        val storageAvailable = preferenceRead.available && catalog.storageAvailable
         val captureState = catalog.captureState
         val activeSession = captureState.activeSession
         val currentServiceFailure = serviceFailure?.takeIf {
@@ -72,18 +77,21 @@ class HomeViewModel(
                 id = id,
                 displayName = captured.displayName.takeUnless { it == id.packageName || it.isBlank() }
                     ?: "该应用",
-                checked = enabled && available,
+                checked = enabled && available && storageAvailable,
                 status = when {
+                    !storageAvailable -> TargetAppStatus.RULE_UNAVAILABLE
                     !available -> TargetAppStatus.RULE_UNAVAILABLE
                     !enabled -> TargetAppStatus.DISABLED
                     serviceStatus == ServiceStatus.RUNNING -> TargetAppStatus.ENABLED_AND_RUNNING
                     else -> TargetAppStatus.ENABLED_BUT_SERVICE_UNAVAILABLE
                 },
-                canEnable = available && catalog.matchesCurrentSamples &&
+                canEnable = storageAvailable && available && catalog.matchesCurrentSamples &&
                     activeSession?.blocksAutomation != true && !operation.inProgress,
             )
         }
-        val feedback = if (operation.savedTarget != null && catalog.matchesCurrentSamples) {
+        val feedback = if (!storageAvailable) {
+            HomeFeedback.STORAGE
+        } else if (operation.savedTarget != null && catalog.matchesCurrentSamples) {
             if (catalog.snapshot.rulesForTarget(operation.savedTarget).isNotEmpty()) {
                 HomeFeedback.SAVED
             } else {
@@ -108,13 +116,13 @@ class HomeViewModel(
                 targetAppName = activeSession?.targetAppName?.takeUnless {
                     it.isBlank() || it == activeSession.packageName
                 },
-                canStart = !operation.inProgress && serviceStatus == ServiceStatus.RUNNING &&
+                canStart = storageAvailable && !operation.inProgress && serviceStatus == ServiceStatus.RUNNING &&
                     (activeSession == null || activeSession.phase == CapturePhase.FAILED || serviceWriteFailed),
             ),
             operationInProgress = operation.inProgress,
             operationFeedback = feedback,
             canRetry = operation.retryAvailable && !operation.inProgress,
-            ruleActionsEnabled = catalog.matchesCurrentSamples,
+            ruleActionsEnabled = storageAvailable && catalog.matchesCurrentSamples,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -150,11 +158,11 @@ class HomeViewModel(
     }
 
     fun clearCapturedRules(targetAppId: TargetAppId) {
-        launchOperation(RetryOperation.Clear(targetAppId))
+        launchOperation(RetryOperation.Clear(RuleDeletionRequest(targetAppId)))
     }
 
     fun clearAllCapturedRules() {
-        launchOperation(RetryOperation.ClearAll)
+        launchOperation(RetryOperation.Clear(RuleDeletionRequest(null)))
     }
 
     /** 重试固定的原动作；会话动作始终保留原 ID，不能取消或保存替换会话。 */
@@ -177,7 +185,10 @@ class HomeViewModel(
         viewModelScope.launch {
             // 外跳反馈可能先于开始请求释放控件；等同一请求结束后再取消其会话。
             operationState.first { !it.inProgress }
-            if (captureCoordinator.state.first().activeSession?.id == sessionId) {
+            val read = captureCoordinator.reads.first()
+            if (!read.available) {
+                reportLifecycleFailure(RetryOperation.CancelHomeFailure(sessionId), HomeFeedback.STORAGE)
+            } else if (read.requireAvailable().activeSession?.id == sessionId) {
                 launchOperation(RetryOperation.CancelHomeFailure(sessionId))
             }
         }
@@ -206,7 +217,12 @@ class HomeViewModel(
         }
         val expectedSessionId = pendingReturnSessionId
         viewModelScope.launch {
-            val sessionId = expectedSessionId ?: captureCoordinator.state.first().activeSession?.id
+            val read = captureCoordinator.reads.first()
+            if (!read.available) {
+                reportLifecycleFailure(expectedSessionId?.let { RetryOperation.Return(it, observedDepartureSessionId == it) }, HomeFeedback.RETURN_STORAGE)
+                return@launch
+            }
+            val sessionId = expectedSessionId ?: read.requireAvailable().activeSession?.id
             val observedDeparture = sessionId != null && observedDepartureSessionId == sessionId
             reconcileReturn(sessionId, observedDeparture)
         }
@@ -288,7 +304,10 @@ class HomeViewModel(
     }
 
     private suspend fun reportLifecycleFailure(retry: RetryOperation?, feedback: HomeFeedback) {
-        if (retry is RetryOperation.Return && captureCoordinator.state.first().activeSession?.id != retry.sessionId) return
+        if (retry is RetryOperation.Return) {
+            val read = captureCoordinator.reads.first()
+            if (read.available && read.requireAvailable().activeSession?.id != retry.sessionId) return
+        }
         lastOperation = retry
         operationState.value = operationState.value.copy(
             feedback = feedback,
@@ -312,8 +331,7 @@ class HomeViewModel(
                     is RetryOperation.Start -> beginCapture(operation)
                     is RetryOperation.Finish -> captureCoordinator.finish(operation.sessionId)
                     is RetryOperation.Cancel -> captureCoordinator.cancel(operation.sessionId)
-                    is RetryOperation.Clear -> captureCoordinator.clearTarget(operation.id)
-                    RetryOperation.ClearAll -> captureCoordinator.clearAll()
+                    is RetryOperation.Clear -> captureCoordinator.clear(operation.request)
                     is RetryOperation.Return -> captureCoordinator.reconcileReturn(operation.sessionId, operation.observedDeparture)
                     is RetryOperation.CancelHomeFailure -> captureCoordinator.cancel(operation.sessionId)
                 }
@@ -382,6 +400,7 @@ class HomeViewModel(
         val captureState: RuleCaptureState,
         val snapshot: RuleCatalogSnapshot,
         val matchesCurrentSamples: Boolean,
+        val storageAvailable: Boolean,
     )
 
     private data class OperationUiState(
@@ -396,8 +415,7 @@ class HomeViewModel(
         data class Start(val failedSessionId: Long?, val previousSessionCancelled: Boolean = false) : RetryOperation
         data class Finish(val sessionId: Long) : RetryOperation
         data class Cancel(val sessionId: Long) : RetryOperation
-        data class Clear(val id: TargetAppId) : RetryOperation
-        data object ClearAll : RetryOperation
+        data class Clear(val request: RuleDeletionRequest) : RetryOperation
         data class Return(val sessionId: Long, val observedDeparture: Boolean) : RetryOperation
         data class CancelHomeFailure(val sessionId: Long) : RetryOperation
     }

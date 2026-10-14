@@ -9,7 +9,6 @@ import com.zhenghuaizhi.flashskip.application.rulecapture.recordSafely
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -17,6 +16,8 @@ import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipPreferences
 import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipStore
+import com.zhenghuaizhi.flashskip.domain.ports.StorageRead
+import com.zhenghuaizhi.flashskip.domain.ports.retryStorageReads
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -51,17 +52,25 @@ class PreferencesFlashSkipStore internal constructor(
         }
     }
 
-    override val preferences: Flow<FlashSkipPreferences> = dataStore.data
+    override val reads: Flow<StorageRead<FlashSkipPreferences>> = dataStore.data
         .catch { error ->
             if (error is IOException) {
                 traceSink.recordSafely { RuleManagementTraceEvent(RuleManagementOperation.READ_PREFERENCES, RuleManagementOutcome.STORAGE_FAILURE) }
-                emit(emptyPreferences())
-            } else throw error
+            }
+            throw error
         }
-        .map(::toDomain)
+        .map { values ->
+            val records = ActionRecordCodec.decode(values[RECORDS])
+            StorageRead(toDomain(values, records.value.orEmpty()), records.failure)
+        }
+        .retryStorageReads()
+
+    override val preferences: Flow<FlashSkipPreferences> = reads.map { it.requireAvailable() }
 
     override suspend fun setAppEnabled(targetAppId: TargetAppId, enabled: Boolean) {
         dataStore.edit { values ->
+            // 同一事务内检查版本，未知或坏整包不得被普通管理操作继续改写。
+            ActionRecordCodec.decode(values[RECORDS]).requireAvailable()
             val enabledPackages = decodeEnabledPackages(values[ENABLED_PACKAGES]).toMutableSet()
             if (enabled) enabledPackages += targetAppId.packageName else enabledPackages -= targetAppId.packageName
             values[ENABLED_PACKAGES] = enabledPackages.sorted().joinToString("\n")
@@ -69,26 +78,28 @@ class PreferencesFlashSkipStore internal constructor(
     }
 
     override suspend fun isAppEnabled(targetAppId: TargetAppId): Boolean = try {
-        // 动作安全检查只读取当前开关，避免每个无障碍事件重复解码执行记录。
-        targetAppId.packageName in decodeEnabledPackages(dataStore.data.first()[ENABLED_PACKAGES])
+        val values = dataStore.data.first()
+        // 开关不能绕过同一偏好库的未知版本或不可用状态。
+        ActionRecordCodec.decode(values[RECORDS]).requireAvailable()
+        targetAppId.packageName in decodeEnabledPackages(values[ENABLED_PACKAGES])
     } catch (_: IOException) {
         false
     }
 
     override suspend fun appendRecord(record: ActionRecord) {
         dataStore.edit { values ->
-            val existing = ActionRecordCodec.decodeOrEmpty(values[RECORDS])
+            val existing = ActionRecordCodec.decode(values[RECORDS]).requireAvailable()
             values[RECORDS] = ActionRecordCodec.encode(
                 (listOf(record) + existing).take(ActionRecordCodec.MAX_RECORDS),
             )
         }
     }
 
-    private fun toDomain(values: androidx.datastore.preferences.core.Preferences): FlashSkipPreferences = FlashSkipPreferences(
+    private fun toDomain(values: Preferences, records: List<ActionRecord>): FlashSkipPreferences = FlashSkipPreferences(
         enabledApps = decodeEnabledPackages(values[ENABLED_PACKAGES])
             .mapNotNull { packageName -> runCatching { TargetAppId(packageName) }.getOrNull() }
             .associateWith { true },
-        records = ActionRecordCodec.decodeOrEmpty(values[RECORDS]),
+        records = records,
     )
 
     private fun decodeEnabledPackages(raw: String?): Set<String> = raw

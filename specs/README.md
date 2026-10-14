@@ -1,6 +1,6 @@
 # FlashSkip 项目规格索引
 
-本目录按业务能力组织规范驱动开发（SDD）的规格、实施任务和验收证据。项目基线为 `e354a99`，P1 实施基线为 `97d3010`，首次远端验收对应 `85fcd27`，更新日期为 2026-10-14。P0 文档及 P1 本地、远端 CI 验收已完成；[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 已合入 main，合并提交为 `2818232`，[主干 CI](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38362313424) 通过。P2 三项政策已审定并完成生产修复，本地、PR 及合并后主干 CI 验收通过，P3 最小生产修复及真实服务集成完成，本地、PR 与合并后主干 CI 验收通过，PR #4 已合入 main（`471ccd2`），P4～P6 尚未执行，不代表全项目已完成 SDD 改造。
+本目录按业务能力组织规范驱动开发（SDD）的规格、实施任务和验收证据。项目基线为 `e354a99`，P1 实施基线为 `97d3010`，首次远端验收对应 `85fcd27`，更新日期为 2026-10-14。P0 文档及 P1 本地、远端 CI 验收已完成；[PR #1](https://github.com/Mr414Zheng/flash_skip_android/pull/1) 已合入 main，合并提交为 `2818232`，[主干 CI](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38362313424) 通过。P2 三项政策已审定并完成生产修复，本地、PR 及合并后主干 CI 验收通过，P3 最小生产修复及真实服务集成完成，本地、PR 与合并后主干 CI 验收通过，PR #4 已合入 main（`471ccd2`），P4 最小生产修复、本地及 PR 远端契约验收已通过，P5～P6 尚未执行，不代表全项目已完成 SDD 改造。
 
 P2 基线为 main `ad01dc7`（文档 PR #2 已合并）。用户已批准稳定结构、目录失效和最近接受动作事件三项政策并授权最小生产修复。本轮完整重跑 201 例全部通过，包括原 75 例和 P2 新增 126 例；构建、Lint 及证据检查结果见验收记录。其余契约参数沿用基线，不扩大为后续阶段授权。已按续授权将 [PR #3](https://github.com/Mr414Zheng/flash_skip_android/pull/3) 合入 main（`c2a286b`），主干 CI `38376388018` 通过且报告已下载核验，见 [主干验收记录](ci.md#p2-合并与主干-ci-验收)，不修改远端设置、应用依赖或构建配置。`capture-save-retry` 的 T-12 未完成，已按用户要求停止；不继续排查京东广告复现原因，也不恢复剩余设备验证。
 
@@ -16,7 +16,7 @@ P2 基线为 main `ad01dc7`（文档 PR #2 已合并）。用户已批准稳定�
 
 ## 规格登记表
 
-以下编号为稳定引用标识。SDD-001 已审定；SDD-002、SDD-003 的三项政策已审定，其他参数沿用基线，已完成本地离线验证；SDD-004、SDD-005 的五项政策已确认，最小修复和本地、PR 及主干 CI 契约验收通过，其余仍为规划条目；尚未创建的预留目录以文本列出，不作为可访问链接。批准 P0 文档不等于批准这些能力的全部行为或实施。
+以下编号为稳定引用标识。SDD-001 已审定；SDD-002、SDD-003 的三项政策已审定，其他参数沿用基线，已完成本地离线验证；SDD-004、SDD-005 的五项政策已确认，最小修复和本地、PR 及主干 CI 契约验收通过，SDD-006、SDD-007 的 P4 政策及最小修复已确认，28 个原失败关闭，全量 594 例通过，其余仍为规划条目；尚未创建的预留目录以文本列出，不作为可访问链接。批准 P0 文档不等于批准这些能力的全部行为或实施。
 
 | 编号 / 能力 | 规格包 | 契约状态 | 验证状态 | 阶段 |
 | --- | --- | --- | --- | --- |
@@ -25,8 +25,8 @@ P2 基线为 main `ad01dc7`（文档 PR #2 已合并）。用户已批准稳定�
 | SDD-003 / C03 自动执行与动作确认 | [automation-execution](automation-execution/spec.md) | 三项政策已审定；其余沿用基线 | 94 例全部通过；见 [验证记录](automation-execution/validation.md) | P2 |
 | SDD-004 / C04 采集生命周期 | [capture-lifecycle](capture-lifecycle/spec.md) | 五项政策已确认；其余沿用基线 | 196 例全部通过，含 14 例真实服务／存储集成；见 [验证](capture-lifecycle/validation.md) | P3 |
 | SDD-005 / C05 采集证据与目标识别 | [capture-evidence](capture-evidence/spec.md) | 五项政策已确认；其余沿用基线 | 82 例全部通过；见 [验证](capture-evidence/validation.md) | P3 |
-| SDD-006 / C06 持久化与兼容 | `persistence-compatibility/` | 待编写、审定 | 保存与重开读取有部分覆盖 | P4 |
-| SDD-007 / C07 规则管理 | `rule-management/` | 待编写、审定 | 开启与保存交错有部分覆盖 | P4 |
+| SDD-006 / C06 持久化与兼容 | [persistence-compatibility](persistence-compatibility/spec.md) | P4 政策与最小修复已授权 | 68 例全部通过；见 [验证](persistence-compatibility/validation.md) | P4 |
+| SDD-007 / C07 规则管理 | [rule-management](rule-management/spec.md) | P4 政策与最小修复已授权 | 47 例全部通过；见 [验证](rule-management/validation.md) | P4 |
 | SDD-008 / C08 服务与首页交互 | `service-and-home/` | 待编写、审定 | 保存相关 ViewModel 状态有部分覆盖 | P5 |
 | SDD-009 / C09 诊断与数据边界 | `diagnostics/` | 待编写、审定 | 尚无专项契约测试 | P5 |
 
@@ -53,3 +53,7 @@ SDD-001 的 [计划](capture-save-retry/plan.md)、[任务](capture-save-retry/t
 2026-10-14 用户续授权新分支提交、推送、创建 PR、等待远端 CI 并核验产物后回写证据；当时暂不合并，后续已获合并与主干验收授权并完成。不修改依赖、构建配置和远端设置；SDD-001/T-12 未完成且继续停止，P4 以后未启动。
 
 [PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 已创建并推送；[CI 38491677713](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38491677713) 的 479 例、28 个检查器、构建及 Lint 通过，报告已下载核验，详见 [远端验收](ci.md#p3-pr-与远端-linux-ci-验收)。PR 已按后续授权合入 main；[主干 CI 38493360255](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38493360255) 通过且报告已下载核验，见 [主干验收](ci.md#p3-合并与主干-ci-验收)。
+
+## P4 当前交付
+
+[PR #6](https://github.com/Mr414Zheng/flash_skip_android/pull/6) 保持未合并，产品 head `da412ed` 的 [CI 38503118760](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38503118760) 通过；594 例、28 个检查器、规格、构建及 Lint（0 错误／15 警告）已下载核验。两规格包验证与 [CI 记录](ci.md#p4-pr-与远端-linux-ci-验收) 保留本地和修复前历史并新增远端证据；文档回写 head 另查最新 CI，不扩展设备或独立 QA 结论。T-12 停止，P5 未启动。

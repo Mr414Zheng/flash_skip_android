@@ -93,6 +93,7 @@ class RuleCaptureCoordinator(
     private val traceSink: RuleManagementTraceSink = RuleManagementTraceSink.None,
 ) {
     val state: Flow<RuleCaptureState> = captureStore.state
+    internal val reads get() = captureStore.reads
     private val mutableServiceFailure = MutableStateFlow<CaptureServiceFailure?>(null)
     val serviceFailure: StateFlow<CaptureServiceFailure?> = mutableServiceFailure.asStateFlow()
     private var phaseExpiry: CaptureExpiryPlan? = null
@@ -583,31 +584,67 @@ class RuleCaptureCoordinator(
         return CaptureOperationResult.Success(session.id)
     }
 
-    /** 清除前先停用目标；失败时保留规则，允许用户安全重试。 */
-    suspend fun clearTarget(targetAppId: TargetAppId): CaptureOperationResult = operation(RuleManagementOperation.DELETE_TARGET) {
-        flashSkipStore.setAppEnabled(targetAppId, false)
-        persistState { state ->
-            state.copy(
-                samples = state.samples.filterNot { it.targetAppId == targetAppId },
-                activeSession = state.activeSession?.takeUnless { it.targetAppId == targetAppId },
-                semanticDiffEvidence = state.semanticDiffEvidence.filterNot {
-                    it.targetAppId == targetAppId
-                },
-            )
+    /** 清除前先停用目标；每次直接调用代表一次新的明确确认。 */
+    suspend fun clearTarget(targetAppId: TargetAppId): CaptureOperationResult =
+        clear(RuleDeletionRequest(targetAppId))
+
+    /** 全部删除包含没有对应样本的残留开关；不承诺跨库原子提交。 */
+    suspend fun clearAll(): CaptureOperationResult = clear(RuleDeletionRequest(null))
+
+    /** 范围校验与停用共用操作锁，旧 UI 重试不能删除其确认之后的新载荷。 */
+    internal suspend fun clear(request: RuleDeletionRequest): CaptureOperationResult = operation(
+        if (request.target == null) RuleManagementOperation.DELETE_ALL else RuleManagementOperation.DELETE_TARGET,
+    ) {
+        val retry = request.started
+        request.started = true
+        // 首次读取失败时无法证明原确认范围；重试要求重新确认，不能绑定后来才读到的数据。
+        if (retry && request.captureScope == null) return@operation CaptureOperationResult.Stale
+        val current = captureStore.state.first()
+        val preferences = if (request.target == null) flashSkipStore.preferences.first() else null
+        val enabled = preferences?.enabledApps?.filterValues { it }?.keys.orEmpty()
+        if (!retry) {
+            request.captureScope = request.scopeOf(current)
+            request.enabledTargets = enabled.toSet()
+            request.targets = request.target?.let(::listOf) ?: (
+                current.samples.map(CaptureSample::targetAppId) + preferences!!.enabledApps.keys +
+                    listOfNotNull(current.activeSession?.targetAppId)
+                ).distinct()
+        } else {
+            if (request.scopeOf(current) != request.captureScope) return@operation CaptureOperationResult.Stale
+            if (request.target == null) {
+                val possibleCommitted = request.enabledTargets - setOfNotNull(request.uncertainDisable)
+                if (enabled != request.enabledTargets && enabled != possibleCommitted) {
+                    return@operation CaptureOperationResult.Stale
+                }
+                request.enabledTargets = enabled.toSet()
+            }
+        }
+        request.uncertainDisable = null
+        request.targets.forEach { target ->
+            request.uncertainDisable = target
+            flashSkipStore.setAppEnabled(target, false)
+            request.enabledTargets = request.enabledTargets - target
+            request.uncertainDisable = null
+        }
+        try {
+            persistState { state ->
+                // 启动安全过滤等存储写入不持有操作锁；提交时再次保护后到的载荷。
+                if (request.scopeOf(state) != request.captureScope) throw StaleDeletion()
+                request.target?.let { target ->
+                    state.copy(
+                        samples = state.samples.filterNot { it.targetAppId == target },
+                        activeSession = state.activeSession?.takeUnless { it.targetAppId == target },
+                        semanticDiffEvidence = state.semanticDiffEvidence.filterNot { it.targetAppId == target },
+                    )
+                } ?: RuleCaptureState()
+            }
+        } catch (_: StaleDeletion) {
+            return@operation CaptureOperationResult.Stale
         }
         CaptureOperationResult.Success()
     }
 
-    /** 清除全部状态前先关闭所有保存过的开关，包括没有对应样本的残留开关。 */
-    suspend fun clearAll(): CaptureOperationResult = operation(RuleManagementOperation.DELETE_ALL) {
-        val state = captureStore.state.first()
-        val targets = state.samples.map(CaptureSample::targetAppId) +
-            flashSkipStore.preferences.first().enabledApps.keys +
-            listOfNotNull(state.activeSession?.targetAppId)
-        targets.distinct().forEach { flashSkipStore.setAppEnabled(it, false) }
-        persistState { RuleCaptureState() }
-        CaptureOperationResult.Success()
-    }
+    private class StaleDeletion : RuntimeException()
 
     /** 开启时在同一把锁内校验当前规则，避免清除或采集与旧界面开关事件竞争。 */
     suspend fun setAppEnabled(targetAppId: TargetAppId, enabled: Boolean): CaptureOperationResult =
