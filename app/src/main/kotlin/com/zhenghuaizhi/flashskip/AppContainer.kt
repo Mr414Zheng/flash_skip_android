@@ -62,7 +62,12 @@ class AppContainer internal constructor(context: Context, runtime: AppContainerR
             CaptureTraceLog.lifecycle("application_capture_observer_started")
             var previous: RuleCaptureState? = null
             try {
-                ruleCaptureStore.state.collect { current ->
+                ruleCaptureStore.reads.collect { read ->
+                    if (!read.available) {
+                        CaptureTraceLog.lifecycle("application_capture_storage_unavailable")
+                        return@collect
+                    }
+                    val current = read.requireAvailable()
                     CaptureTraceLog.persistedState(previous, current)
                     previous = current
                 }

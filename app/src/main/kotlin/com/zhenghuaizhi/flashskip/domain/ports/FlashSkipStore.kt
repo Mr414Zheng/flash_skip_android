@@ -12,6 +12,9 @@ data class FlashSkipPreferences(
 interface FlashSkipStore {
     val preferences: Flow<FlashSkipPreferences>
 
+    /** 长期订阅包含不可用状态，不把读取失败当作所有开关已关闭。 */
+    val reads: Flow<StorageRead<FlashSkipPreferences>> get() = preferences.observeStorageReads()
+
     suspend fun setAppEnabled(targetAppId: TargetAppId, enabled: Boolean)
 
     suspend fun isAppEnabled(targetAppId: TargetAppId): Boolean

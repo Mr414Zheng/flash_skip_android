@@ -288,3 +288,23 @@ P2 已合入 main，合并后的主干 CI 验收通过。此轮主干验收回�
 本机原始证据位于忽略目录 `app/build/reports/ci/remote/38493360255/`，不提交源码仓库；GitHub 产物仍按现有 14 天保留策略。工作流上传报告而不上传 APK 二进制，APK 生成／非空由远端门禁证明，没有下载 APK 或新增安装、设备与 Compose 控件结论。
 
 P3 已合入 main，合并后的主干验收通过。本轮回写仅修改文档；按用户选择创建独立文档 PR，核对其 CI 后保持未合并，等待用户审阅；上述结果仅归属于合并提交，不错记为后续文档 head。依赖、构建配置、工作流与远端设置未改；没有独立 QA 或新增设备验证，SDD-001/T-12 未完成且继续停止，P4 以后未启动。
+
+## P4 本地规格与离线测试交付（修复前历史）
+
+2026-10-14，基线 main `40e6080` 加未提交 P4 规格、测试和必需身份清单。新增 6 个类、95 例及 1 个真实存储共享夹具；完整 47 个类、574 例中 546 通过、28 失败、零错误／跳过。与基线清单按完整类名／方法名逐项核对：原 479 个身份全部保留并通过，原测试未改。新增 33 JVM（5 失败）、23 Robolectric Codec（10 失败）、39 Robolectric 真实 DataStore（13 失败）。
+
+执行 `:app:testDebugUnitTest :app:assembleDebug :app:lintDebug --rerun-tasks --no-build-cache --continue --console=plain`，56 个任务实际运行；测试失败使 Gradle 返回 1，debug 构建仍完成，Lint 0 错误／12 警告。28 个检查器测试与规格检查通过；`check_test_results.py --require-artifacts` 返回 1，因 28 个红例阻断，无身份缺失或构建／Lint 产物错误。必需清单包含所有 574 个身份，包括失败例，没有调整检查器或工作流。
+
+证据位于本机忽略目录 `app/build/reports/ci/p4/full/`：Gradle、JUnit XML/HTML、Lint、检查器／规格／产物日志、summary、源文件指纹、基线和新必需清单。`preliminary/` 与 `management/` 保留较早专项运行。新检出须重跑，不依赖本机产物。没有提交、推送、PR、远端 CI 或设备验收；生产、公开接口、数据格式、依赖、构建配置和远端设置未改。
+
+规格与测试工作完成不等于契约验收通过；具体失败身份、AC 追踪与后续最小修复建议见 [SDD-006](persistence-compatibility/validation.md) 和 [SDD-007](rule-management/validation.md)。原 14 例真实服务集成随基线通过，不能替代新增 P4 的服务门禁验证；SDD-001/T-12 未完成且停止。
+
+## P4 修复后本地验收
+
+2026-10-14 用户续授权最小生产修复、必要回归和本地验收。以 main `40e6080` 加未提交 P4 改动执行完整 Gradle 命令（同上，`--rerun-tasks --no-build-cache --continue --console=plain`），56 个任务实际运行且返回 0。49 个测试类、594 例全部通过，零失败／错误／跳过。修复前 574 个身份及预期全部保留，包括 28 个失败反例；新增 20 回归，原 479 基线仍完整通过。既有服务类原 14 个方法体逐字保留，只扩展方法及故障夹具。
+
+新增 20 例分别为 5 JVM、1 Robolectric Codec、9 真实 DataStore、5 真实服务／AppContainer／DataStore。P4 总增量 115 例：38 JVM、24 Codec、48 DataStore、5 服务集成。服务验证含不可用时零查询／点击及有效恢复后的 ACTION_CLICK 正控制，不能替代设备或 Compose 控件。
+
+Debug 构建、28 个检查器测试、规格检查与必需身份／产物门禁均通过；Lint 0 错误／12 个既有警告。原始报告、完整身份、源码／配置指纹与执行摘要在忽略目录 `app/build/reports/ci/p4/repaired-final/`。`full/` 保留原 574 例／28 失败；较早修复专项和新增测试导入错误日志也保留，不覆盖历史。新检出须重跑。
+
+没有提交、推送、PR 或远端 CI，不改持久化格式、依赖、构建配置、CI 工作流或远端设置。具体修复及 AC 追踪见 [SDD-006](persistence-compatibility/validation.md)、[SDD-007](rule-management/validation.md)。T-12 未完成且停止，P5 未启动。

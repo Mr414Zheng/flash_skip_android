@@ -1,5 +1,5 @@
 {
-  "baseline": "34dc102",
+  "baseline": "40e6080",
   "required_cases": {
     "com.zhenghuaizhi.flashskip.application.rulecapture.RuleCaptureCancellationTest": [
       "ac03_ac04_cancellationBetweenCommitsPreservesEvidenceAndReleasesLockForRetry[AWAITING_CONFIRMATION]",
@@ -223,12 +223,102 @@
       "serviceWriteIOExceptionPreservesStateAndRetryClearsMatchingFailure",
       "targetMismatchCannotReplaceCurrentObservedEvidence"
     ],
+    "com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementContractTest": [
+      "allDeleteFinalWriteFailureLeavesEveryTargetDisabledAndAllPayload",
+      "allDeleteFirstDisableFailureDoesNotContinue",
+      "allDeleteIncludesOrphanSwitchAndSessionOnlyTarget",
+      "allDeleteLastDisableFailureRetainsEarlierDisablesAndAllPayload",
+      "allDeleteSecondDisableFailureRetainsFirstDisableAndAllPayload",
+      "cancellationAfterDeleteCommitDoesNotRestorePayload",
+      "cancellationBeforeDisableCommitLeavesEverythingUnchanged",
+      "cancellationBetweenStoresPreservesDisableWithoutDeletingPayload",
+      "captureDeleteFailureKeepsTargetDisabledAndOriginalPayload",
+      "deletingMissingTargetIsIdempotentAndPreservesOthers",
+      "disablingIsAllowedDuringBlockingCaptureWithoutRemovingEvidence",
+      "enableQueuedBehindDeleteRejectsStaleCatalogWithoutReenabling",
+      "otherTargetDeletePreservesActiveSessionAndUnrelatedEvidence",
+      "queuedDeleteAfterSaveRemovesJustSavedSample",
+      "queuedSaveAfterDeleteCannotRestoreDeletedSession",
+      "repeatedAllDeleteKeepsRecordsAndEmptyCapture",
+      "targetDeleteDisablesBeforeRemovingOnlyTargetPayload",
+      "targetDisableFailureLeavesAllCaptureAndSwitchesUntouched"
+    ],
+    "com.zhenghuaizhi.flashskip.data.preferences.ActionRecordCodecContractTest": [
+      "absentAndBlankRecordsAreEmpty",
+      "badRecordAfterRetentionLimitDoesNotEraseFirstTwenty",
+      "completeRecordRoundTrips",
+      "damagedOptionalTimingDoesNotDiscardRecord",
+      "duplicateRecordsAreRetained",
+      "firstDamagedRecordIsIsolated",
+      "historicalV2DefaultsAcceptedFromMethod",
+      "historicalV2WithoutMethodDoesNotClaimAcceptedAction",
+      "lastDamagedRecordIsIsolated",
+      "middleDamagedRecordIsIsolated",
+      "retentionKeepsWireOrderRatherThanTimestampOrder",
+      "unknownOptionalObservationDoesNotDiscardRecord"
+    ],
     "com.zhenghuaizhi.flashskip.data.preferences.CaptureSavePersistenceTest": [
       "ac01_ac06_ac07_saveSurvivesReopenAndRealCatalogRequiresExplicitEnable",
       "ac02_ac04_closeFailureRetriesOriginalPayloadAndPersistsOnce",
       "ac03_ac04_ac07_partialFailurePreservesPayloadThenRetrySurvivesReopen",
       "ac08_cancelAfterRealCommitSurvivesReopenAndReplayWritesNothing",
       "ac08_ignoredSuccessfulReturnSurvivesReopenAndReplayWritesNothing"
+    ],
+    "com.zhenghuaizhi.flashskip.data.preferences.PersistenceCompatibilityTest": [
+      "actionSafetyLookupFailsClosedOnReadIOException",
+      "appendFailureDoesNotLoseExistingRecordOrEnabledFlag",
+      "cancelledAppendAfterCommitPersistsRecordOnReopen",
+      "cancelledAppendBeforeCommitDoesNotPersistRecord",
+      "captureReadIOExceptionIsNotReportedAsHealthyEmptyState",
+      "cleanupWriteFailureStillFiltersUnsafeReadWithoutRewritingBytes",
+      "damagedActiveSessionBlocksWriteAndPreservesRaw",
+      "damagedActiveSessionKeepsSavedRulesButBlocksAutomation",
+      "enabledPackagesAreTrimmedDeduplicatedAndInvalidNamesAreNotExposed",
+      "failedWriteLeavesOriginalBytesAndCanRetry",
+      "futureCaptureVersionBlocksOverwrite",
+      "futureCaptureVersionSurvivesInitializationAndReopen",
+      "futureRecordVersionBlocksAppend",
+      "initializationQueuedBeforeUserWriteDoesNotOverwriteNewData",
+      "legacyCleanupFailureStillReadsValidV2",
+      "legacyCleanupPreservesCoexistingV2Values",
+      "legacyKeysAreRemovedWithoutRestoringFlagsRecordsOrCapture",
+      "malformedCaptureRootBlocksOverwrite",
+      "malformedRecordRootBlocksAppend",
+      "missingCaptureEnvelopeFieldsBlockOverwrite",
+      "nonIoReadFailureIsNotHidden",
+      "preferencesReadIOExceptionIsNotReportedAsHealthyEmptyState",
+      "readCancellationPropagatesForBothStores",
+      "recordsKeepTwentyMostRecentWritesAndDuplicatesAcrossReopen",
+      "successfulRereadRecoversActualCaptureAndPreferences",
+      "supportedDataReplacesUnavailableInputOnlyThroughExternalRecoveryThenAllowsWrites",
+      "unknownRecordVersionBlocksEnabledLookup",
+      "unsafePendingPayloadCannotResumeListening",
+      "unsafePersistedSampleAndMatchingEvidenceAreRemovedOnReopen",
+      "unsafeSampleCannotBeIntroducedThroughUpdate"
+    ],
+    "com.zhenghuaizhi.flashskip.data.preferences.RuleCaptureCodecContractTest": [
+      "absentAndBlankStateAreEmptyWithoutInvalidDiagnostic",
+      "capturedStateRoundTripsAllBusinessPayloads",
+      "confirmationStateRoundTripsAllBusinessPayloads",
+      "damagedOptionalDiagnosticsDoNotDiscardSession",
+      "damagedSemanticEvidenceDoesNotDiscardSamplesOrOtherEvidence",
+      "damagedSessionDoesNotDiscardValidSavedSamples",
+      "firstDamagedSampleIsIsolated",
+      "historicalV2DefaultsEvidenceAndOptionalCollections",
+      "lastDamagedSampleIsIsolated",
+      "middleDamagedSampleIsIsolated",
+      "unknownAdditiveFieldsAreIgnored"
+    ],
+    "com.zhenghuaizhi.flashskip.data.preferences.RuleManagementPersistenceTest": [
+      "allDeletePersistsRemovalOfOrphanSwitchesAndRetainsRecords",
+      "cancellationAfterRealDeleteCommitKeepsDeletionAfterReopen",
+      "cancellationBetweenRealStoresRetainsPayloadAfterReopen",
+      "captureReadFailurePreventsAllDeleteInsteadOfTreatingDataAsEmpty",
+      "finalDeleteWriteFailureRetainsPayloadAfterReopen",
+      "preferencesReadFailurePreventsDeletingCaptureWhileOrphanRemainsEnabled",
+      "secondDisableFailurePersistsPartialStateAndRetryCompletesAfterReopen",
+      "targetDeleteSurvivesReopenAndPreservesOtherTargetAndRecords",
+      "unknownCaptureVersionCannotBeDeletedThroughManagementEntry"
     ],
     "com.zhenghuaizhi.flashskip.domain.automation.ActionRetryPolicyTest": [
       "ac06_observationDeadlineIsExclusiveAndLastAcceptedActionControlsWait",
@@ -528,6 +618,11 @@
       "firstWaitingOrObservingRestoreTerminatesUnavailableInsteadOfContinuingOldWindow",
       "interruptRetainsCompletionEvidenceAndDoesNotRestartObservationForLaterStateEmission",
       "newEngineOnReconnectIsPausedIndependentlyOfServiceEventRoutingThenCanActAfterCancel",
+      "p4CaptureReadIoAtConnectDoesNotCrashAndSameSubscriptionRecovers",
+      "p4DamagedSessionKeepsValidRulesNonExecutableUntilExplicitRecovery",
+      "p4PreferencesReadIoAtConnectKeepsEnginePausedUntilValidRead",
+      "p4UnknownCaptureVersionBlocksRealServiceUntilSupportedDataReturns",
+      "p4UnknownRecordVersionPausesAlreadyConnectedServiceAndRecovers",
       "sameSessionEmissionCannotBypassRecoveryWhileSettlementWriteStillFails",
       "sameSessionEmissionRetriesRecoveryBeforeEnablingPlatformAfterStorageRecovers"
     ],
@@ -541,6 +636,23 @@
       "returnKeepsCapturedPayloadBlockingUntilExplicitSave",
       "returnWhileObservingReportsDismissNotCapturedWithoutSavingSample",
       "startWaitsForServiceConfigurationBeforeRequestingHomeNavigation"
+    ],
+    "com.zhenghuaizhi.flashskip.ui.home.HomeViewModelManagementTest": [
+      "changedTargetEvidenceInvalidatesOldDeleteRetry",
+      "changedTargetSamplesInvalidateOldDeleteRetry",
+      "changedTargetSessionInvalidatesOldDeleteRetry",
+      "duplicateAndConflictingInputsDuringDeleteAreNotQueued",
+      "freshConfirmationCanDeleteChangedScope",
+      "newOrphanSwitchInvalidatesOldAllDeleteRetry",
+      "newTargetInvalidatesOldAllDeleteRetry",
+      "newerFailedOperationReplacesOldDeleteRetry",
+      "newerSuccessfulOperationClearsOldDeleteRetry",
+      "recordOnlyChangeDoesNotInvalidateTargetDeleteRetryOrEraseHistory",
+      "repeatedStorageFailureRetainsRetryAndNeverReportsSuccess",
+      "unchangedAllRetryAcceptsItsOwnPartialDisables",
+      "unchangedTargetRetryCompletesAndClearsStorageFeedback",
+      "unrelatedTargetChangeDoesNotInvalidateTargetRetry",
+      "viewModelCancellationDoesNotTurnPartialDeleteIntoSuccess"
     ],
     "com.zhenghuaizhi.flashskip.ui.home.HomeViewModelSaveTest": [
       "ac01_ac06_savedFeedbackTracksCatalogLagAndReadyWithoutAutomaticEnable[phase=AWAITING_CONFIRMATION]",
@@ -561,6 +673,25 @@
       "ac06_inputsDuringSaveAreIgnoredWithoutQueueAndLaterExplicitEnableWorks[phase=CAPTURED]",
       "ac07_pendingPayloadAndCatalogPublicationWaitForExplicitUiSave[phase=AWAITING_CONFIRMATION]",
       "ac07_pendingPayloadAndCatalogPublicationWaitForExplicitUiSave[phase=CAPTURED]"
+    ],
+    "com.zhenghuaizhi.flashskip.data.preferences.StorageAvailabilityRegressionTest": [
+      "badSessionPublishesRecoverableSamplesButSuppressesLocalAndBuiltinRules",
+      "homeKeepsRecoverableCardsDisabledAndRecoversWithoutNewViewModel",
+      "missingRequiredCompletionPayloadIsUnavailableAndCannotResume",
+      "oneLongLivedCaptureSubscriptionReportsIoAndThenRecovers",
+      "oneLongLivedPreferencesSubscriptionReportsIoAndThenRecovers",
+      "retentionUsesTwentyValidEntriesAfterIsolatingAnEarlyBadRecord",
+      "unknownRecordsRejectFlagChangesIncludingDisableAndPreserveRawPreferences",
+      "unreadableStateRejectsTransformBeforeItCanObserveOrReplaceEmptyData",
+      "validThenUnknownThenRecoveredStateInvalidatesAndRepublishesCatalog",
+      "wrongTypePendingPayloadIsUnavailableRatherThanSilentlyAbsent"
+    ],
+    "com.zhenghuaizhi.flashskip.application.rulecapture.RuleDeletionRetryRegressionTest": [
+      "lostDisableReturnMayRetryItsOwnCommittedSwitchWithoutRollback",
+      "lostFinalDeleteReturnCannotDeleteLaterReplacementData",
+      "storageSideMutationBetweenDisableAndDeleteCannotLoseNewSample",
+      "successfulPartialDisableThenExternalReenableInvalidatesAllRetry",
+      "waitingRetryChecksChangedDataInsideOperationLockBeforeAnyDisable"
     ]
   }
 }

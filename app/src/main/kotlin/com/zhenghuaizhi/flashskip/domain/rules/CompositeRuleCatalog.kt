@@ -27,10 +27,10 @@ class CompositeRuleCatalog(
     scope: CoroutineScope,
     computationDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : RuleCatalog {
-    private val capturedRules = captureStore.state
-        .map { it.samples }
+    private val capturedRules = captureStore.reads
+        .map { it.value?.samples.orEmpty() to it.available }
         .distinctUntilChanged()
-        .mapLatest { samples ->
+        .mapLatest { (samples, available) ->
             val targets = samples.groupBy(CaptureSample::targetAppId).map { (targetAppId, group) ->
                 yield()
                 val latest = group.maxBy(CaptureSample::capturedAtEpochMs)
@@ -44,7 +44,7 @@ class CompositeRuleCatalog(
             // 分组之间及发布前让出执行权，使上游有机会接收新样本并取消旧计算。
             yield()
             currentCoroutineContext().ensureActive()
-            CapturedRules(samples.toList(), targets)
+            CapturedRules(samples.toList(), targets, available)
         }
 
     override val snapshot: StateFlow<RuleCatalogSnapshot> = combine(
@@ -57,7 +57,9 @@ class CompositeRuleCatalog(
         val combinedRules = validatedLocalRules + builtin.rules
         RuleCatalogSnapshot(
             // 本机规则优先；如果它没有命中，自动化引擎会继续检查内置规则。
-            rules = if (RuleValidator.validate(combinedRules).isEmpty()) {
+            rules = if (!captured.available) {
+                emptyList()
+            } else if (RuleValidator.validate(combinedRules).isEmpty()) {
                 combinedRules
             } else {
                 builtin.rules
@@ -68,7 +70,7 @@ class CompositeRuleCatalog(
     }.flowOn(computationDispatcher).stateIn(
         scope = scope,
         started = SharingStarted.Eagerly,
-        initialValue = builtinCatalog.snapshot.value,
+        initialValue = RuleCatalogSnapshot(),
     )
 
     private fun isValidRule(rule: AdRule): Boolean =
@@ -77,5 +79,6 @@ class CompositeRuleCatalog(
     private data class CapturedRules(
         val samples: List<CaptureSample>,
         val targets: List<CapturedTargetRules>,
+        val available: Boolean,
     )
 }

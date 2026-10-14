@@ -7,6 +7,8 @@ import com.zhenghuaizhi.flashskip.domain.model.ActionObservationStatus
 import com.zhenghuaizhi.flashskip.domain.model.ActionRecord
 import com.zhenghuaizhi.flashskip.domain.model.ExecutionTiming
 import com.zhenghuaizhi.flashskip.domain.model.TargetAppId
+import com.zhenghuaizhi.flashskip.domain.ports.StorageRead
+import java.io.IOException
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -36,16 +38,26 @@ object ActionRecordCodec {
             .toString()
     }
 
-    fun decodeOrEmpty(raw: String?): List<ActionRecord> {
-        if (raw.isNullOrBlank()) return emptyList()
-        return runCatching {
+    fun decodeOrEmpty(raw: String?): List<ActionRecord> = decode(raw).value.orEmpty()
+
+    internal fun decode(raw: String?): StorageRead<List<ActionRecord>> {
+        if (raw.isNullOrBlank()) return StorageRead(emptyList())
+        return try {
             val envelope = JSONObject(raw)
-            if (envelope.getInt("version") != VERSION) return emptyList()
+            if (envelope.getInt("version") != VERSION) {
+                return StorageRead(emptyList(), IOException("Unsupported record storage version"))
+            }
             val array = envelope.getJSONArray("records")
-            buildList {
-                repeat(array.length()) { index -> add(array.getJSONObject(index).toRecord()) }
+            val records = buildList {
+                repeat(array.length()) { index ->
+                    // 单条记录损坏不能抹掉其他记录；容量在隔离后应用。
+                    runCatching { array.getJSONObject(index).toRecord() }.getOrNull()?.let(::add)
+                }
             }.take(MAX_RECORDS)
-        }.getOrDefault(emptyList())
+            StorageRead(records)
+        } catch (_: Exception) {
+            StorageRead(emptyList(), IOException("Unreadable record storage envelope"))
+        }
     }
 
     private fun JSONObject.toRecord(): ActionRecord = ActionRecord(
@@ -56,7 +68,7 @@ object ActionRecordCodec {
         method = optionalEnum("method", ActionMethod::valueOf),
         outcome = ActionOutcome.valueOf(getString("outcome")),
         reason = optionalEnum("reason", ActionReason::valueOf),
-        timing = optJSONObject("timing")?.toExecutionTiming(),
+        timing = optJSONObject("timing")?.let { runCatching { it.toExecutionTiming() }.getOrNull() },
         actionAccepted = optBoolean("actionAccepted", !isNull("method")),
         observation = if (!has("observation") || isNull("observation")) null else
             runCatching { ActionObservationStatus.valueOf(getString("observation")) }.getOrNull(),

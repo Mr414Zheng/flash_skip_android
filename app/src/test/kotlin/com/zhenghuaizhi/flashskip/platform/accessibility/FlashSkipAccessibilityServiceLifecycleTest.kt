@@ -14,6 +14,7 @@ import android.view.accessibility.AccessibilityWindowInfo
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.zhenghuaizhi.flashskip.AppContainer
 import com.zhenghuaizhi.flashskip.AppContainerRuntime
 import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureOperationFailure
@@ -29,6 +30,7 @@ import com.zhenghuaizhi.flashskip.domain.ports.PageGateway
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.ports.QueryResult
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
+import com.zhenghuaizhi.flashskip.data.preferences.RuleCaptureCodec
 import com.zhenghuaizhi.flashskip.data.preferences.PreferencesFlashSkipStore
 import com.zhenghuaizhi.flashskip.data.preferences.PreferencesRuleCaptureStore
 import com.zhenghuaizhi.flashskip.testing.CaptureSaveFixture
@@ -348,6 +350,93 @@ class FlashSkipAccessibilityServiceLifecycleTest {
         }
     }
 
+    @Test fun p4UnknownCaptureVersionBlocksRealServiceUntilSupportedDataReturns() = runTest {
+        withService { f ->
+            f.installTargetWindow()
+            f.captureData.replaceRaw("rule_capture_state_v2", """{"version":99,"samples":[]}""")
+            f.connect()
+            assertServiceCannotAct(f)
+            f.captureData.replaceRaw("rule_capture_state_v2", RuleCaptureCodec.encode(f.initial.copy(activeSession = null)))
+            assertServiceCanAct(f)
+        }
+    }
+
+    @Test fun p4DamagedSessionKeepsValidRulesNonExecutableUntilExplicitRecovery() = runTest {
+        withService { f ->
+            f.installTargetWindow()
+            val broken = org.json.JSONObject(RuleCaptureCodec.encode(f.initial)).apply {
+                getJSONObject("activeSession").put("phase", "BAD")
+            }.toString()
+            f.captureData.replaceRaw("rule_capture_state_v2", broken)
+            f.connect()
+            assertEquals(f.initial.samples, f.capture.reads.first().value!!.samples)
+            assertServiceCannotAct(f)
+            f.captureData.replaceRaw("rule_capture_state_v2", RuleCaptureCodec.encode(f.initial.copy(activeSession = null)))
+            assertServiceCanAct(f)
+        }
+    }
+
+    @Test fun p4UnknownRecordVersionPausesAlreadyConnectedServiceAndRecovers() = runTest {
+        withService { f ->
+            f.installTargetWindow()
+            f.connect()
+            f.container.ruleCaptureCoordinator.cancel(SESSION_ID)
+            runCurrent()
+            f.flashData.replaceRaw("action_records_v2", """{"version":99,"records":[]}""")
+            runCurrent()
+            assertServiceCannotAct(f)
+            f.flashData.replaceRaw("action_records_v2", """{"version":2,"records":[]}""")
+            assertServiceCanAct(f)
+        }
+    }
+
+    @Test fun p4CaptureReadIoAtConnectDoesNotCrashAndSameSubscriptionRecovers() = runTest {
+        withService { f ->
+            f.installTargetWindow()
+            f.capture.update { it.copy(activeSession = null) }
+            runCurrent()
+            f.captureData.readFailure = IOException("read unavailable")
+            f.connect()
+            assertServiceCannotAct(f)
+            f.captureData.readFailure = null
+            advanceTimeBy(1_000); runCurrent()
+            assertServiceCanAct(f)
+        }
+    }
+
+    @Test fun p4PreferencesReadIoAtConnectKeepsEnginePausedUntilValidRead() = runTest {
+        withService { f ->
+            f.installTargetWindow()
+            f.capture.update { it.copy(activeSession = null) }
+            runCurrent()
+            f.flashData.readFailure = IOException("read unavailable")
+            f.connect()
+            assertServiceCannotAct(f)
+            f.flashData.readFailure = null
+            advanceTimeBy(1_000); runCurrent()
+            assertServiceCanAct(f)
+        }
+    }
+
+    private suspend fun TestScope.assertServiceCannotAct(f: ServiceFixture) {
+        f.sendTargetWindowEvent()
+        // 同时绕过服务事件路由投递信号，验证引擎暂停本身生效。
+        f.engines.last().engine.onForegroundSignal(ForegroundSignal.TargetActive(f.identity, f.now()))
+        advanceTimeBy(120); runCurrent()
+        assertTrue(f.engines.last().queries.isEmpty())
+        assertTrue(shadowOf(f.nodes.target).performedActions.isEmpty())
+        assertEquals(DEFAULT_TYPES, f.service.serviceInfo.eventTypes)
+    }
+
+    private fun TestScope.assertServiceCanAct(f: ServiceFixture) {
+        runCurrent()
+        assertTrue(f.container.ruleCatalog.snapshot.value.rulesForTarget(TARGET).isNotEmpty())
+        f.sendTargetWindowEvent()
+        advanceTimeBy(120); runCurrent()
+        assertTrue(f.engines.last().queries.isNotEmpty())
+        assertEquals(listOf(AccessibilityNodeInfo.ACTION_CLICK), shadowOf(f.nodes.target).performedActions)
+    }
+
     private suspend fun TestScope.withService(
         phase: CapturePhase = CapturePhase.CAPTURED,
         remainingMs: Long = 60_000,
@@ -360,6 +449,8 @@ class FlashSkipAccessibilityServiceLifecycleTest {
             block(f)
         } finally {
             f.captureData.beforeUpdate = {}
+            f.captureData.readFailure = null
+            f.flashData.readFailure = null
             f.destroy()
             runCurrent()
             f.job.cancelAndJoin()
@@ -383,7 +474,7 @@ class FlashSkipAccessibilityServiceLifecycleTest {
             override fun currentTimeMillis() = 1_000_000L + now()
         }
         val captureData = LifecycleDataStore(PreferenceDataStoreFactory.create(scope = scope) { File(directory, "capture.preferences_pb") })
-        private val flashData = LifecycleDataStore(PreferenceDataStoreFactory.create(scope = scope) { File(directory, "flash.preferences_pb") })
+        val flashData = LifecycleDataStore(PreferenceDataStoreFactory.create(scope = scope) { File(directory, "flash.preferences_pb") })
         val capture = PreferencesRuleCaptureStore(captureData, scope)
         val flash = PreferencesFlashSkipStore(flashData, scope)
         private val context = RuntimeEnvironment.getApplication()
@@ -479,7 +570,15 @@ class FlashSkipAccessibilityServiceLifecycleTest {
 
     private class LifecycleDataStore(private val delegate: DataStore<Preferences>) : DataStore<Preferences> {
         var readGate: CompletableDeferred<Unit>? = null
-        override val data = flow { readGate?.await(); emitAll(delegate.data) }
+        var readFailure: IOException? = null
+        override val data = flow {
+            readGate?.await()
+            readFailure?.let { throw it }
+            emitAll(delegate.data)
+        }
+        suspend fun replaceRaw(name: String, raw: String) {
+            delegate.updateData { it.toMutablePreferences().apply { this[stringPreferencesKey(name)] = raw } }
+        }
         var attempts = 0
         var beforeUpdate: suspend () -> Unit = {}
         override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences {
