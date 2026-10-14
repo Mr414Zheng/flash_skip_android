@@ -2,9 +2,15 @@
 
 本索引覆盖九包 66 条 AC，是定位入口；契约全文及细项方法以各包 spec／validation 为准。维护者为变更作者，评审者逐项核对语义。测试类链接配合“已观察子条款”使用，不表示该类的任意一个方法证明整条 AC。跨包测试允许复用证据，不重复计数。变更时更新受影响行和[缺口台账](evidence-gaps.md)，流程见[日常开发](development-workflow.md)。
 
+## 当前主干与历史映射
+
+当前 main 为 `7c766fad953ad0d9867b909a3cc1675390220f8c`，P6 PR #10 已合并。[主干 CI 38538180589](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38538180589) 再次通过相同的 735 个测试身份、28 个检查器、Debug 构建与产物门禁，文档检查为 45 份／9 个编号，Lint 0 错误／15 警告；两组报告已下载并匹配精确 main 提交，见 [CI 记录](ci.md#p6-合并与主干-ci-验收)。
+
+下方 E-main 保留初次盘点时的提交和运行来源，不将旧报告改写成新运行；当前主干提供同一代码／测试范围的后续回归证据。66 条映射、证据层级及缺口结论不变；工作分支清理仅删除引用，不改变内容。本轮文档同步未在本地重新执行 Android；后续文档 PR 的远端运行单独核验并在交接中报告。
+
 ## 证据来源与读法
 
-**E-main**：适用提交 `625091dba52797b699ac13b5a5db1c9505d2b0ea`，主干 push [CI 38531810742 / attempt 1](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38531810742)，735 个必需身份／61 类，零失败、错误、跳过；28 个检查器测试、Debug 构建、规格及产物门禁通过，Lint 0 错误／15 警告。报告下载核验和摘要见 [CI 当前主干](ci.md#p6-盘点所用主干证据)。各表每行的 E-main 均继承此完整提交和来源；本轮仅文档，不宣称新跑 Android。源码／测试／必需清单与基线的字节一致性在 P6 验收中核对。
+**E-main（初次盘点的历史来源）**：适用提交 `625091dba52797b699ac13b5a5db1c9505d2b0ea`，主干 push [CI 38531810742 / attempt 1](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38531810742)，735 个必需身份／61 类，零失败、错误、跳过；28 个检查器测试、Debug 构建、规格及产物门禁通过，Lint 0 错误／15 警告。报告下载核验和摘要见 [初次盘点 CI](ci.md#p6-盘点所用主干证据)。各表每行的 E-main 均继承此完整提交和来源；本轮仅文档，此处历史引用不宣称文档 PR 新跑 Android。源码／测试／必需清单与基线的字节一致性在 P6 验收中核对。
 
 **E-static**：P5 首轮两变体最终 Manifest／BuildConfig／备份排除／no_backup 静态证据，来源及指纹见 [诊断验证](diagnostics/validation.md)。P5 修复确认配置源未变，P6 再核对所有非 Markdown 文件与 E-main 一致；没有将静态证据转成 Release 运行证据。
 

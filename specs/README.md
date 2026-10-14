@@ -1,10 +1,12 @@
 # FlashSkip 项目规格索引
 
-## 当前状态（P6 本地文档）
+## 当前状态（P6 已合并并完成主干验收）
 
-截至 2026-10-14，代码基线为 main `625091dba52797b699ac13b5a5db1c9505d2b0ea`。[PR #8](https://github.com/Mr414Zheng/flash_skip_android/pull/8) 产品修复和 [PR #9](https://github.com/Mr414Zheng/flash_skip_android/pull/9) 证据文档均已合并。最新已核验主干 [CI 38531810742](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38531810742) 通过：61 类／735 例，零失败、错误、跳过；28 个检查器测试、Debug 构建及原有门禁通过；Lint 0 错误／15 警告。详细来源见 [CI 证据](ci.md#p6-盘点所用主干证据)。
+截至 2026-10-14，main 为 `7c766fad953ad0d9867b909a3cc1675390220f8c`。[PR #10](https://github.com/Mr414Zheng/flash_skip_android/pull/10) 已合并；其 [主干 CI 38538180589](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38538180589)（push／attempt 1）通过：61 类／735 例，零失败、错误、跳过；28 个检查器测试、45 份文档／9 个规格编号、Debug 构建及产物门禁通过；Lint 0 错误／15 警告。两组报告已下载并核验完整测试身份、ZIP 摘要与精确 main 检出提交，见 [P6 合并与主干验收](ci.md#p6-合并与主干-ci-验收)。
 
-P6 文档流程已完成本地交付：[日常开发流程](development-workflow.md)、[全部 66 条 AC 追踪](traceability.md)、[证据缺口](evidence-gaps.md)。P6 本地流程验收通过，结果见流程记录。用户随后于 2026-10-14 授权新建分支、提交、推送、创建 PR，并等待远端 CI、下载核验报告后交接；保持 PR 未合并。远端沿用完整 CI，本地不重跑 Android。P5 两包 T-05 仍未完成：Release 单测阻塞、Compose／真实系统等分层证据缺口保留；SDD-001/T-12 未完成且按用户要求停止。P6 流程完成不代表 P5 全部分层通过或发布就绪。
+P6 的[日常开发流程](development-workflow.md)、[全部 66 条 AC 追踪](traceability.md)和[缺口台账](evidence-gaps.md)已完成流程验收与主干交付。随后按用户授权清理了 10 个已合并工作分支的本地及 origin 引用；删除前逐一确认分支文件树与对应合并提交一致，main 历史与所有跟踪文件均未改变，见 [分支清理记录](ci.md#已合并工作分支清理)。清理完成时本地与远端仅保留 main；后续文档交付使用新分支。
+
+文档状态同步的本地检查已完成。用户随后授权将这 9 份文档放入新分支、提交、推送并创建文档 PR，等待其 CI 通过后下载核验报告，先不合并。本地不重跑 Android，远端沿用完整 CI。P5 两包 T-05 仍未完成，Release 单测阻塞、Compose／真实系统等证据缺口保留；SDD-001/T-12 未完成且按用户要求停止。P6 流程验收完成不表示 P5 全部分层通过或产品发布就绪。
 
 以下旧基线、原失败、当时授权及“当前／本轮／未启动”措辞均属于所标阶段的历史记录，不覆盖本节。能力包中的契约全文和详细验证记录仍是事实来源，项目摘要不重写产品要求。
 

@@ -1,10 +1,12 @@
 # FlashSkip SDD 分阶段推广计划
 
-## 当前状态（P6 本地文档）
+## 当前状态（P6 已合并并完成主干验收）
 
-截至 2026-10-14，代码基线为 main `625091dba52797b699ac13b5a5db1c9505d2b0ea`。[PR #8](https://github.com/Mr414Zheng/flash_skip_android/pull/8) 产品修复和 [PR #9](https://github.com/Mr414Zheng/flash_skip_android/pull/9) 证据文档均已合并。最新已核验主干 [CI 38531810742](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38531810742) 通过：61 类／735 例，零失败、错误、跳过；28 个检查器测试、Debug 构建及原有门禁通过；Lint 0 错误／15 警告。详细来源见 [CI 证据](ci.md#p6-盘点所用主干证据)。
+截至 2026-10-14，main 为 `7c766fad953ad0d9867b909a3cc1675390220f8c`。[PR #10](https://github.com/Mr414Zheng/flash_skip_android/pull/10) 已合并；其 [主干 CI 38538180589](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38538180589)（push／attempt 1）通过：61 类／735 例，零失败、错误、跳过；28 个检查器测试、45 份文档／9 个规格编号、Debug 构建及产物门禁通过；Lint 0 错误／15 警告。两组报告已下载并核验完整测试身份、ZIP 摘要与精确 main 检出提交，见 [P6 合并与主干验收](ci.md#p6-合并与主干-ci-验收)。
 
-P6 文档流程已完成本地交付：[日常开发流程](development-workflow.md)、[全部 66 条 AC 追踪](traceability.md)、[证据缺口](evidence-gaps.md)。P6 本地流程验收通过，结果见流程记录。用户随后于 2026-10-14 授权新建分支、提交、推送、创建 PR，并等待远端 CI、下载核验报告后交接；保持 PR 未合并。远端沿用完整 CI，本地不重跑 Android。P5 两包 T-05 仍未完成：Release 单测阻塞、Compose／真实系统等分层证据缺口保留；SDD-001/T-12 未完成且按用户要求停止。P6 流程完成不代表 P5 全部分层通过或发布就绪。
+P6 的[日常开发流程](development-workflow.md)、[全部 66 条 AC 追踪](traceability.md)和[缺口台账](evidence-gaps.md)已完成流程验收与主干交付。随后按用户授权清理了 10 个已合并工作分支的本地及 origin 引用；删除前逐一确认分支文件树与对应合并提交一致，main 历史与所有跟踪文件均未改变，见 [分支清理记录](ci.md#已合并工作分支清理)。清理完成时本地与远端仅保留 main；后续文档交付使用新分支。
+
+文档状态同步的本地检查已完成。用户随后授权将这 9 份文档放入新分支、提交、推送并创建文档 PR，等待其 CI 通过后下载核验报告，先不合并。本地不重跑 Android，远端沿用完整 CI。P5 两包 T-05 仍未完成，Release 单测阻塞、Compose／真实系统等证据缺口保留；SDD-001/T-12 未完成且按用户要求停止。P6 流程验收完成不表示 P5 全部分层通过或产品发布就绪。
 
 以下旧基线、原失败、当时授权及“当前／本轮／未启动”措辞均属于所标阶段的历史记录，不覆盖本节。能力包中的契约全文和详细验证记录仍是事实来源，项目摘要不重写产品要求。
 
@@ -22,7 +24,7 @@ P6 文档流程已完成本地交付：[日常开发流程](development-workflow
 | P3 采集全过程 / 已合入 main，主干 CI 通过 | P2 的规则与动作边界 | [SDD-004](capture-lifecycle/spec.md) 与 [SDD-005](capture-evidence/spec.md)；五项政策已修复，完整 479 例通过，原 201 例及修复前 453 个身份保留；含 14 例真实服务与实际存储集成，历史 42 失败保留；状态转换表、目标身份、点击/候选证据、返回与过期、旧事件和扫描覆盖的契约与离线测试 | 状态与关键事件顺序有证据；不可读、不完整和不存在分开；与 SDD-001 保存契约一致，不依赖京东广告复现 |
 | P4 数据与管理操作 / 本地、PR 及主干 CI 验收通过 | P2、P3 的状态和资格定义 | [SDD-006](persistence-compatibility/spec.md) 与 [SDD-007](rule-management/spec.md)；合计新增 115 例通过，完整 594 例通过；原 574 身份及预期保留，28 个原红例关闭；PR #6 已合入 main（`d51fab4`），主干 CI `38504787335` 报告已下载核验 | 正常/异常/部分提交/重开读取均有对应 AC；兼容和清理政策先审定，不擅自迁移数据 |
 | P5 服务、界面与诊断 / 主干自动化通过，分层验收未完成 | P2～P4 的业务结果定义 | [SDD-008](service-and-home/spec.md) 与 [SDD-009](diagnostics/spec.md)；累计新增 141 例，全量 735 例通过，原 19 个失败关闭；Release 运行证据阻塞、Compose 未验证；服务状态、生命周期、导航、控件与反馈、诊断容量与失败边界 | JVM、Robolectric、可行的组件验证分别报告；实际系统和设备证据缺口保留，不恢复 T-12 或新增其替代任务 |
-| P6 日常开发流程 / 本地文档验收通过 | P1～P5 的规格及已有证据，不要求关闭全部 P5 缺口 | [流程](development-workflow.md)、[66 条 AC](traceability.md)、[缺口台账](evidence-gaps.md)；不新增产品编号或检查器 | 全量追踪、四类演练、脚本与人工责任、现有文档门禁及仅文档范围；不把缺口登记视为风险豁免 |
+| P6 日常开发流程 / 已合入 main，流程与主干 CI 验收通过 | P1～P5 的规格及已有证据，不要求关闭全部 P5 缺口 | [流程](development-workflow.md)、[66 条 AC](traceability.md)、[缺口台账](evidence-gaps.md)；不新增产品编号或检查器 | 全量追踪、四类演练、脚本与人工责任、现有文档门禁及仅文档范围；不把缺口登记视为风险豁免 |
 
 建议按 P0 → P1 → P2 → P3 → P4 → P5 → P6 执行。每个能力包独立审定、实施和提交；规则资格先于执行消费方，状态定义先于存储与 UI 验收。预计成本在各包完成规格草案和测试入口检查后评估，当前不承诺日历工期。
 
