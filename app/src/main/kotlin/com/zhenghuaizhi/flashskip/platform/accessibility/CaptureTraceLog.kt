@@ -2,6 +2,7 @@ package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.os.SystemClock
 import android.util.Log
+import com.zhenghuaizhi.flashskip.platform.diagnostics.ProcessDiagnosticIdentifiers
 import com.zhenghuaizhi.flashskip.platform.diagnostics.CaptureDiagnosticSink
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
@@ -24,9 +25,15 @@ import com.zhenghuaizhi.flashskip.domain.model.CaptureStartupDiagnostics
 /** 采集诊断仅限 Debug 构建，且只输出状态、计数与耗时，不读取事件源节点。 */
 internal object CaptureTraceLog : CaptureTraceLogger(enabled = BuildConfig.DEBUG)
 
-internal open class CaptureTraceLogger(private val enabled: Boolean) {
+internal open class CaptureTraceLogger(
+    private val enabled: Boolean,
+    private val identifiers: ProcessDiagnosticIdentifiers = ProcessDiagnosticIdentifiers.Process,
+    private val logOutput: (Int, String, String) -> Unit = { priority, tag, message -> Log.println(priority, tag, message); Unit },
+) {
     private var localSink: CaptureDiagnosticSink? = null
     private var sequence = 0L
+    private val sessionLabels = linkedMapOf<Long, Long>()
+    private var nextSessionLabel = 0L
     private var currentSessionId: Long? = null
     private var stateObserved = false
     private var lastState: List<Pair<String, Any?>>? = null
@@ -44,7 +51,7 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
     @Synchronized
     fun beginSession(sessionId: Long) {
         if (!enabled) return
-        try { localSink?.beginSession(sessionId) } catch (_: Exception) { }
+        try { localSink?.beginSession(identifiers.sessionFileId(sessionId)) } catch (_: Exception) { }
     }
 
     /** 启动与服务边界没有会话时也必须留证；字段仍只接受安全元数据。 */
@@ -116,6 +123,7 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
                 if (previousId != null) write(previousId, "capture_session_cleared", emptyList())
                 return
             }
+            beginSession(session.id)
             if (session.id !in sessionStarts) rememberSession(session.id)
         }
         if (session == null) return
@@ -336,7 +344,7 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
         if (!enabled) return
         flush()
         if (session.id !in sessionStarts) rememberSession(session.id)
-        val failure = diagnostics()
+        val failure = diagnosticSnapshot(session.id, diagnostics)
         val traceUnchanged = failure?.sessionTrace?.let { lastTrace == (session.id to it) } == true
         write(
             session.id,
@@ -354,7 +362,7 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
             ),
         )
         sample(session, savedSample)
-        targetWindow()?.let { window ->
+        diagnosticSnapshot(session.id, targetWindow)?.let { window ->
             window.captureTiming?.let { timing(session.id, it) }
             window.startupObservation?.let { startupSummary(session.id, it) }
             write(
@@ -456,6 +464,13 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
         }
     }
 
+    private fun <T> diagnosticSnapshot(sessionId: Long, provider: () -> T?): T? = try {
+        provider()
+    } catch (error: Exception) {
+        write(sessionId, "diagnostic_provider_failed", listOf("error" to CaptureTraceError.from(error)), essential = true)
+        null
+    }
+
     private fun recovery(sessionId: Long, name: String, diagnostics: ClickRecoveryDiagnostics) {
         write(
             sessionId,
@@ -531,6 +546,7 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
         if (!enabled || sessionId == null) return
         if (!stateObserved && currentSessionId == null) {
             currentSessionId = sessionId
+            beginSession(sessionId)
             rememberSession(sessionId)
         }
         val safe = safeFields(fields.toList())
@@ -625,14 +641,19 @@ internal open class CaptureTraceLogger(private val enabled: Boolean) {
         val details = safeFields(fields).joinToString(" ") { (key, value) ->
             "$key=${if (value is Enum<*>) value.name else value}"
         }
-        val message = "session=${sessionId ?: 0} seq=${++sequence}$relative stage=$name $details"
+        val label = sessionId?.let { id ->
+            sessionLabels.getOrPut(id) { ++nextSessionLabel }.also {
+                if (sessionLabels.size > 128) sessionLabels.remove(sessionLabels.keys.first())
+            }
+        } ?: 0
+        val message = "process=${identifiers.scope} session=$label seq=${++sequence}$relative stage=$name $details"
         val important = essential || name in ESSENTIAL_STAGES || name.endsWith("_summary")
         // 两个目的地各自失败，不能因 Logcat 不可用或过滤而跳过本地保存。
-        try { localSink?.append(sessionId, message, important) } catch (_: Exception) { }
+        try { localSink?.append(sessionId?.let(identifiers::sessionFileId), message, important) } catch (_: Exception) { }
         try {
-            if (name == "capture_diagnostics_ready" || name.startsWith("service_")) Log.i(TAG, message)
-            else if (name == "capture_summary" && fields.any { it.second == CaptureTraceConclusion.FAILED }) Log.w(TAG, message)
-            else Log.d(TAG, message)
+            if (name == "capture_diagnostics_ready" || name.startsWith("service_")) logOutput(Log.INFO, TAG, message)
+            else if (name == "capture_summary" && fields.any { it.second == CaptureTraceConclusion.FAILED }) logOutput(Log.WARN, TAG, message)
+            else logOutput(Log.DEBUG, TAG, message)
         } catch (_: Exception) { }
     }
 

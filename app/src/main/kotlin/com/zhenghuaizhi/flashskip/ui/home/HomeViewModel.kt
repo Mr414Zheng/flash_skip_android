@@ -19,10 +19,10 @@ import com.zhenghuaizhi.flashskip.domain.ports.FlashSkipPreferences
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalog
 import com.zhenghuaizhi.flashskip.domain.rules.RuleCatalogSnapshot
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -34,8 +34,35 @@ class HomeViewModel(
     private val serviceStatusCoordinator: ServiceStatusCoordinator,
     private val captureCoordinator: RuleCaptureCoordinator,
 ) : ViewModel() {
-    private val mutableEffects = MutableSharedFlow<HomeEffect>(extraBufferCapacity = 1)
-    val effects = mutableEffects.asSharedFlow()
+    private val pendingNavigation = MutableStateFlow<Long?>(null)
+    private val hostForeground = MutableStateFlow(true)
+    // 请求保存在 ViewModel 会话内；消费者取得前重新验证，缺少订阅者不会丢失。
+    val effects: Flow<HomeEffect> = flow {
+        combine(pendingNavigation, hostForeground, captureCoordinator.reads) { id, foreground, read ->
+            Triple(id, foreground, read)
+        }.collect { (id, foreground, read) ->
+            if (id == null || !read.available) return@collect
+            val session = read.requireAvailable().activeSession
+            if (session?.id != id || session.phase != CapturePhase.WAITING_FOR_TARGET ||
+                session.leftFlashSkipAtEpochMs != null || observedDepartureSessionId == id
+            ) {
+                pendingNavigation.compareAndSet(id, null)
+                return@collect
+            }
+            if (!foreground) return@collect
+            // 没有服务定时器或订阅者时也不能把已过期请求变成桌面跳转。
+            if (captureCoordinator.expireActive() != CaptureOperationResult.Pending) {
+                pendingNavigation.compareAndSet(id, null)
+                return@collect
+            }
+            val current = captureCoordinator.reads.first()
+            if (hostForeground.value && current.available &&
+                current.requireAvailable().activeSession == session && observedDepartureSessionId != id &&
+                pendingNavigation.compareAndSet(id, null)
+            ) emit(HomeEffect.GoHome(id))
+        }
+    }
+    private var feedbackOwner = 0L
     private val operationState = MutableStateFlow(OperationUiState())
     private var lastOperation: RetryOperation? = null
     // 生命周期可能先于开始请求的落盘完成；先记住离开/返回，再绑定实际创建的会话 ID。
@@ -135,7 +162,7 @@ class HomeViewModel(
     }
 
     fun startCapture() {
-        if (serviceStatusCoordinator.status.value != ServiceStatus.RUNNING ||
+        if (!serviceStatusCoordinator.isReady ||
             operationState.value.inProgress
         ) return
         val failedSessionId = captureCoordinator.serviceFailure.value?.sessionId?.takeIf {
@@ -178,16 +205,20 @@ class HomeViewModel(
     }
 
     fun reportSettingsLaunchFailure() {
-        operationState.value = operationState.value.copy(feedback = HomeFeedback.SETTINGS_FAILED, retryAvailable = false)
+        feedbackOwner++
+        lastOperation = null
+        operationState.value = operationState.value.copy(feedback = HomeFeedback.SETTINGS_FAILED, retryAvailable = false, savedTarget = null)
     }
 
     fun reportGoHomeFailure(sessionId: Long) {
+        val owner = feedbackOwner
         viewModelScope.launch {
             // 外跳反馈可能先于开始请求释放控件；等同一请求结束后再取消其会话。
             operationState.first { !it.inProgress }
             val read = captureCoordinator.reads.first()
+            if (owner != feedbackOwner) return@launch
             if (!read.available) {
-                reportLifecycleFailure(RetryOperation.CancelHomeFailure(sessionId), HomeFeedback.STORAGE)
+                reportLifecycleFailure(RetryOperation.CancelHomeFailure(sessionId), HomeFeedback.STORAGE, owner)
             } else if (read.requireAvailable().activeSession?.id == sessionId) {
                 launchOperation(RetryOperation.CancelHomeFailure(sessionId))
             }
@@ -200,17 +231,22 @@ class HomeViewModel(
     }
 
     fun onHostStopped(isChangingConfigurations: Boolean) {
+        hostForeground.value = false
         if (isChangingConfigurations) return
+        pendingNavigation.value = null
+        val owner = feedbackOwner
         val sessionId = pendingReturnSessionId
         if (sessionId == null) {
             if (captureStartPending) stoppedWhileCaptureStartPending = true
             return
         }
         observedDepartureSessionId = sessionId
-        viewModelScope.launch { persistDeparture(sessionId) }
+        viewModelScope.launch { persistDeparture(sessionId, owner) }
     }
 
     fun onHostResumed() {
+        hostForeground.value = true
+        val owner = feedbackOwner
         serviceStatusCoordinator.refresh()
         if (captureStartPending && stoppedWhileCaptureStartPending) {
             returnedWhileCaptureStartPending = true
@@ -219,16 +255,16 @@ class HomeViewModel(
         viewModelScope.launch {
             val read = captureCoordinator.reads.first()
             if (!read.available) {
-                reportLifecycleFailure(expectedSessionId?.let { RetryOperation.Return(it, observedDepartureSessionId == it) }, HomeFeedback.RETURN_STORAGE)
+                reportLifecycleFailure(expectedSessionId?.let { RetryOperation.Return(it, observedDepartureSessionId == it) }, HomeFeedback.RETURN_STORAGE, owner)
                 return@launch
             }
             val sessionId = expectedSessionId ?: read.requireAvailable().activeSession?.id
             val observedDeparture = sessionId != null && observedDepartureSessionId == sessionId
-            reconcileReturn(sessionId, observedDeparture)
+            reconcileReturn(sessionId, observedDeparture, owner)
         }
     }
 
-    private suspend fun beginCapture(operation: RetryOperation.Start): CaptureOperationResult {
+    private suspend fun beginCapture(operation: RetryOperation.Start, owner: Long): CaptureOperationResult {
         if (operation.previousSessionCancelled && captureCoordinator.state.first().activeSession != null) {
             captureStartPending = false
             return CaptureOperationResult.Stale
@@ -240,7 +276,7 @@ class HomeViewModel(
                 return cancelled
             }
             // 重启包含两次写入；第二次失败时，重试只创建新会话，不再次取消已结束的旧会话。
-            lastOperation = operation.copy(previousSessionCancelled = true)
+            if (owner == feedbackOwner) lastOperation = operation.copy(previousSessionCancelled = true)
         }
         try {
             val result = captureCoordinator.requestStart()
@@ -250,12 +286,14 @@ class HomeViewModel(
                 captureStartPending = false
                 if (stoppedWhileCaptureStartPending) {
                     observedDepartureSessionId = sessionId
-                    viewModelScope.launch { persistDepartureAndMaybeReturn(sessionId) }
+                    val departureOwner = feedbackOwner
+                    viewModelScope.launch { persistDepartureAndMaybeReturn(sessionId, departureOwner) }
                 }
                 if (captureCoordinator.awaitConfigured(sessionId) &&
-                    !stoppedWhileCaptureStartPending && !returnedWhileCaptureStartPending
+                    !stoppedWhileCaptureStartPending && !returnedWhileCaptureStartPending &&
+                    observedDepartureSessionId != sessionId
                 ) {
-                    mutableEffects.emit(HomeEffect.GoHome(sessionId))
+                    pendingNavigation.value = sessionId
                 }
             }
             return result
@@ -264,15 +302,15 @@ class HomeViewModel(
         }
     }
 
-    private suspend fun reconcileReturn(sessionId: Long?, observedDeparture: Boolean) {
+    private suspend fun reconcileReturn(sessionId: Long?, observedDeparture: Boolean, owner: Long) {
         val retry = sessionId?.let { RetryOperation.Return(it, observedDeparture) }
         try {
             val result = captureCoordinator.reconcileReturn(sessionId, observedDeparture)
             when (result) {
-                is CaptureOperationResult.Failure -> reportLifecycleFailure(retry, HomeFeedback.RETURN_STORAGE)
+                is CaptureOperationResult.Failure -> reportLifecycleFailure(retry, HomeFeedback.RETURN_STORAGE, owner)
                 is CaptureOperationResult.Success -> {
                     clearLifecycleMarkers(result.sessionId)
-                    if (!operationState.value.inProgress) operationState.value = OperationUiState()
+                    if (owner == feedbackOwner && !operationState.value.inProgress) operationState.value = OperationUiState()
                     captureCoordinator.expireActive()
                 }
                 CaptureOperationResult.Stale -> captureCoordinator.expireActive()
@@ -281,33 +319,34 @@ class HomeViewModel(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            reportLifecycleFailure(retry, HomeFeedback.RETURN_STORAGE)
+            reportLifecycleFailure(retry, HomeFeedback.RETURN_STORAGE, owner)
         }
     }
 
-    private suspend fun persistDeparture(sessionId: Long) {
+    private suspend fun persistDeparture(sessionId: Long, owner: Long) {
         try {
             val result = captureCoordinator.markLeftFlashSkip(sessionId)
             if (result is CaptureOperationResult.Failure) {
-                reportLifecycleFailure(RetryOperation.Return(sessionId, true), HomeFeedback.DEPARTURE_STORAGE)
+                reportLifecycleFailure(RetryOperation.Return(sessionId, true), HomeFeedback.DEPARTURE_STORAGE, owner)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            reportLifecycleFailure(RetryOperation.Return(sessionId, true), HomeFeedback.DEPARTURE_STORAGE)
+            reportLifecycleFailure(RetryOperation.Return(sessionId, true), HomeFeedback.DEPARTURE_STORAGE, owner)
         }
     }
 
-    private suspend fun persistDepartureAndMaybeReturn(sessionId: Long) {
-        persistDeparture(sessionId)
-        if (returnedWhileCaptureStartPending) reconcileReturn(sessionId, true)
+    private suspend fun persistDepartureAndMaybeReturn(sessionId: Long, owner: Long) {
+        persistDeparture(sessionId, owner)
+        if (returnedWhileCaptureStartPending) reconcileReturn(sessionId, true, owner)
     }
 
-    private suspend fun reportLifecycleFailure(retry: RetryOperation?, feedback: HomeFeedback) {
+    private suspend fun reportLifecycleFailure(retry: RetryOperation?, feedback: HomeFeedback, owner: Long) {
         if (retry is RetryOperation.Return) {
             val read = captureCoordinator.reads.first()
             if (read.available && read.requireAvailable().activeSession?.id != retry.sessionId) return
         }
+        if (owner != feedbackOwner) return
         lastOperation = retry
         operationState.value = operationState.value.copy(
             feedback = feedback,
@@ -322,19 +361,22 @@ class HomeViewModel(
 
     private fun launchOperation(operation: RetryOperation) {
         if (operationState.value.inProgress) return
+        val owner = ++feedbackOwner
         lastOperation = operation
         operationState.value = OperationUiState(inProgress = true)
         viewModelScope.launch {
             try {
                 val result = when (operation) {
                     is RetryOperation.Toggle -> captureCoordinator.setAppEnabled(operation.id, operation.enabled)
-                    is RetryOperation.Start -> beginCapture(operation)
+                    is RetryOperation.Start -> beginCapture(operation, owner)
                     is RetryOperation.Finish -> captureCoordinator.finish(operation.sessionId)
                     is RetryOperation.Cancel -> captureCoordinator.cancel(operation.sessionId)
                     is RetryOperation.Clear -> captureCoordinator.clear(operation.request)
                     is RetryOperation.Return -> captureCoordinator.reconcileReturn(operation.sessionId, operation.observedDeparture)
                     is RetryOperation.CancelHomeFailure -> captureCoordinator.cancel(operation.sessionId)
                 }
+                // 事务仍完成自身工作；只有当前请求可以发布反馈或重新绑定重试。
+                if (owner != feedbackOwner) return@launch
                 if (result is CaptureOperationResult.Success) {
                     val sessionId = when (operation) {
                         is RetryOperation.Return -> operation.sessionId
@@ -346,13 +388,15 @@ class HomeViewModel(
                     val lifecycleFeedback = operationState.value.takeIf {
                         operation is RetryOperation.Start && it.feedback in setOf(HomeFeedback.RETURN_STORAGE, HomeFeedback.DEPARTURE_STORAGE)
                     }
+                    // 读取保存结果可能挂起，恢复后仍须核对反馈归属。
+                    val savedTarget = if (operation is RetryOperation.Finish) {
+                        captureCoordinator.state.first().samples.lastOrNull()?.targetAppId
+                    } else null
+                    if (owner != feedbackOwner) return@launch
                     operationState.value = OperationUiState(
                         feedback = if (operation is RetryOperation.CancelHomeFailure) HomeFeedback.GO_HOME_FAILED else lifecycleFeedback?.feedback,
                         retryAvailable = lifecycleFeedback?.retryAvailable == true,
-                        savedTarget = if (operation is RetryOperation.Finish) {
-                            // 完成后会话已清除，按最后新增样本查找展示目录中的可用状态。
-                            captureCoordinator.state.first().samples.lastOrNull()?.targetAppId
-                        } else null,
+                        savedTarget = savedTarget,
                     )
                 } else {
                     operationState.value = OperationUiState(
@@ -363,6 +407,7 @@ class HomeViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
+                if (owner != feedbackOwner) return@launch
                 operationState.value = OperationUiState(
                     feedback = if (operation is RetryOperation.Return) HomeFeedback.RETURN_STORAGE else HomeFeedback.STORAGE,
                     retryAvailable = true,

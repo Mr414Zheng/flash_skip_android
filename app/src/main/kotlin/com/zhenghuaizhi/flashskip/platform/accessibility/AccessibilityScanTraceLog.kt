@@ -1,6 +1,7 @@
 package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.util.Log
+import com.zhenghuaizhi.flashskip.platform.diagnostics.ProcessDiagnosticIdentifiers
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
 import com.zhenghuaizhi.flashskip.domain.ports.AutomationTraceResult
@@ -44,10 +45,11 @@ internal class AccessibilityScanTraceLog(
     private val monotonicClock: MonotonicClock = AndroidMonotonicClock,
 ) {
     private val startedAt = if (enabled) monotonicClock.elapsedRealtimeMs() else 0L
+    private val identifiers = ProcessDiagnosticIdentifiers.Process
     private val scanId = nextScan.incrementAndGet()
-    private val prefix = "source=platform scan=$scanId operation=$operation " +
-        "targetHash=${identity.packageName.hashCode().toUInt().toString(16)} " +
-        "windowId=${identity.windowId} selectorHash=${selector.hashCode().toUInt().toString(16)}"
+    private val prefix = if (!enabled) "" else "source=platform process=${identifiers.scope} scan=$scanId operation=$operation " +
+        "targetToken=${identifiers.token("target", identity.packageName.hashCode())} " +
+        "windowId=${identity.windowId} selectorToken=${identifiers.token("selector", selector.hashCode())}"
     private var candidates = 0
 
     val candidateSink: ((CandidateCheck) -> Unit)? = if (enabled) ::candidate else null
@@ -57,8 +59,8 @@ internal class AccessibilityScanTraceLog(
         if (++candidates > MAX_CANDIDATE_LOGS) return
         write("stage=CANDIDATE_CHECK cachedMatch=${check.cachedMatch} " +
             "refreshed=${check.refreshed} result=${check.result} prefixLike=${check.prefixLike} " +
-            "resourceIdHash=${check.resourceIdHash?.toUInt()?.toString(16)} " +
-            "classHash=${check.classHash?.toUInt()?.toString(16)} " +
+            "resourceIdToken=${check.resourceIdHash?.let { identifiers.token("resource", it) }} " +
+            "classToken=${check.classHash?.let { identifiers.token("class", it) }} " +
             "visible=${check.visible} clickable=${check.clickable}")
     }
 

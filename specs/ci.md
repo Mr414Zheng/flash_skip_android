@@ -354,3 +354,43 @@ Debug 构建、28 个检查器测试、规格检查与必需身份／产物门�
 两组 ZIP 已下载，大小和 SHA-256 与 API 元数据匹配；展开后逐项核验测试身份及报告内容，并保存逐文件哈希。原始 ZIP、展开报告、run／jobs／artifact 元数据、实际检出提交、构建日志、核验摘要和哈希清单位于忽略目录 `app/build/reports/ci/p4/remote-38504787335/`。远端保留 14 天，元数据到期日为 2026-10-28；新检出不包含本机报告。工作流没有上传 APK 二进制，因此本轮下载的是报告，构建及非空证据来自远端日志和门禁。
 
 主干证据通过独立文档 PR 回写，沿用此前审阅流程，须核对该文档 head 自身 CI 并留待用户审阅，不直接推送 main。上述实测数据归属 `d51fab4`，后续文档检查不改变其来源。不改持久化格式、依赖、构建配置、工作流和远端设置；没有新增独立评审、独立 QA 或设备证据。SDD-001/T-12 未完成且继续停止，P5 未启动。
+
+## P5 首轮本地契约证据
+
+2026-10-14，以 main `0c9a53f` 为基线，仅新增测试、规格、必需身份及证据。完整重跑 57 类、701 例：682 通过、19 失败，零错误／跳过；原 594 身份全部通过。新增 107 例为 33 JVM、28 JVM 真实文件、38 Robolectric SDK 36 组件、8 Robolectric 真实服务／AppContainer／实际 DataStore 集成。原服务类 19 个测试体保留，新增八例单列。
+
+Debug 构建通过，Lint 0 错误／12 既有警告，28 个 CI 检查器测试及规格检查通过。`.ci/required-tests.json` 登记 701 身份；必需用例／产物门禁按 19 个产品失败正确退出 1，没有身份缺失或产物错误。所有 Gradle 全量任务均重新执行并禁用构建缓存。Release 单测任务不存在，记录为证据阻塞；Release 生成常量及最终 Manifest 已重新生成并作静态检查，不冒充运行测试。
+
+具体命令、失败身份、AC／任务映射、修复建议及本机归档见 [SDD-008 验证](service-and-home/validation.md) 与 [SDD-009 验证](diagnostics/validation.md)。原始证据位于忽略的 `app/build/reports/p5-contracts/full/`，包含 JUnit／HTML、Lint、命令日志、身份比较、AC 映射、静态边界和源码／产物指纹。没有远端 CI 或新 APK 下载；仅本地 Debug APK 构建。首轮交付完成，契约未通过。生产修复另行授权，无提交／推送／PR；T-12 继续停止，P6 未启动。
+
+## P5 最小修复与本地验收
+
+2026-10-14 用户续授权 19 个失败对应的最小生产修复和必要内部接缝，保留 701 个测试身份及预期。当前完整 61 类、735 例全部通过，零失败／错误／跳过；新增 34 回归，P5 累计 141 例：54 JVM、28 JVM 真实文件、48 Robolectric SDK 36 组件、11 Robolectric 真实服务／AppContainer／实际 DataStore 集成。原 19 个失败全部关闭；修复前报告和测试源码快照保留。
+
+Debug 构建、28 个检查器测试、规格和必需身份／产物门禁通过，Lint 0 错误／12 个既有警告。服务就绪周期、固定确认期限、前台会话导航、反馈归属及诊断进程关联／异常隔离已修复。证据位于本机忽略目录 `app/build/reports/p5-contracts/repaired-final/`，失败历史保留在 `full/`；具体 AC 及证据层级见 [SDD-008](service-and-home/validation.md#修复后本地验收)、[SDD-009](diagnostics/validation.md#修复后本地验收)。
+
+Release 单测任务缺失继续阻塞，静态配置经源指纹核对后复用首轮证据；真实 Compose／设备未验证，完整分层 P5 验收未完成。无提交／推送／PR、远端 CI 或独立评审／QA，不改持久化格式、依赖、构建、工作流或远端设置。T-12 未完成且继续停止，P6 未启动。
+
+## P5 PR 与远端 Linux CI 验收
+
+2026-10-14 用户授权新建分支、提交、推送、创建 PR、等待远端 CI、下载核验报告并回写证据；PR 保持未合并。分支 `codex/p5-service-home-diagnostics`，产品 head `a81b712900cf93599e6b80eb02837dda4c263efd`，对应 [PR #8](https://github.com/Mr414Zheng/flash_skip_android/pull/8)。
+
+[CI 38526504633](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38526504633) 的 Specs、Android 均成功。报告中实际检出为 PR 测试合并提交 `1c75bdc758fde2e6c5afbdd9c4b8593ea848ff21`；核对父提交为 main `0c9a53ffde08a6933fdb945ed187643589896462` 和上述产品 head。测试合并提交不代表 PR 已合入 main。
+
+| 检查 | 远端执行及下载核验 |
+| --- | --- |
+| JUnit | 61 份 XML、735 个完整测试身份与必需清单和本地已验收报告一致，零失败／错误／跳过；包括原 701 身份和原 19 个失败 |
+| P5 分层 | 累计新增 141 例：54 JVM、28 JVM 真实文件、48 Robolectric SDK 36 组件、11 Robolectric 真实服务／AppContainer／实际 DataStore 集成；不扩大为设备证据 |
+| 检查器／规格 | 28 个检查器测试、42 份文档／9 个编号及 PR 正文检查通过 |
+| 构建／门禁 | Debug 构建成功；远端产物门禁确认 APK 非空、测试及 Lint 报告齐全；所有 Gradle 任务重新执行并禁用构建缓存 |
+| Lint | 0 错误、15 警告；分布为 OldTargetApi 1, AndroidGradlePluginVersion 2, GradleDependency 6, NewerVersionAvailable 3, ObsoleteSdkInt 1, MonochromeLauncherIcon 2 |
+| 报告 | 两组 ZIP 已下载，API artifact ID、字节数、digest 与实际下载一致；核验 JUnit／HTML、Lint XML／HTML、environment、门禁和构建日志，并保存逐文件 SHA-256 |
+
+| artifact | ID | 字节 | API digest／下载 ZIP SHA-256 |
+| --- | --- | --- | --- |
+| `specs-38526504633-1` | `11876341619` | 968 | `sha256:243807d1e6df5fe07c43bc1db98b935d7f8f4aaa8c7d94fc28386d6d4f5e4512` |
+| `android-38526504633-1` | `11875952705` | 208671 | `sha256:7a7e91624d9ed9ec0f0a41fa597e917f976e19abd2b4e9d519e8ee5233ccc7b5` |
+
+原始 ZIP、展开报告、run／jobs／artifact 元数据、检出提交、构建日志、核验摘要与哈希清单位于本机忽略目录 `app/build/reports/ci/p5/remote-38526504633/`；新检出不含这些产物。远端保留 14 天，到期时间见 artifact 元数据；不承诺链接永久可用。工作流未上传 APK 二进制，因此本机下载的是报告；构建成功及 APK 非空由远端日志和门禁证明。
+
+本节数据归属产品 head 及上述成功 run。证据文档提交推送后，必须再核验最新 head 自身的 Specs、Android 和两组报告，最终结果在交接与 PR 最新检查中提供，避免为记录文档运行而无限回写。PR 保持未合并。Release 单测任务缺失仍阻塞，生成配置仅作静态证据；没有独立评审／QA、Compose 或设备证据。不改持久化格式、依赖、构建、工作流或远端设置，T-12 未完成且继续停止，P6 未启动。

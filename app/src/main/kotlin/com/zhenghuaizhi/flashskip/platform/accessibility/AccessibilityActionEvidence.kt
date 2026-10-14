@@ -2,6 +2,7 @@ package com.zhenghuaizhi.flashskip.platform.accessibility
 
 import android.view.accessibility.AccessibilityNodeInfo
 import android.util.Log
+import com.zhenghuaizhi.flashskip.platform.diagnostics.ProcessDiagnosticIdentifiers
 import com.zhenghuaizhi.flashskip.BuildConfig
 import com.zhenghuaizhi.flashskip.domain.model.ActionReason
 import com.zhenghuaizhi.flashskip.domain.model.NodeSelector
@@ -151,9 +152,10 @@ internal class AccessibilityActionEvidence(
         var containsContainer = false
         fun finish(complete: Boolean, limit: String? = null): LocalRead {
             if (BuildConfig.DEBUG) runCatching {
-                Log.d(AutomationTraceLog.TAG, "source=platform stage=ACTION_EVIDENCE_READ phase=$phase " +
-                    "targetHash=${evidence.identity.packageName.hashCode().toUInt().toString(16)} " +
-                    "windowId=${evidence.identity.windowId} selectorHash=${evidence.selector.hashCode().toUInt().toString(16)} " +
+                val identifiers = ProcessDiagnosticIdentifiers.Process
+                Log.d(AutomationTraceLog.TAG, "source=platform process=${identifiers.scope} stage=ACTION_EVIDENCE_READ phase=$phase " +
+                    "targetToken=${identifiers.token("target", evidence.identity.packageName.hashCode())} " +
+                    "windowId=${evidence.identity.windowId} selectorToken=${identifiers.token("selector", evidence.selector.hashCode())} " +
                     "complete=$complete visitedNodes=$visited durationMs=${clock.elapsedRealtimeMs() - startedAt} " +
                     "originalMatches=$present allMatches=$allMatches potentialTarget=$potential containsContainer=$containsContainer" +
                     (limit?.let { " limit=$it" } ?: ""))
