@@ -13,3 +13,5 @@
 T-04 修复后已重新执行：735 例全通过，19 个历史红例全部关闭。T-05 仍未完成：真实 Compose 控件和系统／设备行为未验证。修复前记录保留，当前结果见 validation 的“修复后本地验收”。
 
 T-04 的本地及 PR 远端自动化证据均已核验，产品 head `a81b712` 的 [CI 38526504633](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38526504633) 通过；证据文档 head 另查最新 CI。T-05 的 Release／Compose／设备限制保留，PR #8 暂不合并。
+
+T-04 的合并后 main CI `38530285304` 已通过并下载核验全部 735 例及两组报告；见[主干验收](validation.md#合并与主干验收)。独立证据文档 PR 另验 CI 后保持未合并，T-05 的分层证据限制不变。
