@@ -1,10 +1,12 @@
 # 持续检查与分阶段验收记录
 
-## 当前状态（P6 本地文档）
+## 当前状态（P6 已合并并完成主干验收）
 
-截至 2026-10-14，代码基线为 main `625091dba52797b699ac13b5a5db1c9505d2b0ea`。[PR #8](https://github.com/Mr414Zheng/flash_skip_android/pull/8) 产品修复和 [PR #9](https://github.com/Mr414Zheng/flash_skip_android/pull/9) 证据文档均已合并。最新已核验主干 [CI 38531810742](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38531810742) 通过：61 类／735 例，零失败、错误、跳过；28 个检查器测试、Debug 构建及原有门禁通过；Lint 0 错误／15 警告。详细来源见 [CI 证据](ci.md#p6-盘点所用主干证据)。
+截至 2026-10-14，main 为 `7c766fad953ad0d9867b909a3cc1675390220f8c`。[PR #10](https://github.com/Mr414Zheng/flash_skip_android/pull/10) 已合并；其 [主干 CI 38538180589](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38538180589)（push／attempt 1）通过：61 类／735 例，零失败、错误、跳过；28 个检查器测试、45 份文档／9 个规格编号、Debug 构建及产物门禁通过；Lint 0 错误／15 警告。两组报告已下载并核验完整测试身份、ZIP 摘要与精确 main 检出提交，见 [P6 合并与主干验收](ci.md#p6-合并与主干-ci-验收)。
 
-P6 文档流程已完成本地交付：[日常开发流程](development-workflow.md)、[全部 66 条 AC 追踪](traceability.md)、[证据缺口](evidence-gaps.md)。P6 本地流程验收通过，结果见流程记录。用户随后于 2026-10-14 授权新建分支、提交、推送、创建 PR，并等待远端 CI、下载核验报告后交接；保持 PR 未合并。远端沿用完整 CI，本地不重跑 Android。P5 两包 T-05 仍未完成：Release 单测阻塞、Compose／真实系统等分层证据缺口保留；SDD-001/T-12 未完成且按用户要求停止。P6 流程完成不代表 P5 全部分层通过或发布就绪。
+P6 的[日常开发流程](development-workflow.md)、[全部 66 条 AC 追踪](traceability.md)和[缺口台账](evidence-gaps.md)已完成流程验收与主干交付。随后按用户授权清理了 10 个已合并工作分支的本地及 origin 引用；删除前逐一确认分支文件树与对应合并提交一致，main 历史与所有跟踪文件均未改变，见 [分支清理记录](ci.md#已合并工作分支清理)。清理完成时本地与远端仅保留 main；后续文档交付使用新分支。
+
+文档状态同步的本地检查已完成。用户随后授权将这 9 份文档放入新分支、提交、推送并创建文档 PR，等待其 CI 通过后下载核验报告，先不合并。本地不重跑 Android，远端沿用完整 CI。P5 两包 T-05 仍未完成，Release 单测阻塞、Compose／真实系统等证据缺口保留；SDD-001/T-12 未完成且按用户要求停止。P6 流程验收完成不表示 P5 全部分层通过或产品发布就绪。
 
 以下旧基线、原失败、当时授权及“当前／本轮／未启动”措辞均属于所标阶段的历史记录，不覆盖本节。能力包中的契约全文和详细验证记录仍是事实来源，项目摘要不重写产品要求。
 
@@ -427,6 +429,8 @@ Release 单测任务缺失继续阻塞，静态配置经源指纹核对后复用
 
 ## P6 盘点所用主干证据
 
+本节保留 P6 初次盘点采用的历史基线和运行；最新合并结果见 [P6 合并与主干 CI 验收](#p6-合并与主干-ci-验收)。
+
 2026-10-14，[PR #9](https://github.com/Mr414Zheng/flash_skip_android/pull/9) 证据文档已合并为 `625091dba52797b699ac13b5a5db1c9505d2b0ea`，其父提交为 PR #8 的合并结果 `5aafcdf40aaf4d56e5d4336f33e48c495590983f`。此前“文档 PR 保持未合并”的要求描述上一交付阶段；后续已获合并授权并完成。最新已核验 [main CI 38531810742](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38531810742) 为 push／attempt 1，Specs 和 Android 均成功，environment 中实际 checkout SHA 与 `625091d` 完整值一致。
 
 - 61 份 JUnit XML、735 个完整身份与必需清单一致，0 失败／错误／跳过；原 701 身份及原 19 个失败保留并通过。
@@ -442,3 +446,54 @@ Release 单测任务缺失继续阻塞，静态配置经源指纹核对后复用
 归档位于忽略目录 `app/build/reports/ci/p5/remote-38531810742/`，新检出不包含；以上是已完成下载核验的历史事实，不承诺到期后的下载可用性。测试层级与 P5 修复记录相同，没有新增 Compose、设备、实际 Release 运行或独立 QA 证据。
 
 P6 以此提交为代码／测试基线，本轮只修改文档并核对相关文件不变。P6 新增三份文档后的本地规格检查数量应为 45；不能把此处历史 42 改写为该远端曾检查 45。具体本轮命令、范围核验与流程演练见 [P6 本地验收](development-workflow.md#p6-本地验收记录)。现有工作流、报告规则、14 天保留期和门禁均未改变，Release 阻塞和 T-12 停止保留。
+
+## P6 合并与主干 CI 验收
+
+2026-10-14，用户在 P6 PR 交付后明确授权：复核 PR #10 最新检查后合并、等待 main CI、下载核验报告并直接交接，不另建证据文档 PR。合并前 head `c8120fadebc5bafe073aa237df914e2161671af2` 的 Specs、Android 均为 completed／success，对应 [PR CI 38537319581](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38537319581)；该运行两组报告已下载核验。变更仅有 9 份 Markdown，无其他提交状态失败。
+
+[PR #10](https://github.com/Mr414Zheng/flash_skip_android/pull/10) 于 `2026-10-14T08:52:00Z` squash 合入 main，提交为 `7c766fad953ad0d9867b909a3cc1675390220f8c`，父提交为 `625091dba52797b699ac13b5a5db1c9505d2b0ea`。合并后的完整文件树与已验收 PR head 一致；原分支 SHA 未进入 main 祖先链不表示内容遗漏。此前“暂不合并”仅是当时交付边界。
+
+[main CI 38538180589](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38538180589) 为该合并提交的 push／attempt 1，Specs 和 Android 全部成功；下载报告 environment 中 checkout SHA 精确匹配上述 main 提交。此处使用独立主干运行证据，不以 PR 测试合并提交代替。
+
+- 61 份 JUnit XML、735 个完整测试身份与必需清单一致，0 失败／错误／跳过。
+- 28 个检查器测试、45 份文档／9 个规格编号检查通过；push 事件 `PR 检查：False` 表示没有 PR 正文检查对象，不是失败。
+- Debug 构建与原有产物门禁通过；runner 确认 APK 非空及测试／Lint 报告齐全。Lint 0 错误／15 警告：OldTargetApi 1、AndroidGradlePluginVersion 2、GradleDependency 6、NewerVersionAvailable 3、ObsoleteSdkInt 1、MonochromeLauncherIcon 2。
+- 两组 ZIP 已下载，核对大小、SHA-256、完整测试身份、JUnit／HTML、Lint XML／HTML、环境和构建／门禁日志。工作流未上传 APK 二进制，没有下载或安装远端 APK。
+
+| 报告 | ID | 字节 | API digest／下载 ZIP SHA-256 | 元数据到期 UTC |
+| --- | --- | --- | --- | --- |
+| `android-38538180589-1` | `11881402272` | 208886 | `sha256:78c95a55eb2df4a1434bce4ccec10fe68fc847b9a084a062e4a25cb0d4a99d97` | 2026-10-28T08:55:30Z |
+| `specs-38538180589-1` | `11880389163` | 967 | `sha256:39aca09790134d2d0f546e9c3b2ad27d4ad29905a1597c0acebd250366c06745` | 2026-10-28T08:52:09Z |
+
+原始 ZIP、展开报告、run／jobs／artifact／checkout 元数据、日志、逐文件哈希和 `verified-summary.json` 保留于忽略目录 `app/build/reports/ci/p6/remote-38538180589/`；新检出不含这些产物。报告远端保留 14 天，不承诺到期后仍可下载。原 PR 运行报告位于 `app/build/reports/ci/p6/remote-38537319581/`，两次来源分别保留。
+
+合并验收完成时直接交接，没有另建证据 PR；随后文档状态同步先完成本地检查，再按用户续授权进入文档 PR 交付。上述 CI 属于 `7c766fa`，不冒称后续文档 head 已经运行远端 CI。P5 两包 T-05 仍未完成；Release 单测、Compose、真实 Android／进程／OEM 等缺口保留，SDD-001/T-12 未完成且停止，无新增独立评审／QA 或设备证据。
+
+## 已合并工作分支清理
+
+2026-10-14，按用户明确授权，清理 PR #1～#10 对应的 10 个本地及 origin 工作分支，保留 main。删除前再次确认：每个本地 head、远端 head 与 PR head 一致；每个 PR 为 MERGED；分支完整文件树等于对应合并提交的文件树；所有合并提交均在 main 历史中。PR #1～#7 的原 head 已在祖先链中，PR #8～#10 为 squash，内容一致后才清理原分支。
+
+| 已删除分支 | PR | 删除前 head | main 中对应合并提交 |
+| --- | --- | --- | --- |
+| `codex/p1-ci-acceptance` | #1 | `3c426ca` | `2818232` |
+| `codex/p1-main-ci-docs` | #2 | `29c2522` | `ad01dc7` |
+| `codex/p2-contract-tests` | #3 | `b23ac9d` | `c2a286b` |
+| `codex/p3-capture-contracts` | #4 | `0e36333` | `471ccd2` |
+| `codex/p3-main-ci-evidence` | #5 | `79ccfce` | `40e6080` |
+| `codex/p4-persistence-rule-management` | #6 | `4008975` | `d51fab4` |
+| `codex/p4-main-ci-evidence` | #7 | `6f1ae7f` | `0c9a53f` |
+| `codex/p5-service-home-diagnostics` | #8 | `799f267` | `5aafcdf` |
+| `codex/p5-main-ci-evidence` | #9 | `b13873a` | `625091d` |
+| `codex/p6-development-workflow` | #10 | `c8120fa` | `7c766fa` |
+
+远端使用核对后的精确 SHA 作为条件进行原子删除，随后删除对应本地分支。删除后本地与远端仅剩 main（`origin/HEAD` 为指向 `origin/main` 的符号引用）；main 仍为 `7c766fa`，完整文件树和所有跟踪文件哈希不变，工作区当时干净。没有重写 main 历史、修改代码、关闭 P5 缺口或恢复 T-12。分支名在历史记录中继续保留，用于解释原始交付来源。
+
+## P6 合并后状态同步的本地检查（历史）
+
+本轮基于 main `7c766fa`，仅更新 AGENTS.md 和规格入口的当前摘要、历史来源说明及合并／清理记录，暂不提交、推送或创建 PR。原能力包契约、任务状态、66 条 AC 映射和缺口明细不改。本地规格及链接检查通过（45 份文档／9 个编号），28 个检查器测试全部通过，`git diff --check` 通过。差异仅限 9 份既有 Markdown；183 个非 Markdown 跟踪文件与基线逐文件一致，735 个必需身份及预期、66 条 AC 追踪行、能力包正文与缺口明细保持不变，P5 两项 T-05 及 T-12 均未勾选。检查日志和范围核验保留于忽略目录 `app/build/reports/p6-status-sync/`。未提交、推送或创建 PR；未重跑 Android，未新增远端 CI、设备或独立 QA 证据。
+
+## 状态同步文档 PR 交付授权
+
+2026-10-14，用户在上述本地检查通过后授权：将这 9 份文档放到新分支，提交、推送并创建文档 PR，等待 CI 通过后下载核验报告，先不合并。此前“暂不提交／推送／创建 PR”保留为本地阶段的范围和事实。本轮没有产品契约变化；历史证据、P5 两包 T-05 与全部缺口、SDD-001/T-12 停止状态保持。
+
+沿用现有完整 CI；本地不重跑 Android。最终 PR head、run／attempt、报告摘要及核验结果在交接中提供，不为回写本次运行另做文档提交；不得将历史主干报告冒记为该文档 head 的运行结果。
