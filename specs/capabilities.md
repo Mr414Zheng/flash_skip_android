@@ -59,4 +59,4 @@ T-12 停止决定不是待审定事项；不得因上述清单重新启动京东
 
 基线 main `34dc102` 加五类政策最小生产修复和内部接缝。全量 41 类、479 例全部通过，保留原 201 个和修复前 453 个身份与预期。P3 相对 main 新增 20 类、278 例：207 JVM、57 Robolectric SDK 36 组件、14 Robolectric 真实服务／容器／实际 DataStore 集成。原 42 个红例转绿，前后报告分别保留于验证记录。
 
-本地契约验收通过；没有本轮远端 CI、设备或 Compose 证据。依赖、构建配置和远端设置未改，未提交／推送／PR，SDD-001/T-12 继续停止。
+本地及远端 Linux 契约验收通过，[PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 未合并。[CI 38491677713](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38491677713) 的 479 例、构建、Lint 及报告核验通过；没有设备或 Compose 证据。依赖、构建配置和远端设置未改，SDD-001/T-12 继续停止。

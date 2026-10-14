@@ -63,3 +63,5 @@ The user subsequently authorized the minimum production fixes for all five P3 po
 ## P3 PR Delivery Authorization
 
 On 2026-10-14 the user authorized a new branch, commits, push, PR creation, remote CI completion, downloaded artifact verification and evidence updates. Keep the PR unmerged. Earlier no-commit/no-push/no-PR statements record the local implementation phase. Do not change dependencies, build configuration, workflows or remote settings; T-12 remains incomplete and stopped.
+
+P3 PR #4 is OPEN on `codex/p3-capture-contracts`, implementation head `a5e7ddf`. Remote Linux run `38491677713` passed Specs and Android on 2026-10-14: all 479 cases, 28 checker tests, specification/PR checks, debug assembly and artifact checks; Lint had 0 errors and 15 warnings. Both report artifacts were downloaded and verified against test identities and checkout SHA. The workflow verifies a nonempty APK on the runner but does not upload its binary. See [P3 remote CI](specs/ci.md#p3-pr-与远端-linux-ci-验收). Evidence-document follow-up checks must be verified on their own head; no merge, device or independent QA claim.

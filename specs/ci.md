@@ -248,3 +248,22 @@ P2 已合入 main，合并后的主干 CI 验收通过。此轮主干验收回�
 服务集成使用真实 service、AppContainer、协调器、目录、自动引擎和两个独立 DataStore；受控 scope／时钟／调度器及 Android shadows 用于稳定输入和清理。14 例覆盖恢复、配置剩余预算、新引擎暂停与取消后实际点击、interrupt／destroy、存储失败和延迟首发。各层测试分开计数，详情见 [生命周期验证](capture-lifecycle/validation.md) 与 [证据验证](capture-evidence/validation.md)。
 
 本地 P3 契约验收通过；没有独立 QA、本轮远端 CI、设备或 Compose 控件证据。SDD-001/T-12 未完成且继续停止，P4 以后未启动。
+
+## P3 PR 与远端 Linux CI 验收
+
+2026-10-14 用户续授权新分支提交、推送、创建 PR、等待远端 CI 并核验产物，暂不合并。P3 已提交为 `a5e7ddf186df18edd88741ee95b54421a3edf9e6`，分支 `codex/p3-capture-contracts`，[PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 当前 OPEN，未启用自动合并。此前“未提交／无远端证据”描述本地实施时点；此节为后续远端结果。
+
+[CI 38491677713](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38491677713) 于 2026-10-14 08:42:25～08:45:37（Asia/Shanghai）运行，Specs、Android 均成功。报告 environment.txt 的实际检出为 PR 测试合并提交 `323cb4da86213edce847984c4ca31d77c6aeb180`，已核对父提交为 main `34dc1027db15fe95ac3de09cf3a001be6a1e60ff` 与上述 P3 head；这是 CI 测试提交，PR 尚未合并。
+
+| 检查 | 远端核验结果 |
+| --- | --- |
+| JUnit | 下载 41 份 XML，479 例全部通过，0 失败／错误／跳过；按必需清单逐身份核对，原 453 例和原 201 例保留 |
+| 分层 | P3 新增 278 例：207 JVM、57 Robolectric SDK 36 组件、14 Robolectric 真实 service／AppContainer／实际 DataStore 集成；不是设备证据 |
+| 检查器／规格 | 28 例通过；26 份文档、9 个编号及 PR 正文检查通过 |
+| debug 构建 | `assembleDebug` 成功，完整 Gradle 56 项任务均执行；远端 `--require-artifacts` 确认 APK 存在且非空，以及测试／Lint 报告齐全 |
+| Lint | 0 错误、15 警告：OldTargetApi 1、AndroidGradlePluginVersion 2、GradleDependency 6、NewerVersionAvailable 3、ObsoleteSdkInt 1、MonochromeLauncherIcon 2 |
+| 产物 | `specs-38491677713-1` 和 `android-38491677713-1` 均下载，检查报告内容、检出 SHA、HTML／XML 完整性，并生成本机文件 SHA-256 清单 |
+
+远端警告较本地 12 条多出 3 条版本可用性提示，没有修改依赖或降低检查门槛。现有工作流只上传报告，不上传 APK 二进制：APK 生成／非空由远端门禁及成功日志证明，本机没有下载远端 APK，也未做安装或设备验证。下载文件、运行日志、产物元数据、父提交核对和摘要位于本机忽略目录 `app/build/reports/ci/remote/38491677713/`；GitHub 产物按既有策略保留 14 天，新检出不含本机下载。
+
+本次证据回写仅修改文档，推送后由 PR synchronize 检查验证；本节数据准确归属于上述 head 和运行，后续文档 head 的结果以 PR 最新检查为准。本地与远端 Linux P3 验收通过，不代表独立 QA、设备或 Compose 控件验收。依赖、构建配置、工作流及远端设置保持不变；SDD-001/T-12 未完成且继续停止，P4 以后未启动。
