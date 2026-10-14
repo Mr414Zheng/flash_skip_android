@@ -74,3 +74,7 @@ main `0c9a53f` 上新增 8 个测试类并在既有真实服务类追加 8 例�
 Debug 构建、28 个检查器测试、规格和必需身份／产物门禁通过，Lint 0 错误／12 个既有警告。服务就绪周期、固定确认期限、前台会话导航、反馈归属及诊断进程关联／异常隔离已修复。证据位于本机忽略目录 `app/build/reports/p5-contracts/repaired-final/`，失败历史保留在 `full/`；具体 AC 及证据层级见 [SDD-008](service-and-home/validation.md#修复后本地验收)、[SDD-009](diagnostics/validation.md#修复后本地验收)。
 
 Release 单测任务缺失继续阻塞，静态配置经源指纹核对后复用首轮证据；真实 Compose／设备未验证，完整分层 P5 验收未完成。无提交／推送／PR、远端 CI 或独立评审／QA，不改持久化格式、依赖、构建、工作流或远端设置。T-12 未完成且继续停止，P6 未启动。
+
+## P5 PR 交付与远端验收
+
+用户续授权的分支、提交、推送及 [PR #8](https://github.com/Mr414Zheng/flash_skip_android/pull/8) 已完成；产品 head `a81b712` 通过 [CI 38526504633](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38526504633)。735 例、28 检查器、规格／PR、Debug 构建与产物门禁通过，Lint 0 错误／15 警告。两组报告已下载并核验摘要、完整测试身份及检出提交，见 [P5 远端 CI](ci.md#p5-pr-与远端-linux-ci-验收)。证据文档 head 另验最新 CI，PR 保持未合并。Release 单测阻塞、Compose／设备与独立 QA 缺口不变，T-12 未完成且停止，P6 未启动；不改持久化格式、依赖、构建或远端设置。

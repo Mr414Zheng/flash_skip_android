@@ -2,7 +2,7 @@
 
 日期：2026-10-14。基线 main `0c9a53ffde08a6933fdb945ed187643589896462`。本文分列首轮测试与后续生产修复证据。规格见 [spec](spec.md)，任务见 [tasks](tasks.md)。
 
-**当前：最小生产修复与本地自动化验收通过。** 全量 735 例通过，原 701 身份和预期保留，19 个原失败已关闭。Release／Compose／设备限制保留；详见[修复后本地验收](#修复后本地验收)。
+**当前：最小生产修复、本地及 PR 远端自动化验收通过。** 全量 735 例通过，原 701 身份和预期保留，19 个原失败已关闭。Release／Compose／设备限制保留；详见[修复后本地验收](#修复后本地验收)。
 
 ## 首轮结果（修复前历史）
 
@@ -111,3 +111,11 @@ JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradle
 ## P5 PR 交付续授权
 
 2026-10-14 用户续授权新建分支、提交、推送、创建 PR、等待远端 CI、下载核验报告并回写证据，PR 保持未合并。此前“无提交／推送／PR”描述本地修复阶段。持久化格式、依赖、构建配置、工作流及远端设置不得更改；Release 单测阻塞保留，T-12 未完成且继续停止。远端结果须另行核验，不复用本地通过结论。
+
+## PR 与远端验收
+
+[PR #8](https://github.com/Mr414Zheng/flash_skip_android/pull/8) 位于 `codex/p5-service-home-diagnostics`，产品 head `a81b712900cf93599e6b80eb02837dda4c263efd` 已通过 [Linux CI 38526504633](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38526504633) 的 Specs 和 Android。下载两组报告后核验 61 类／735 例全部通过，完整身份与必需清单及本地报告一致，包括全部原 701 身份和 19 个原失败；28 个检查器、规格／PR 正文、Debug 构建及产物门禁通过，Lint 0 错误／15 警告。
+
+API 报告大小及摘要与下载 ZIP 匹配，environment 检出提交与产品 head 的合并父提交关系已核对。分层结果、artifact ID／digest、路径与限制见 [P5 远端 CI](../ci.md#p5-pr-与远端-linux-ci-验收)。工作流未上传 APK 二进制，不声称下载或安装了远端 APK。证据文档 head 须再验其最新 CI；PR 保持未合并供用户审阅。
+
+Release 任务缺失继续阻塞，真实 Compose／设备及独立评审／QA 未执行；完整分层契约验收仍未完成。持久化格式、依赖、构建、工作流及远端设置不变，T-12 未完成且继续停止。
