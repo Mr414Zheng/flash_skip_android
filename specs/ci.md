@@ -308,3 +308,29 @@ P3 已合入 main，合并后的主干验收通过。本轮回写仅修改文档
 Debug 构建、28 个检查器测试、规格检查与必需身份／产物门禁均通过；Lint 0 错误／12 个既有警告。原始报告、完整身份、源码／配置指纹与执行摘要在忽略目录 `app/build/reports/ci/p4/repaired-final/`。`full/` 保留原 574 例／28 失败；较早修复专项和新增测试导入错误日志也保留，不覆盖历史。新检出须重跑。
 
 没有提交、推送、PR 或远端 CI，不改持久化格式、依赖、构建配置、CI 工作流或远端设置。具体修复及 AC 追踪见 [SDD-006](persistence-compatibility/validation.md)、[SDD-007](rule-management/validation.md)。T-12 未完成且停止，P5 未启动。
+
+## P4 PR 与远端 Linux CI 验收
+
+2026-10-14 用户续授权 P4 分支、提交、推送、PR、远端 CI、报告核验和证据回写，保持 PR 未合并。分支 `codex/p4-persistence-rule-management`，产品提交 `da412ed8ed15fb1af489174f519bbb5099f2b1c8`，[PR #6](https://github.com/Mr414Zheng/flash_skip_android/pull/6) 为 OPEN。此前未提交／无远端 CI 的表述记录本地阶段，不再作为当前交付状态。
+
+首次运行 `38502946362` 的 Specs 因 PR“验证结果”值放在下一行而失败，报告指出须填写至少 8 字；Android 在替代运行启动后取消，不能计通过。只修正正文同一行字段，检查器、工作流和产品代码均未改；失败报告及取消状态保留在忽略目录 `app/build/reports/ci/p4/remote-38502946362/`。
+
+有效 [CI 38503118760](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38503118760) 的 Specs、Android 全部成功。实际检出为 PR 测试合并提交 `bc4b5ee6583aaa6cad2ac0150ec876603c8124f7`，已核对父提交为 main `40e6080889cc4a137b1472a5f185d5fcfff38b9a` 和上述产品 head；PR 并未合入 main。
+
+| 检查 | 远端执行及下载核验 |
+| --- | --- |
+| JUnit | 49 份 XML、594 例全部通过，0 失败／错误／跳过；完整身份与必需清单及本地已验收 XML 一致，含原 574 身份和 28 原红例 |
+| P4 分层 | 新增 115 例：38 JVM、24 Robolectric SDK 36 Codec、48 实际 DataStore、5 真实 service／AppContainer／DataStore 集成；原 P3 14 个服务身份为基线回归 |
+| 检查器／规格 | 28 例通过；34 份文档、9 个编号及 PR 正文检查通过 |
+| 构建／门禁 | assembleDebug 成功；56 个 Gradle 任务执行，远端门禁确认 APK 非空、测试及 Lint 报告齐全 |
+| Lint | 0 错误、15 警告：OldTargetApi 1、AndroidGradlePluginVersion 2、GradleDependency 6、NewerVersionAvailable 3、ObsoleteSdkInt 1、MonochromeLauncherIcon 2 |
+| 报告核验 | 两组 ZIP 实际下载；API artifact ID、大小、digest 与下载 ZIP 一致；JUnit／测试 HTML、Lint XML／HTML、environment、门禁和构建日志均核验，逐文件 SHA-256 已保存 |
+
+| artifact | ID | 字节 | API digest／下载 ZIP SHA-256 |
+| --- | --- | --- | --- |
+| `android-38503118760-1` | `11866960211` | 179797 | `sha256:33172d0fff7f2347d814f8100ff40d096a0748efc3010fbdf145bae0e4e44bae` |
+| `specs-38503118760-1` | `11866865452` | 966 | `sha256:cafd94784d5350b782684017b6abecd13b72a68bd7f869609350a07a749a50fc` |
+
+产物元数据的过期时间为 2026-10-28；保留策略仍为 14 天。原始 ZIP、展开报告、run／jobs／artifact 元数据、merge 父提交、构建日志、核验摘要与文件哈希清单位于本机忽略目录 `app/build/reports/ci/p4/remote-38503118760/`，新检出不含这些报告，不承诺链接永久可用。工作流上传报告而没有上传 APK 二进制；本机没有下载远端 APK，构建成功及非空由远端日志和门禁证明。
+
+本节数据只归属上述产品提交和成功 run。文档回写提交推送后须再次核对最新 head 的 Specs、Android 并下载核验报告，最终运行记录交接与 PR 最新检查，以免为记录文档运行再触发无限回写。没有独立评审、独立 QA、设备或 Compose 控件证据；持久化格式、依赖、构建、工作流和远端设置未改，SDD-001/T-12 未完成且停止，P5 未启动，PR 保持未合并。
