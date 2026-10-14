@@ -97,10 +97,13 @@ internal object CaptureWindowBoundaryPolicy {
         ) {
             return Decision.Reject(RejectReason.SOURCE_MISMATCH)
         }
-        if (evidence.sourceWindowAvailable &&
-            (evidence.sourceWindowObjectId != evidence.eventWindowId ||
-                evidence.sourceWindowActive != true ||
-                evidence.sourceWindowType != APPLICATION_WINDOW_TYPE)
+        // 节点包名和窗口 ID 不能替代窗口活动状态；元数据缺失仅允许有限重试。
+        if (!evidence.sourceWindowAvailable) {
+            return Decision.Retryable(RetryReason.EVENT_SOURCE_UNAVAILABLE)
+        }
+        if (evidence.sourceWindowObjectId != evidence.eventWindowId ||
+            evidence.sourceWindowActive != true ||
+            evidence.sourceWindowType != APPLICATION_WINDOW_TYPE
         ) {
             return Decision.Reject(RejectReason.SOURCE_WINDOW_INVALID)
         }

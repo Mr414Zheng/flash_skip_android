@@ -71,7 +71,7 @@ internal class AccessibilityCaptureAdapter(
         }
     })
     private val semanticSnapshotter = AccessibilitySemanticSnapshotter(service)
-    private val pageCapabilityCounter = StartupPageCapabilityCounter()
+    private val pageCapabilityCounter = StartupPageCapabilityCounter(coordinator::currentTimeMillis)
     private val probe = AccessibilityCaptureProbe(
         service = service,
         targetPackages = {
@@ -81,6 +81,7 @@ internal class AccessibilityCaptureAdapter(
         },
         currentIdentity = { currentScanIdentity },
         semanticSnapshotter = semanticSnapshotter,
+        elapsedRealtimeMs = coordinator::elapsedRealtimeMs,
         onCandidateSnapshot = pageCapabilityCounter::record,
     )
     private val preClickRecovery = AccessibilityPreClickRecovery(
@@ -127,6 +128,9 @@ internal class AccessibilityCaptureAdapter(
 
     fun verifiedHostPackageName(): String? = verifiedHostIdentity?.packageName
     fun verifiedHostWindowId(): Int? = verifiedHostIdentity?.windowId
+
+    /** 服务断连立即停止窗口重试，待确认业务载荷和已有诊断由协调器保留。 */
+    internal fun cancelPendingWindowResolution() = windowResolutionSession.cancel()
 
     /** 主动刷新只使用已验证宿主，不构造点击事件，也不回退到其他窗口。 */
     fun onActiveWindowObservation(expectedSessionId: Long) {
@@ -463,6 +467,15 @@ internal class AccessibilityCaptureAdapter(
                 source.recycle()
             }
         } else {
+            // 关闭控件的存在不能证明无语义的点击事件属于它；独立候选由被动路径生成。
+            if (!hint.hasEventSemantics) {
+                fail(
+                    sessionId = session.id,
+                    failure = CaptureFailure.CLICK_SOURCE_UNAVAILABLE,
+                    diagnostics = clickFailureDiagnostics(sourceAvailable = false, hint = hint),
+                )
+                return
+            }
             // 点击回调到达时按钮可能已经消失；即时恢复失败后仅使用同窗口的近期唯一快照。
             val scanStartedAtElapsedMs = coordinator.elapsedRealtimeMs()
             val immediate = probe.recoverClickedSemanticChainOnVerifiedRoot(
@@ -489,7 +502,6 @@ internal class AccessibilityCaptureAdapter(
                 val snapshot = preClickRecovery.recover(
                     identity = identity,
                     hint = hint,
-                    allowBareNumericCountdown = currentWindowAllowsObservedCandidate,
                 )
                 snapshot.nodes ?: run {
                     fail(
@@ -828,7 +840,7 @@ internal class AccessibilityCaptureAdapter(
             return
         }
         val scanStartedAtElapsedMs = coordinator.elapsedRealtimeMs()
-        val scanStartedAtEpochMs = System.currentTimeMillis()
+        val scanStartedAtEpochMs = coordinator.currentTimeMillis()
         pageCapabilityCounter.reset()
         val refresh = preClickRecovery.refresh(
             identity = identity,

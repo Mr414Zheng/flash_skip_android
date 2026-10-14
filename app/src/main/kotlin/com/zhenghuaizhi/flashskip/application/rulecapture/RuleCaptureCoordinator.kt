@@ -153,6 +153,7 @@ class RuleCaptureCoordinator(
 
     suspend fun markConfigured(sessionId: Long): CaptureOperationResult =
         runServiceUpdate(CaptureServiceOperation.CONFIGURE, sessionId) {
+            if (!hasRemainingStageTime(sessionId)) return@runServiceUpdate CaptureOperationResult.Stale
             transitionUnlocked(sessionId, CapturePhase.CONFIGURING) { session, now ->
                 session.copy(
                     phase = CapturePhase.WAITING_FOR_TARGET,
@@ -291,7 +292,7 @@ class RuleCaptureCoordinator(
         activityName: String,
         windowId: Int,
         enteredAtElapsedMs: Long,
-    ): CaptureOperationResult = updateState(CaptureServiceOperation.OBSERVE_TARGET, sessionId) { state ->
+    ): CaptureOperationResult = updateState(CaptureServiceOperation.OBSERVE_TARGET, sessionId, checkDeadline = true) { state ->
         val session = state.activeSession?.takeIf { it.id == sessionId } ?: return@updateState state
         when (session.phase) {
             CapturePhase.WAITING_FOR_TARGET -> {
@@ -324,7 +325,7 @@ class RuleCaptureCoordinator(
 
     suspend fun recordCaptured(sessionId: Long, sample: CaptureSample): CaptureOperationResult {
         if (!CaptureRuleSafetyPolicy.accepts(sample.nodes)) return CaptureOperationResult.Stale
-        return updateState(CaptureServiceOperation.RECORD_CAPTURED, sessionId) { state ->
+        return updateState(CaptureServiceOperation.RECORD_CAPTURED, sessionId, checkDeadline = true) { state ->
             val session = state.activeSession?.takeIf {
                 it.id == sessionId && it.phase in setOf(
                     CapturePhase.WAITING_FOR_TARGET,
@@ -363,6 +364,7 @@ class RuleCaptureCoordinator(
         sample: CaptureSample,
     ): CaptureOperationResult = runServiceUpdate(CaptureServiceOperation.UPGRADE_CANDIDATE, sessionId) {
         if (!CaptureRuleSafetyPolicy.accepts(sample.nodes)) return@runServiceUpdate CaptureOperationResult.Stale
+        if (!hasRemainingStageTime(sessionId)) return@runServiceUpdate CaptureOperationResult.Stale
         val now = wallClock.currentTimeMillis()
         var upgraded = false
         persistState { state ->
@@ -419,7 +421,7 @@ class RuleCaptureCoordinator(
         candidate: ObservedDismissCandidate,
     ): CaptureOperationResult {
         if (!CaptureRuleSafetyPolicy.accepts(candidate.nodes)) return CaptureOperationResult.Stale
-        return updateState(CaptureServiceOperation.RECORD_CANDIDATE, sessionId) { state ->
+        return updateState(CaptureServiceOperation.RECORD_CANDIDATE, sessionId, checkDeadline = true) { state ->
             val session = state.activeSession?.takeIf {
                 it.id == sessionId && it.phase in setOf(
                     CapturePhase.WAITING_FOR_TARGET,
@@ -560,7 +562,8 @@ class RuleCaptureCoordinator(
         if (CaptureExpiryKey.from(session) != key || session.phase == CapturePhase.FAILED) {
             return CaptureOperationResult.Stale
         }
-        if (monotonicClock.elapsedRealtimeMs() < ensureExpiry(session).deadlineAtElapsedMs) {
+        val deadlineAtElapsedMs = ensureExpiry(session).deadlineAtElapsedMs
+        if (monotonicClock.elapsedRealtimeMs() < deadlineAtElapsedMs) {
             return CaptureOperationResult.Pending
         }
         val failure = when (session.phase) {
@@ -638,21 +641,61 @@ class RuleCaptureCoordinator(
             CaptureOperationResult.Success()
         }
 
-    /** 断连只能终止该服务当时观察到的会话，不能在异步回调中选择后续新会话。 */
+    /** 断连只结算该服务看到的会话；有效待保存载荷继续等待用户明确保存。 */
     fun serviceDisconnected(
         expectedSessionId: Long?,
         diagnostics: CaptureDiagnosticSnapshot? = null,
     ) {
         if (expectedSessionId == null) return
         applicationScope.launch {
-            fail(
-                sessionId = expectedSessionId,
-                failure = CaptureFailure.SERVICE_UNAVAILABLE,
-                diagnostics = diagnostics?.failure,
-                targetWindowDiagnostics = diagnostics?.targetWindow,
-                operation = CaptureServiceOperation.SERVICE_DISCONNECTED,
-            )
+            reconcileServiceSession(expectedSessionId, restoring = false, diagnostics = diagnostics)
         }
+    }
+
+    /**
+     * 服务首次状态发射复用断连分类；配置阶段保留原剩余时间供服务重新配置。
+     * 无状态变化时仍可能返回成功，调用方需继续处理当前状态，不能等待下一次发射。
+     */
+    internal suspend fun restoreServiceSession(
+        expectedSessionId: Long,
+        diagnostics: CaptureDiagnosticSnapshot? = null,
+    ): CaptureOperationResult = reconcileServiceSession(expectedSessionId, restoring = true, diagnostics = diagnostics)
+
+    private suspend fun reconcileServiceSession(
+        expectedSessionId: Long,
+        restoring: Boolean,
+        diagnostics: CaptureDiagnosticSnapshot?,
+    ): CaptureOperationResult = runServiceUpdate(CaptureServiceOperation.SERVICE_DISCONNECTED, expectedSessionId) {
+        val session = captureStore.state.first().activeSession ?: return@runServiceUpdate CaptureOperationResult.Stale
+        if (session.phase == CapturePhase.FAILED) return@runServiceUpdate CaptureOperationResult.Stale
+        val pendingPhase = session.phase in setOf(CapturePhase.CAPTURED, CapturePhase.AWAITING_CONFIRMATION)
+        if (pendingPhase || restoring && session.phase == CapturePhase.CONFIGURING) {
+            if (!hasRemainingStageTime(expectedSessionId)) {
+                return@runServiceUpdate expireUnlocked(
+                    CaptureExpiryKey.from(session), diagnostics?.targetWindow, diagnostics?.failure,
+                )
+            }
+            if (restoring && session.phase == CapturePhase.CONFIGURING) {
+                return@runServiceUpdate CaptureOperationResult.Success(expectedSessionId)
+            }
+            val validPayload = when (session.phase) {
+                CapturePhase.CAPTURED -> session.pendingSample?.nodes
+                CapturePhase.AWAITING_CONFIRMATION -> session.pendingObservedCandidate?.nodes
+                else -> null
+            }?.let(CaptureRuleSafetyPolicy::accepts) == true
+            if (validPayload) {
+                if (session.candidateClickListeningEnabled) {
+                    persistState { state -> state.copy(activeSession = session.copy(candidateClickListeningEnabled = false)) }
+                }
+                return@runServiceUpdate CaptureOperationResult.Success(expectedSessionId)
+            }
+        }
+        persistState { state ->
+            state.copy(activeSession = failed(
+                session, CaptureFailure.SERVICE_UNAVAILABLE, diagnostics?.failure, diagnostics?.targetWindow,
+            ))
+        }
+        CaptureOperationResult.Success(expectedSessionId)
     }
 
     fun elapsedRealtimeMs(): Long = monotonicClock.elapsedRealtimeMs()
@@ -682,11 +725,22 @@ class RuleCaptureCoordinator(
     private suspend fun updateState(
         operation: CaptureServiceOperation,
         sessionId: Long,
+        checkDeadline: Boolean = false,
         transform: (RuleCaptureState) -> RuleCaptureState,
     ): CaptureOperationResult = runServiceUpdate(operation, sessionId) {
+        if (checkDeadline && !hasRemainingStageTime(sessionId)) return@runServiceUpdate CaptureOperationResult.Stale
         var changed = false
         persistState { state -> transform(state).also { changed = it != state } }
         if (changed) CaptureOperationResult.Success(sessionId) else CaptureOperationResult.Stale
+    }
+
+    // 只在操作锁内的证据/阶段入口检查；取得锁后的存储等待继续消耗预算，保存不套用此截止。
+    private suspend fun hasRemainingStageTime(sessionId: Long): Boolean {
+        val session = captureStore.state.first().activeSession?.takeIf {
+            it.id == sessionId && it.phase != CapturePhase.FAILED
+        } ?: return false
+        val deadlineAtElapsedMs = ensureExpiry(session).deadlineAtElapsedMs
+        return monotonicClock.elapsedRealtimeMs() < deadlineAtElapsedMs
     }
 
     /**

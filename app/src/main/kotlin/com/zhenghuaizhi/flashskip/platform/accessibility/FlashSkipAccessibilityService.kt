@@ -8,6 +8,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureDiagnosticSnapshot
 import com.zhenghuaizhi.flashskip.FlashSkipApplication
+import com.zhenghuaizhi.flashskip.AppContainer
 import com.zhenghuaizhi.flashskip.domain.automation.AutomationEngine
 import com.zhenghuaizhi.flashskip.domain.automation.ForegroundSignal
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
@@ -18,6 +19,7 @@ import com.zhenghuaizhi.flashskip.domain.model.CaptureSample
 import com.zhenghuaizhi.flashskip.domain.model.RuleCaptureState
 import com.zhenghuaizhi.flashskip.domain.model.TargetWindowRecognitionOutcome
 import com.zhenghuaizhi.flashskip.domain.ports.PageIdentity
+import com.zhenghuaizhi.flashskip.domain.ports.PageGateway
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,6 +28,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.first
 import com.zhenghuaizhi.flashskip.BuildConfig
 import kotlinx.coroutines.launch
 import com.zhenghuaizhi.flashskip.application.rulecapture.CaptureExpiryKey
@@ -45,7 +48,11 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     private var diagnosticsProviderRegistrationId: Long? = null
     private var captureConfigurationPackage: String? = null
     private var captureConfigured = false
-    private var automationPaused = false
+    private var automationPaused: Boolean? = null
+    private var serviceInterrupted = false
+    private var serviceStateReady = false
+    internal var runtimeFactory: (() -> AppContainer)? = null
+    internal var automationEngineFactory: ((AppContainer, PageGateway, CoroutineScope) -> AutomationEngine)? = null
     private val targetWindowDiagnosticsTracker = TargetWindowDiagnosticsTracker()
     private var pendingVerifiedWindowPackage: String? = null
     private val pendingForegroundWindow = PendingForegroundWindow()
@@ -56,8 +63,9 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     @Volatile
     private var latestCaptureState = RuleCaptureState()
 
-    private val container
-        get() = (application as FlashSkipApplication).container
+    private val container by lazy {
+        runtimeFactory?.invoke() ?: (application as FlashSkipApplication).container
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -65,6 +73,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     }
 
     override fun onServiceConnected() {
+        serviceStateReady = false
         super.onServiceConnected()
         CaptureTraceLog.boundary(latestCaptureState.activeSession?.id, "service_connected",
             "reconnected" to (serviceScope != null))
@@ -84,21 +93,25 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         latestIdentity = null
         pendingForegroundWindow.clear()
         latestCaptureState = RuleCaptureState()
+        serviceInterrupted = false
+        automationPaused = null
         targetWindowDiagnosticsTracker.reset()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        val gateway = AccessibilityPageGateway(this, ::currentTargetPackages) { latestIdentity }
+        val gateway = AccessibilityPageGateway(this, ::currentTargetPackages, container.monotonicClock) { latestIdentity }
         serviceScope = scope
         windowClassifier = ForegroundWindowClassifier(
             targetPackages = ::currentTargetPackages,
             applicationWindowType = AccessibilityWindowInfo.TYPE_APPLICATION,
         )
         eventPackageResolver = AccessibilityEventPackageResolver(this)
-        engine = container.createAutomationEngine(
+        engine = automationEngineFactory?.invoke(container, gateway, scope) ?: container.createAutomationEngine(
             pageGateway = gateway,
-            monotonicClock = AndroidMonotonicClock,
-            wallClock = AndroidWallClock,
+            monotonicClock = container.monotonicClock,
+            wallClock = container.wallClock,
             scope = scope,
         )
+        // 新引擎在首份持久化状态到达前保持暂停；旧服务的缓存不能代替这次同步。
+        scope.launch { setAutomationPaused(true) }
         captureAdapter = AccessibilityCaptureAdapter(
             service = this,
             coordinator = container.ruleCaptureCoordinator,
@@ -107,7 +120,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             targetWindowDiagnosticsProvider = { sessionId ->
                 targetWindowDiagnosticsTracker.snapshot(
                     expectedSessionId = sessionId,
-                    nowElapsedMs = AndroidMonotonicClock.elapsedRealtimeMs(),
+                    nowElapsedMs = container.monotonicClock.elapsedRealtimeMs(),
                 )
             },
             targetWindowResolutionRecorder = { record ->
@@ -153,7 +166,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             },
         )
         captureObservationLoop = CaptureObservationLoop(
-            scope, Dispatchers.IO.limitedParallelism(1), { latestCaptureState.activeSession },
+            scope, container.captureObserverDispatcher, { latestCaptureState.activeSession },
             { captureAdapter?.verifiedHostPackageName() != null },
             loadIgnoredPackages = {
                 val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
@@ -176,6 +189,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             },
             onVerifiedTick = { captureAdapter?.onActiveWindowObservation(it) },
             onUnavailable = { CaptureTraceLog.boundary(it, "startup_observer_unavailable") },
+            elapsedClock = container.monotonicClock::elapsedRealtimeMs,
         )
         diagnosticsProviderRegistrationId = container.ruleCaptureCoordinator
             .registerReturnDiagnosticsProvider { sessionId ->
@@ -183,7 +197,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     failure = captureAdapter?.timeoutDiagnostics(sessionId),
                     targetWindow = targetWindowDiagnosticsTracker.snapshot(
                         expectedSessionId = sessionId,
-                        nowElapsedMs = AndroidMonotonicClock.elapsedRealtimeMs(),
+                        nowElapsedMs = container.monotonicClock.elapsedRealtimeMs(),
                     ),
                 )
             }
@@ -198,6 +212,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (serviceInterrupted || !serviceStateReady) return
         val safeEvent = event ?: return
         val captureSession = latestCaptureState.activeSession
         if (captureSession?.blocksAutomation == true) {
@@ -212,8 +227,8 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             val receivedTiming = CaptureEventTimingRecorder.sample(
                 eventUptimeMs = safeEvent.eventTime,
                 receivedUptimeMs = SystemClock.uptimeMillis(),
-                receivedElapsedMs = SystemClock.elapsedRealtime(),
-                receivedEpochMs = System.currentTimeMillis(),
+                receivedElapsedMs = container.monotonicClock.elapsedRealtimeMs(),
+                receivedEpochMs = container.wallClock.currentTimeMillis(),
             )
             val reportedPackageName = safeEvent.packageName?.toString()
             val selectedPackages = listOfNotNull(
@@ -448,14 +463,14 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     reportedPackageName == SYSTEM_UI_PACKAGE)
         } ?: return
         if (identity.packageName !in currentTargetPackages()) return
-        engine?.onContentChanged(identity, AndroidMonotonicClock.elapsedRealtimeMs())
+        engine?.onContentChanged(identity, container.monotonicClock.elapsedRealtimeMs())
     }
 
     private fun handleWindowStateChanged(event: AccessibilityEvent) {
         val reportedPackageName = event.packageName?.toString() ?: return
         val windowId = event.windowId
         val packageName = effectiveSystemReportedPackageName(reportedPackageName, windowId)
-        val occurredAt = AndroidMonotonicClock.elapsedRealtimeMs()
+        val occurredAt = container.monotonicClock.elapsedRealtimeMs()
         val metadata = snapshotWindowMetadata() ?: return
         val activeApplication = metadata.singleOrNull { it.id == windowId }?.let {
             it.isActive && it.type == AccessibilityWindowInfo.TYPE_APPLICATION
@@ -496,12 +511,12 @@ class FlashSkipAccessibilityService : AccessibilityService() {
 
     @Suppress("DEPRECATION")
     private fun replayPendingForegroundWindow() {
-        if (latestCaptureState.activeSession?.blocksAutomation == true || automationPaused) {
+        if (latestCaptureState.activeSession?.blocksAutomation == true || automationPaused != false) {
             pendingForegroundWindow.clear()
             return
         }
         val pending = pendingForegroundWindow.takeIfFresh(
-            AndroidMonotonicClock.elapsedRealtimeMs(), currentTargetPackages(),
+            container.monotonicClock.elapsedRealtimeMs(), currentTargetPackages(),
         ) ?: return
         val currentWindows = runCatching { windows }.getOrNull() ?: return
         val matches = try {
@@ -528,9 +543,26 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             container.ruleCaptureCoordinator.state.onCompletion { error ->
                 CaptureTraceLog.boundary(latestCaptureState.activeSession?.id, "service_capture_observer_completed",
                     "failed" to (error != null), "error" to error?.let(CaptureTraceError::from))
-            }.collect { state ->
+            }.collect { emittedState ->
+                var state = emittedState
                 if (firstEmission) CaptureTraceLog.boundary(state.activeSession?.id, "service_capture_first_state",
                     "hasSession" to (state.activeSession != null), "phase" to state.activeSession?.phase)
+                if (firstEmission) {
+                    state.activeSession?.takeUnless { it.phase == CapturePhase.FAILED }?.let { session ->
+                        setAutomationPaused(true)
+                        val restored = container.ruleCaptureCoordinator.restoreServiceSession(session.id)
+                        if (restored is CaptureOperationResult.Failure) {
+                            // 关闭监听的持久化没有提交时，不消费旧快照继续采集。
+                            restoreDefaultEventConfiguration()
+                            captureObservationLoop?.cancel()
+                            captureAdapter?.cancelPendingWindowResolution()
+                            return@collect
+                        }
+                        // 有效载荷及 CONFIGURING 的恢复可能不写状态，必须直接推进这次配置。
+                        state = container.ruleCaptureCoordinator.state.first()
+                    }
+                    firstEmission = false
+                }
                 // 必须先输出旧上下文，再让采集器和窗口计数器处理新会话并清空缓冲区。
                 traceCaptureTransition(latestCaptureState, state)
                 latestCaptureState = state
@@ -539,22 +571,11 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                 captureAdapter?.onStateChanged(state)
                 scheduleExpiry(state)
                 val session = state.activeSession
-                if (firstEmission && session?.phase in setOf(
-                        CapturePhase.WAITING_FOR_TARGET,
-                        CapturePhase.OBSERVING_CLICK,
-                        CapturePhase.AWAITING_CONFIRMATION,
-                        CapturePhase.CAPTURED,
-                    )
-                ) {
-                    firstEmission = false
+                if (serviceInterrupted) {
+                    restoreDefaultEventConfiguration()
                     setAutomationPaused(true)
-                    container.ruleCaptureCoordinator.fail(
-                        requireNotNull(session).id,
-                        CaptureFailure.SERVICE_UNAVAILABLE,
-                    )
                     return@collect
                 }
-                firstEmission = false
                 captureObservationLoop?.update(session)
                 when (session?.phase) {
                     CapturePhase.CONFIGURING -> {
@@ -587,8 +608,8 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                     }
 
                     CapturePhase.AWAITING_CONFIRMATION -> {
+                        setAutomationPaused(true)
                         if (session.listensForCandidateClick) {
-                            setAutomationPaused(true)
                             if (!configureForCandidateClick(session.packageName)) {
                                 container.ruleCaptureCoordinator.fail(
                                     session.id,
@@ -605,6 +626,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
                         setAutomationPaused(false)
                     }
                 }
+                serviceStateReady = true
             }
         }
     }
@@ -649,7 +671,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             targetWindow = {
                 session.targetWindowDiagnostics ?: targetWindowDiagnosticsTracker.snapshot(
                     expectedSessionId = session.id,
-                    nowElapsedMs = AndroidMonotonicClock.elapsedRealtimeMs(),
+                    nowElapsedMs = container.monotonicClock.elapsedRealtimeMs(),
                 )
             },
             savedSample = savedSample,
@@ -751,15 +773,16 @@ class FlashSkipAccessibilityService : AccessibilityService() {
 
     private fun scheduleExpiry(state: RuleCaptureState) {
         captureExpiryJob?.cancel()
+        if (serviceInterrupted) return
         val session = state.activeSession?.takeUnless { it.phase == CapturePhase.FAILED } ?: return
         captureExpiryJob = serviceScope?.launch {
             val key = CaptureExpiryKey.from(session)
             while (true) {
                 val plan = container.ruleCaptureCoordinator.expiryPlan(key) ?: return@launch
-                delay((plan.deadlineAtElapsedMs - AndroidMonotonicClock.elapsedRealtimeMs()).coerceAtLeast(0))
+                delay((plan.deadlineAtElapsedMs - container.monotonicClock.elapsedRealtimeMs()).coerceAtLeast(0))
                 val targetWindowDiagnostics = targetWindowDiagnosticsTracker.snapshot(
                     expectedSessionId = session.id,
-                    nowElapsedMs = AndroidMonotonicClock.elapsedRealtimeMs(),
+                    nowElapsedMs = container.monotonicClock.elapsedRealtimeMs(),
                 )
                 val failureDiagnostics = captureAdapter?.timeoutDiagnostics(session.id)
                 val result = container.ruleCaptureCoordinator.expireExpected(
@@ -826,6 +849,13 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             traceCaptureSummary(it, CaptureTraceConclusion.SERVICE_INTERRUPTED)
         }
         captureObservationLoop?.cancel()
+        captureExpiryJob?.cancel()
+        captureExpiryJob = null
+        serviceInterrupted = true
+        serviceStateReady = false
+        captureAdapter?.cancelPendingWindowResolution()
+        restoreDefaultEventConfiguration()
+        serviceScope?.launch { setAutomationPaused(true) }
         disconnectCaptureWithDiagnostics()
     }
 
@@ -835,6 +865,9 @@ class FlashSkipAccessibilityService : AccessibilityService() {
             traceCaptureSummary(it, CaptureTraceConclusion.SERVICE_DESTROYED)
         }
         disconnectCaptureWithDiagnostics()
+        serviceInterrupted = true
+        serviceStateReady = false
+        captureAdapter?.cancelPendingWindowResolution()
         diagnosticsProviderRegistrationId?.let {
             container.ruleCaptureCoordinator.unregisterReturnDiagnosticsProvider(it)
         }
@@ -860,7 +893,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         latestCaptureState = RuleCaptureState()
         captureConfigurationPackage = null
         captureConfigured = false
-        automationPaused = false
+        automationPaused = null
         targetWindowDiagnosticsTracker.reset()
         CaptureTraceLog.state(null)
         super.onDestroy()
@@ -870,7 +903,7 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         pendingForegroundWindow.clear()
         latestIdentity = null
         val sessionId = latestCaptureState.activeSession?.id ?: return
-        val now = AndroidMonotonicClock.elapsedRealtimeMs()
+        val now = container.monotonicClock.elapsedRealtimeMs()
         val diagnostics = CaptureDiagnosticSnapshot(
             failure = captureAdapter?.timeoutDiagnostics(sessionId),
             targetWindow = targetWindowDiagnosticsTracker.snapshot(
