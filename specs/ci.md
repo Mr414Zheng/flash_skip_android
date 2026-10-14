@@ -22,7 +22,7 @@
 | [check_specs.py](../scripts/ci/check_specs.py) | 检查 `AGENTS.md` 和 `specs/` 内 Markdown：重复/未知规格编号、未定义的完整 AC/任务引用、失效的仓库文件链接和 Markdown 标题锚点。PR 事件另外检查验收说明 |
 | [PR 模板](../.github/pull_request_template.md) | 填写已定义的完整 SDD/AC 引用，或至少 8 字的“无契约变化原因”；填写至少 8 字的“验证结果”。注释中的示例和待填写占位词不算输入；错误引用不能用无契约变化原因豁免 |
 | [check_test_results.py](../scripts/ci/check_test_results.py) | 拒绝缺失/损坏/空 JUnit XML、用例计数不符、重复身份、任何失败/错误/跳过、关键用例缺失。`--require-artifacts` 还检查 debug APK、测试 HTML、Lint HTML/XML，拒绝 Lint Error/Fatal |
-| [必需用例清单](../.ci/required-tests.json) | 原清单从 `e354a99` 登记 5 个类、75 个完整身份；P2 按 `ad01dc7` 加本轮新增测试的真实 XML 扩展为 21 个类、201 个完整身份，保留原 75 例及参数化阶段；允许新增测试，删除/改名/参数变更必须明确评审后同步清单。数量相同不能抵消必需用例缺失 |
+| [必需用例清单](../.ci/required-tests.json) | 原清单从 `e354a99` 登记 5 个类、75 个完整身份；P2 按 `ad01dc7` 加本轮新增测试的真实 XML 扩展为 21 个类、201 个完整身份，保留原 75 例及参数化阶段；P3 初次扩展为 40 类、453 个身份（42 个失败），修复后按真实 XML 扩展为 41 类、479 个身份，原 453 个身份均保留并通过；允许新增测试，删除/改名/参数变更必须明确评审后同步清单。数量相同不能抵消必需用例缺失 |
 | [本地证据例外](../.ci/local-evidence-links.json) | 仅豁免已有验证文档中逐条登记的 `app/build` 历史链接，不要求新检出具有本机产物。未使用的例外也报错；新建错误链接不会自动豁免 |
 
 规格包从 [登记表](README.md) 读取；预留目录是普通代码文本，不当作已存在的规格链接。当前检查支持行内 Markdown 链接、ATX 标题和完整 `SDD/AC`、`SDD/T` 引用，不验证远端 URL 可达性，也不展开裸写的编号区间。PR 字数只是防空白的最低门槛，引用与变更的语义关联、验证声明真实性仍由评审负责。推送/手动事件没有 PR 正文，仅执行仓库检查。
@@ -212,3 +212,58 @@ P2 本地及远端 Linux CI 验收通过。此次记录回写仅修改文档，�
 下载产物为 `specs-38376388018-1`（ID `11801845633`，968 字节）和 `android-38376388018-1`（ID `11801467685`，92287 字节），登记过期日 2026-10-27。本机保存在忽略目录 `app/build/reports/ci/remote/38376388018/`；初次下载网络 TLS 超时，重试下载成功，不属于产品或测试失败。
 
 P2 已合入 main，合并后的主干 CI 验收通过。此轮主干验收回写仅修改文档，作为独立提交推送到 main，并继续核对该提交的主干 CI；上述运行只归属于合并提交，不错记为后续文档提交的测试结果。未修改工作流、依赖、应用构建配置或远端设置，未扩大为 P3 授权。SDD-001/T-12 继续未完成且停止，未新增设备或 Compose UI 组件证据。
+
+## P3 规格与离线测试本地记录（修复前历史）
+
+基线 main `34dc102`，2026-10-13；本轮只增加规格、离线测试、必需清单及证据。生产代码、原 201 个测试、依赖、应用构建配置与 CI 工作流未变；没有提交／推送／PR 或远端运行。详情见 [SDD-004](capture-lifecycle/validation.md) 与 [SDD-005](capture-evidence/validation.md)。
+
+| 项目 | 最终实际结果 |
+| --- | --- |
+| 全量 JUnit | 40 个类、453 例：411 通过、42 失败，0 错误／跳过 |
+| 原回归 / P3 新增 | 原 201 个完整身份全部通过；新增 19 类、252 例：210 通过／42 失败 |
+| 新增证据层级 | JVM 197 例（37 失败）；Robolectric SDK 36 组件 55 例（5 失败）；无新增真实服务或真实存储用例 |
+| 本包组织 | SDD-004 172 例（36 失败）；SDD-005 80 例（6 失败）；跨包引用不重复计数 |
+| 政策差异 | 锁内期限 32、断连分类 4、缺源语义 3、完整扫描/快照 2、窗口元数据 1 |
+| 构建 / Lint | 56 个 Gradle 任务实际执行；debug 构建成功；Lint 0 错误、12 警告；总体命令因测试失败返回 1 |
+| 检查器 / 规格 | 28 例通过；26 份文档、9 个编号通过 |
+| 门禁 | 按最终 XML 登记 453 个必需身份；产物检查返回 1，仅因 42 个失败，无缺失身份或产物，没有忽略/跳过失败 |
+| 集成限制 | 真实 service/container 的 DataStore singleton 与 scope/clock 当前不能可靠隔离；首次状态恢复和新引擎暂停同步没有运行证据 |
+
+最终全量命令使用 Android Studio JBR、`--rerun-tasks --no-build-cache --continue --console=plain`，31 秒完成。Lint 分布：GradleDependency 6、MonochromeLauncherIcon 2、OldTargetApi 1、AndroidGradlePluginVersion 1、NewerVersionAvailable 1、ObsoleteSdkInt 1；未新增 baseline 或降低门槛。
+
+本机证据保存在忽略目录 `app/build/reports/ci/p3/final/`，包括日志、JUnit、HTML、Lint、检查器、规格、产物门禁及源文件指纹；新检出须重跑。初轮夹具错误及修正过程报告保留于 `preliminary/`、`full/` 与 `fixture-corrected/`，不覆盖历史或把旧运行归属为最终状态。
+
+规格和测试交付完成不等于 P3 契约验收通过。五组最小生产修复建议已记录，需另行授权；真实服务测试接缝建议也没有实施。SDD-001/T-12 未完成且继续停止，无设备或 Compose 控件证据。
+
+## P3 最小生产修复与真实服务集成本地验收
+
+基线 main `34dc102` 加未提交的 P3 规格、测试与最小生产修复，2026-10-13 本地执行。用户后续授权五项政策修复及必要内部测试接缝。本轮修改 7 个既有生产文件并新增内部 AppContainerRuntime；公共构造默认装配、存储格式、依赖、应用构建配置、CI 工作流及远端设置保持不变。未提交、推送或创建 PR。
+
+完整重跑 41 个测试类、479 例，全部通过，0 失败／错误／跳过。修复前 453 个完整身份全部保留并通过，包括原 201 例和原 42 个失败反例；本次增加 26 例。相对 main 共新增 20 个测试类、278 例：207 JVM 例、57 Robolectric SDK 36 组件例、14 Robolectric SDK 36 真实服务生命周期集成例。层级分别登记，后者不是设备证据。
+
+完整执行 `:app:testDebugUnitTest :app:assembleDebug :app:lintDebug --rerun-tasks --no-build-cache --continue --console=plain` 成功；28 个检查器测试、规格检查及必需身份／产物门禁通过，Lint 0 错误、12 警告。独立静态代码评审最初发现恢复写失败后后续发射可绕过门禁，已修复并补充成功重试／持续写失败两例，复审关闭且无新增 finding；这不代表独立 QA。
+
+当前报告归档于本机忽略目录 `app/build/reports/ci/p3/repaired-final/`（Gradle、JUnit XML/HTML、Lint、检查器、规格、产物门禁、summary、完整清单及文件指纹）。`final/` 仍保留修复前 453 例／42 失败，未覆盖历史；`repaired-initial/` 保存测试夹具编译问题日志，`repaired-check/` 保存 479 例／1 个服务正控制失败的中间证据。新检出须重跑，不能依赖本机忽略产物。
+
+服务集成使用真实 service、AppContainer、协调器、目录、自动引擎和两个独立 DataStore；受控 scope／时钟／调度器及 Android shadows 用于稳定输入和清理。14 例覆盖恢复、配置剩余预算、新引擎暂停与取消后实际点击、interrupt／destroy、存储失败和延迟首发。各层测试分开计数，详情见 [生命周期验证](capture-lifecycle/validation.md) 与 [证据验证](capture-evidence/validation.md)。
+
+本地 P3 契约验收通过；没有独立 QA、本轮远端 CI、设备或 Compose 控件证据。SDD-001/T-12 未完成且继续停止，P4 以后未启动。
+
+## P3 PR 与远端 Linux CI 验收
+
+2026-10-14 用户续授权新分支提交、推送、创建 PR、等待远端 CI 并核验产物，暂不合并。P3 已提交为 `a5e7ddf186df18edd88741ee95b54421a3edf9e6`，分支 `codex/p3-capture-contracts`，[PR #4](https://github.com/Mr414Zheng/flash_skip_android/pull/4) 当前 OPEN，未启用自动合并。此前“未提交／无远端证据”描述本地实施时点；此节为后续远端结果。
+
+[CI 38491677713](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38491677713) 于 2026-10-14 08:42:25～08:45:37（Asia/Shanghai）运行，Specs、Android 均成功。报告 environment.txt 的实际检出为 PR 测试合并提交 `323cb4da86213edce847984c4ca31d77c6aeb180`，已核对父提交为 main `34dc1027db15fe95ac3de09cf3a001be6a1e60ff` 与上述 P3 head；这是 CI 测试提交，PR 尚未合并。
+
+| 检查 | 远端核验结果 |
+| --- | --- |
+| JUnit | 下载 41 份 XML，479 例全部通过，0 失败／错误／跳过；按必需清单逐身份核对，原 453 例和原 201 例保留 |
+| 分层 | P3 新增 278 例：207 JVM、57 Robolectric SDK 36 组件、14 Robolectric 真实 service／AppContainer／实际 DataStore 集成；不是设备证据 |
+| 检查器／规格 | 28 例通过；26 份文档、9 个编号及 PR 正文检查通过 |
+| debug 构建 | `assembleDebug` 成功，完整 Gradle 56 项任务均执行；远端 `--require-artifacts` 确认 APK 存在且非空，以及测试／Lint 报告齐全 |
+| Lint | 0 错误、15 警告：OldTargetApi 1、AndroidGradlePluginVersion 2、GradleDependency 6、NewerVersionAvailable 3、ObsoleteSdkInt 1、MonochromeLauncherIcon 2 |
+| 产物 | `specs-38491677713-1` 和 `android-38491677713-1` 均下载，检查报告内容、检出 SHA、HTML／XML 完整性，并生成本机文件 SHA-256 清单 |
+
+远端警告较本地 12 条多出 3 条版本可用性提示，没有修改依赖或降低检查门槛。现有工作流只上传报告，不上传 APK 二进制：APK 生成／非空由远端门禁及成功日志证明，本机没有下载远端 APK，也未做安装或设备验证。下载文件、运行日志、产物元数据、父提交核对和摘要位于本机忽略目录 `app/build/reports/ci/remote/38491677713/`；GitHub 产物按既有策略保留 14 天，新检出不含本机下载。
+
+本次证据回写仅修改文档，推送后由 PR synchronize 检查验证；本节数据准确归属于上述 head 和运行，后续文档 head 的结果以 PR 最新检查为准。本地与远端 Linux P3 验收通过，不代表独立 QA、设备或 Compose 控件验收。依赖、构建配置、工作流及远端设置保持不变；SDD-001/T-12 未完成且继续停止，P4 以后未启动。

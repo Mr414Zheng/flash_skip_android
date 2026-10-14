@@ -105,16 +105,12 @@ internal class AccessibilityPreClickRecovery(
                     other.selectors.any { it.resourceId in resourceIds }
                 }
         }
+        // 候选结构重复或有损时，索引阳性不能排除完整树中已发现的竞争者。
         val verifiedNodes = verifiedCandidates.singleOrNull()?.nodes
-            ?.takeIf(::hasNoUnverifiedCompetitor)
-        val safeRecoveredNodes = recoveredNodes?.takeIf { nodes ->
-            recovery.diagnostics.isCompleteTraversal() ||
-                hasNoUnverifiedCompetitor(nodes) &&
-                RuleCandidateAnalyzer.selectorCandidates(nodes).any {
-                    evidence[it]?.presence == SelectorPresence.UNIQUE_PRESENT
-                }
-        }
-        val snapshotNodes = safeRecoveredNodes ?: verifiedNodes
+            ?.takeIf { recovery.semanticCandidatesComplete && hasNoUnverifiedCompetitor(it) }
+        // 定向复查只证明对应选择器；缺源点击可复用的快照仍须在单轮完整扫描中形成。
+        val snapshotNodes = (recoveredNodes ?: verifiedNodes)
+            ?.takeIf { recovery.diagnostics.isCompleteTraversal() }
         if (snapshotNodes != null && !round.expired()) {
             snapshot = Snapshot(
                 identity = identity,
@@ -140,7 +136,6 @@ internal class AccessibilityPreClickRecovery(
     fun recover(
         identity: PageIdentity,
         hint: ClickSemanticHint,
-        allowBareNumericCountdown: Boolean,
     ): Result {
         val current = snapshot ?: return Result(
             diagnostics = SnapshotRecoveryDiagnostics(SnapshotRecoveryOutcome.NOT_AVAILABLE),
@@ -167,18 +162,15 @@ internal class AccessibilityPreClickRecovery(
                 ageMs = ageMs,
             ),
         )
-        val matchesEvent = ClickSourceRecoveryMatcher.matches(semanticNode, hint)
-        val matchesKnownDismiss = ClickSourceRecoveryMatcher.matches(
-            semanticNode,
-            ClickSemanticHint(allowBareNumericCountdown = allowBareNumericCountdown),
-        )
+        // 被动发现允许关闭语义猜测，真实点击恢复必须与明确事件语义一致。
+        val matchesEvent = hint.hasEventSemantics &&
+            ClickSourceRecoveryMatcher.matches(semanticNode, hint)
         val outcome = when {
             matchesEvent -> SnapshotRecoveryOutcome.MATCHED_EVENT
-            matchesKnownDismiss -> SnapshotRecoveryOutcome.MATCHED_DISMISS
             else -> SnapshotRecoveryOutcome.NO_MATCH
         }
         return Result(
-            nodes = current.nodes.takeIf { matchesEvent || matchesKnownDismiss },
+            nodes = current.nodes.takeIf { matchesEvent },
             diagnostics = SnapshotRecoveryDiagnostics(outcome = outcome, ageMs = ageMs),
         )
     }

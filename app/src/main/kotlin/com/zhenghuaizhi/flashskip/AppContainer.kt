@@ -16,33 +16,31 @@ import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementOperatio
 import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementOutcome
 import com.zhenghuaizhi.flashskip.application.rulecapture.RuleManagementTraceEvent
 import com.zhenghuaizhi.flashskip.application.rulecapture.recordSafely
-import com.zhenghuaizhi.flashskip.platform.accessibility.RuleManagementTraceLog
-import com.zhenghuaizhi.flashskip.data.preferences.PreferencesFlashSkipStore
-import com.zhenghuaizhi.flashskip.data.preferences.PreferencesRuleCaptureStore
 import com.zhenghuaizhi.flashskip.domain.automation.AutomationEngine
 import com.zhenghuaizhi.flashskip.domain.ports.MonotonicClock
 import com.zhenghuaizhi.flashskip.domain.ports.PageGateway
 import com.zhenghuaizhi.flashskip.domain.ports.WallClock
 import com.zhenghuaizhi.flashskip.domain.rules.BuiltinRuleCatalog
 import com.zhenghuaizhi.flashskip.domain.rules.CompositeRuleCatalog
-import com.zhenghuaizhi.flashskip.platform.accessibility.AndroidMonotonicClock
-import com.zhenghuaizhi.flashskip.platform.accessibility.AndroidWallClock
 import com.zhenghuaizhi.flashskip.platform.accessibility.AutomationTraceLog
 import com.zhenghuaizhi.flashskip.platform.packages.AndroidTargetAppVersionReader
 import com.zhenghuaizhi.flashskip.platform.settings.AndroidSystemServiceStatusReader
 import com.zhenghuaizhi.flashskip.ui.home.HomeViewModel
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 
-class AppContainer(context: Context) {
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+class AppContainer internal constructor(context: Context, runtime: AppContainerRuntime) {
+    constructor(context: Context) : this(context, AppContainerRuntime.production(context))
+
+    private val applicationScope = runtime.applicationScope
+    internal val monotonicClock = runtime.monotonicClock
+    internal val wallClock = runtime.wallClock
+    internal val captureObserverDispatcher = runtime.captureObserverDispatcher
 
     init {
-        if (BuildConfig.DEBUG) {
+        if (runtime.diagnosticsEnabled) {
             CaptureTraceLog.installSink(CaptureDiagnosticJournal(
                 // 使用 no_backup 目录；目录创建与历史文件检查由后台写入器完成。
                 directory = File(context.applicationInfo.dataDir, "no_backup/capture-diagnostics"),
@@ -56,11 +54,11 @@ class AppContainer(context: Context) {
         }
     }
 
-    private val ruleManagementTrace = RuleManagementTraceLog(BuildConfig.DEBUG)
-    val store = PreferencesFlashSkipStore(context.applicationContext, applicationScope, ruleManagementTrace)
-    val ruleCaptureStore = PreferencesRuleCaptureStore(context.applicationContext, applicationScope, ruleManagementTrace)
+    private val ruleManagementTrace = runtime.traceSink
+    val store = runtime.store
+    val ruleCaptureStore = runtime.captureStore
     init {
-        if (BuildConfig.DEBUG) applicationScope.launch {
+        if (runtime.diagnosticsEnabled) applicationScope.launch {
             CaptureTraceLog.lifecycle("application_capture_observer_started")
             var previous: RuleCaptureState? = null
             try {
@@ -82,6 +80,7 @@ class AppContainer(context: Context) {
         builtinCatalog = builtinRuleCatalog,
         captureStore = ruleCaptureStore,
         scope = applicationScope,
+        computationDispatcher = runtime.catalogComputationDispatcher,
     )
     init {
         if (ruleManagementTrace.enabled) applicationScope.launch {
@@ -100,8 +99,8 @@ class AppContainer(context: Context) {
     val ruleCaptureCoordinator = RuleCaptureCoordinator(
         captureStore = ruleCaptureStore,
         flashSkipStore = store,
-        monotonicClock = AndroidMonotonicClock,
-        wallClock = AndroidWallClock,
+        monotonicClock = monotonicClock,
+        wallClock = wallClock,
         applicationScope = applicationScope,
         ruleCatalog = ruleCatalog,
         traceSink = ruleManagementTrace,

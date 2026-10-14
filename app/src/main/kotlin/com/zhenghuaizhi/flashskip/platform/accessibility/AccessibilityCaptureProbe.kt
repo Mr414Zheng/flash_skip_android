@@ -214,7 +214,10 @@ internal class AccessibilityCaptureProbe(
         if (identityChanged) resetCoverage()
         val limit = traversal.limitReason ?: round.limitReason().takeIf { unavailable }
         val expired = round.expired()
-        val canKeep = recovered != null && selectorCandidateNodes == 1 && !ambiguous && !unavailable && !traversal.unreadable && !identityChanged && !expired
+        // 单轮完整遍历才可证明唯一；续扫和定向阳性仍保留候选线索，不能提升点击归因。
+        val canKeep = recovered != null && selectorCandidateNodes == 1 &&
+            traversal.complete && limit == null && !ambiguous && !unavailable &&
+            !traversal.unreadable && !identityChanged && !expired
         val outcome = when {
             identityChanged -> ClickRecoveryOutcome.IDENTITY_CHANGED
             expired -> ClickRecoveryOutcome.TRAVERSAL_LIMIT
