@@ -1,6 +1,26 @@
 # Repository Guidelines
 
-## Current Baseline and P6 Workflow
+## Current P5 Migration Delivery Authorization (2026-10-16)
+
+After reviewing the isolated worktree's 41 changed files, the user explicitly authorized full delivery: create a branch, commit, push, open a PR, verify its latest remote CI and downloaded reports, merge after successful checks, then verify main CI and its downloaded reports. This supersedes the earlier no-commit/no-push/no-PR restriction for this reviewed P5 closeout and T-12 documentation patch only. The original workspace's three diagnostic production changes and timing test remain excluded and preserved. No additional device validation, remote-setting changes or release operation is authorized.
+
+Local review rechecked all changed implementation fingerprints against the saved passing evidence, the original 735 required identities and 30 unchanged service test bodies, both variant report/artifact gates, 39 checker tests and specifications. This is author self-review, not independent review or QA. PR and main CI results must be verified against their own exact revisions; local results and older main runs do not substitute for them. Preserve the scope and evidence limitations in [the local acceptance report](specs/p5-closeout.md).
+
+## Current P5 Closeout Authorization and Local Acceptance (2026-10-16)
+
+The user explicitly authorized implementation of the P5 closeout plan, including tests, necessary internal test seams, test dependencies/build configuration, CI evidence gates, documentation, and the specified API 36 emulator/OnePlus system checks. Work uses an isolated checkout of main `1e696980021d1ea9fabded34b294ed3648d17c3d`, carrying the 13 T-12 documents while excluding the original workspace's diagnostic code/test changes. The original workspace remains unchanged. No product behavior fix, persistence format/public business interface change, commit, push, PR, remote setting, or release operation is included.
+
+Local acceptance passed: Debug 874 cases in 69 classes, Release-specific 6 cases in 2 classes, all with zero failures/errors/skips; the original 735 identities and 30 service test bodies remain intact. Both builds, Lint (0 errors/12 warnings each), 39 checker tests, specifications and variant-specific artifact gates passed. The two P5 T-05 tasks are complete within the documented local matrix. Modified remote CI has not run. See [P5 closeout evidence](specs/p5-closeout.md) and [diagnostic fault matrix](specs/diagnostics/fault-matrix.md).
+
+T-12 remains closed by the user's manual acceptance with its recorded evidence limitations; no JD investigation or D-01–D-05 rerun occurred. Cross-phase system, OEM backup/migration, crash, untested combinations, device Release and independent review/QA limits remain. Older documentation-only authorizations and incomplete P5 statements below are phase history, not the current P5 scope or result.
+
+## Current T-12 Manual Acceptance (2026-10-16)
+
+The user confirmed D-01–D-04 passed manual checks on the previously recorded physical phone using QQ Music and the installed Debug diagnostic build; no screenshots or logs were retained. D-05 reuses the existing scoped QQ Music paired observation. T-12 is closed as user manual acceptance, with evidence limitations retained; this is not independent revalidation or complete evidence closure. See [the acceptance record](specs/capture-save-retry/validation.md#t-12-用户手工验收收尾) and [remaining evidence limits](specs/evidence-gaps.md#g-stop).
+
+Current main is `1e696980021d1ea9fabded34b294ed3648d17c3d`; the working tree already contains diagnostic source/test changes from earlier work. This request authorizes local documentation only: preserve those changes, historical failures and stop records, both P5 T-05 gaps and all unrelated limits. Do not perform new device validation, modify code/tests/configuration, commit, push or create a PR. Earlier stop and PR-delivery statements below describe their historical stages and do not override this manual-acceptance recording request.
+
+## P6 Baseline and Workflow (Historical, 2026-10-14)
 
 As of 2026-10-14, main is `7c766fad953ad0d9867b909a3cc1675390220f8c`. P6 PR #10 is merged. Main push CI `38538180589` (attempt 1) passed all 735 cases in 61 classes, 28 checker tests, 45 documents / 9 specification IDs, debug assembly and artifact gates; Lint had 0 errors and 15 warnings. Both report archives were downloaded and verified against their sizes/digests, complete test identities and exact main checkout SHA. See [P6 merge and main CI evidence](specs/ci.md#p6-合并与主干-ci-验收).
 

@@ -46,7 +46,7 @@ jobs:
   android:
     name: Android
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,11 +73,14 @@ jobs:
             ./gradlew --version
             sdkmanager --list_installed
           } > app/build/reports/ci/environment.txt 2>&1
-      - name: Run tests, debug build and Lint
-        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --rerun-tasks --no-build-cache --continue --console=plain
+      - name: Run Debug regression, Release boundary tests, builds and Lint
+        run: ./gradlew :app:testDebugUnitTest :app:testReleaseUnitTest :app:assembleDebug :app:assembleRelease :app:lintDebug :app:lintRelease --rerun-tasks --no-build-cache --continue --console=plain
       - name: Reject missing, failed or skipped evidence
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/check_test_results.py --require-artifacts 2>&1 | tee app/build/reports/ci/android.txt
+      - name: Reject missing, failed or skipped Release evidence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/check_test_results.py --variant release --require-artifacts 2>&1 | tee app/build/reports/ci/android-release.txt
       - name: Retain Android reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -89,6 +92,10 @@ jobs:
             app/build/reports/tests/testDebugUnitTest/
             app/build/reports/lint-results-debug.html
             app/build/reports/lint-results-debug.xml
+            app/build/test-results/testReleaseUnitTest/TEST-*.xml
+            app/build/reports/tests/testReleaseUnitTest/
+            app/build/reports/lint-results-release.html
+            app/build/reports/lint-results-release.xml
           retention-days: 14
           if-no-files-found: error
 

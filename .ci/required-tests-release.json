@@ -1,0 +1,15 @@
+{
+  "variant": "release",
+  "required_cases": {
+    "com.zhenghuaizhi.flashskip.platform.accessibility.DiagnosticBuildBoundaryTest": [
+      "actualGlobalCaptureLoggerHonorsBuildGateIncludingFileCreation",
+      "packagedManifestDisablesBackupAndHasNoNetworkPermission",
+      "productionRuntimeDiagnosticFlagsMatchActualBuildType"
+    ],
+    "com.zhenghuaizhi.flashskip.platform.accessibility.ReleaseDiagnosticBoundaryTest": [
+      "actualReleaseGlobalStageDoesNotReadDiagnosticClock",
+      "globalLoggerDoesNotReadSummaryProvidersOrInvokeAnySinkMethod",
+      "productionRuntimeAndContainerDoNotCreateDiagnosticDirectory"
+    ]
+  }
+}

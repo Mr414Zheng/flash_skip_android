@@ -73,6 +73,20 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.robolectric)
     testImplementation(libs.kotlinx.coroutines.test)
+}
+
+// Release 只验收显式登记的诊断构建边界；Debug 保留完整历史回归。
+tasks.withType<Test>().configureEach {
+    doFirst { systemProperty("flashskip.testRuntimeClasspath", classpath.asPath) }
+    if (name == "testReleaseUnitTest") {
+        filter {
+            includeTestsMatching("com.zhenghuaizhi.flashskip.platform.accessibility.DiagnosticBuildBoundaryTest")
+            includeTestsMatching("com.zhenghuaizhi.flashskip.platform.accessibility.ReleaseDiagnosticBoundaryTest")
+            isFailOnNoMatchingTests = true
+        }
+    }
 }

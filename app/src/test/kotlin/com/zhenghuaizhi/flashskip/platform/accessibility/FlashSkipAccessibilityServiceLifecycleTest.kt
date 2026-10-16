@@ -78,7 +78,7 @@ import org.robolectric.util.ReflectionHelpers
 @Suppress("DEPRECATION")
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = Application::class, shadows = [P3FlashServiceShadow::class, FaultableAccessibilityNodeShadow::class, P3ActivityPackageManagerShadow::class])
-class FlashSkipAccessibilityServiceLifecycleTest {
+open class FlashSkipAccessibilityServiceLifecycleTest {
     @get:Rule val temporaryFolder = TemporaryFolder()
 
     @Test fun firstCapturedRestorePreservesRealStoredPayloadAndDefaultEventConfiguration() = runTest {
@@ -584,11 +584,13 @@ class FlashSkipAccessibilityServiceLifecycleTest {
         }
     }
 
-    private class ServiceFixture(
+    internal class ServiceFixture(
         private val testScope: TestScope,
         directory: File,
         phase: CapturePhase,
         remainingMs: Long,
+        diagnosticsEnabled: Boolean = false,
+        diagnosticContext: android.content.Context? = null,
     ) {
         val job = SupervisorJob()
         private val dispatcher = StandardTestDispatcher(testScope.testScheduler)
@@ -601,10 +603,11 @@ class FlashSkipAccessibilityServiceLifecycleTest {
         }
         val captureData = LifecycleDataStore(PreferenceDataStoreFactory.create(scope = scope) { File(directory, "capture.preferences_pb") })
         val flashData = LifecycleDataStore(PreferenceDataStoreFactory.create(scope = scope) { File(directory, "flash.preferences_pb") })
-        val capture = PreferencesRuleCaptureStore(captureData, scope)
-        val flash = PreferencesFlashSkipStore(flashData, scope)
-        private val context = RuntimeEnvironment.getApplication()
-        val container = AppContainer(context, AppContainerRuntime(scope, flash, capture, clock, clock, dispatcher, dispatcher))
+        val capture = PreferencesRuleCaptureStore(captureData, scope, ServiceDiagnosticFaults.managementTrace())
+        val flash = PreferencesFlashSkipStore(flashData, scope, ServiceDiagnosticFaults.managementTrace())
+        private val context = diagnosticContext ?: RuntimeEnvironment.getApplication()
+        val container = AppContainer(context, AppContainerRuntime(scope, flash, capture, clock, clock, dispatcher, dispatcher,
+            traceSink = ServiceDiagnosticFaults.managementTrace(), diagnosticsEnabled = diagnosticsEnabled))
         val service = Robolectric.buildService(FlashSkipAccessibilityService::class.java).create().get()
         val shadow: P3FlashServiceShadow = shadowOf(service) as P3FlashServiceShadow
         val nodes = AccessibilityFixture()
@@ -625,6 +628,7 @@ class FlashSkipAccessibilityServiceLifecycleTest {
 
         init {
             service.runtimeFactory = { container }
+            ServiceDiagnosticFaults.configure(service)
             service.automationEngineFactory = { actualContainer, gateway, engineScope ->
                 val queries = mutableListOf<PageIdentity>()
                 val observingGateway = object : PageGateway by gateway {
@@ -692,9 +696,9 @@ class FlashSkipAccessibilityServiceLifecycleTest {
         }
     }
 
-    private data class EngineEvidence(val engine: AutomationEngine, val queries: MutableList<PageIdentity>)
+    internal data class EngineEvidence(val engine: AutomationEngine, val queries: MutableList<PageIdentity>)
 
-    private class LifecycleDataStore(private val delegate: DataStore<Preferences>) : DataStore<Preferences> {
+    internal class LifecycleDataStore(private val delegate: DataStore<Preferences>) : DataStore<Preferences> {
         var readGate: CompletableDeferred<Unit>? = null
         var readFailure: IOException? = null
         override val data = flow {
