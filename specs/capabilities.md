@@ -1,6 +1,18 @@
 # FlashSkip 能力清单与验证现状
 
-## 当前状态（P6 已合并并完成主干验收）
+## P5 本地收尾（2026-10-16）
+
+在 main `1e696980021d1ea9fabded34b294ed3648d17c3d` 的隔离工作区完成本轮明确授权的测试、内部接缝、构建测试配置、CI 门禁和限定系统验证。最终 Debug 69 类／874 例、实际 Release 2 类／6 例均通过，39 个检查器通过，两变体构建／Lint／产物门禁通过，Lint 各 0 错误／12 警告。原 735 个测试身份及原工作区内容保持。
+
+SDD-008/T-05、SDD-009/T-05 按本轮限定矩阵完成本地验收；[完整结果、15 条 AC 映射及证据边界](p5-closeout.md)。没有提交／推送／PR或远端新 CI，也不构成发布就绪。G-SYS 仅补齐所列 P5 子项；OEM 备份、崩溃、未测组合、设备 Release 全出口及独立 review／QA 限制保持。下方 T-12 收尾、较早 P5 未完成和旧授权均按对应阶段保留；不改 T-12 手工结论、不恢复京东或 D-01～D-05。
+
+## T-12 最新状态（2026-10-16）
+
+用户确认已在实体手机上按 D-01～D-04 步骤手工验证通过，未留存截图或日志；D-05 复用已有 QQ 音乐限定场景记录。T-12 按用户手工验收口径收尾，详见[分项结果与限制](capture-save-retry/validation.md#t-12-用户手工验收收尾)。这不是独立复验，也不表示全部证据缺口关闭：D-01～D-04 的样本数量、持久化状态及操作时序缺少可独立核对的留存材料，见 [G-STOP](evidence-gaps.md#g-stop)。P5 两包 T-05 和其他缺口保持。
+
+本轮仅整理本地文档，不重跑设备或 Android 测试，不修改既有诊断代码／测试，不提交、推送或创建 PR。下方较早的基线、停止决定及交付授权按各阶段历史保留；本节为 T-12 当前状态，不因旧停止措辞恢复重复排查。
+
+## P6 交付状态（2026-10-14 历史）
 
 截至 2026-10-14，main 为 `7c766fad953ad0d9867b909a3cc1675390220f8c`。[PR #10](https://github.com/Mr414Zheng/flash_skip_android/pull/10) 已合并；其 [主干 CI 38538180589](https://github.com/Mr414Zheng/flash_skip_android/actions/runs/38538180589)（push／attempt 1）通过：61 类／735 例，零失败、错误、跳过；28 个检查器测试、45 份文档／9 个规格编号、Debug 构建及产物门禁通过；Lint 0 错误／15 警告。两组报告已下载并核验完整测试身份、ZIP 摘要与精确 main 检出提交，见 [P6 合并与主干验收](ci.md#p6-合并与主干-ci-验收)。
 
@@ -27,7 +39,7 @@ P6 的[日常开发流程](development-workflow.md)、[全部 66 条 AC 追踪](
 
 | 能力 / 优先级 | 主要入口 | 负责的行为与副作用 | 已有证据与缺口 |
 | --- | --- | --- | --- |
-| C01 保存与安全重试 / 已有基线 | [RuleCaptureCoordinator](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/application/rulecapture/RuleCaptureCoordinator.kt)、HomeViewModel | 合法会话保存、先关闭再提交、失败重试、取消、旧请求隔离及保存时开启竞争 | SDD-001 自动化 75 例通过；T-12 未完成且停止，不作设备完成声明 |
+| C01 保存与安全重试 / 已有基线 | [RuleCaptureCoordinator](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/application/rulecapture/RuleCaptureCoordinator.kt)、HomeViewModel | 合法会话保存、先关闭再提交、失败重试、取消、旧请求隔离及保存时开启竞争 | SDD-001 自动化 75 例通过；T-12 用户手工验收收尾，D-01～D-04 留证不足，D-05 限定复用，不作独立复验声明 |
 | C02 规则就绪与目录 / 高 | [RuleCandidateAnalyzer](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/domain/rulecapture/RuleCandidateAnalyzer.kt)、[RuleValidator](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/domain/rules/RuleValidator.kt)、[CompositeRuleCatalog](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/domain/rules/CompositeRuleCatalog.kt) | 安全样本转为规则、就绪判断、整组校验、目录发布和版本匹配；目录是派生状态 | [SDD-002](rule-readiness/spec.md) 已落盘，稳定结构政策已审定并修复；专项 32 例全部通过，见 [验证记录](rule-readiness/validation.md) |
 | C03 自动执行与动作确认 / 高 | [AutomationEngine](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/domain/automation/AutomationEngine.kt)、[PostActionObserver](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/domain/automation/PostActionObserver.kt)、[AccessibilityPageGateway](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/platform/accessibility/AccessibilityPageGateway.kt) | 前台会话、查询、点击/手势、观察确认、补点、冷却和执行记录；实际动作经 PageGateway | [SDD-003](automation-execution/spec.md) 已落盘，目录失效和最近动作事件政策已审定并修复；专项 94 例全部通过，见 [验证记录](automation-execution/validation.md) |
 | C04 采集生命周期 / 高 | [RuleCaptureCoordinator](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/application/rulecapture/RuleCaptureCoordinator.kt)、[FlashSkipAccessibilityService](../app/src/main/kotlin/com/zhenghuaizhi/flashskip/platform/accessibility/FlashSkipAccessibilityService.kt) | 配置、目标进入、阶段转换、离开/返回、过期、断连和新旧会话身份；写采集状态 | [SDD-004](capture-lifecycle/spec.md) 已落盘，生命周期测试组织 196 例全部通过，含 14 例真实服务／实际存储的 Robolectric 集成；结果见 [验证](capture-lifecycle/validation.md) |

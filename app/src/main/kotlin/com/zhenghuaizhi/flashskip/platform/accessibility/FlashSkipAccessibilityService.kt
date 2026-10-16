@@ -12,6 +12,8 @@ import com.zhenghuaizhi.flashskip.AppContainer
 import com.zhenghuaizhi.flashskip.domain.automation.AutomationEngine
 import com.zhenghuaizhi.flashskip.domain.automation.ForegroundSignal
 import com.zhenghuaizhi.flashskip.domain.model.CaptureFailure
+import com.zhenghuaizhi.flashskip.domain.model.CaptureFailureDiagnostics
+import com.zhenghuaizhi.flashskip.domain.model.TargetWindowDiagnostics
 import com.zhenghuaizhi.flashskip.domain.model.CaptureEventTiming
 import com.zhenghuaizhi.flashskip.domain.model.CapturePhase
 import com.zhenghuaizhi.flashskip.domain.model.CaptureSession
@@ -63,6 +65,16 @@ class FlashSkipAccessibilityService : AccessibilityService() {
     internal var runtimeFactory: (() -> AppContainer)? = null
     internal var automationEngineFactory: ((AppContainer, PageGateway, CoroutineScope) -> AutomationEngine)? = null
     private val targetWindowDiagnosticsTracker = TargetWindowDiagnosticsTracker()
+    // 仅诊断摘要使用这些内部提供者；业务恢复与保存的快照仍走原有路径。
+    internal var diagnosticSnapshotProvider: (CaptureSession) -> CaptureFailureDiagnostics? = { session ->
+        session.failureDiagnostics ?: captureAdapter?.timeoutDiagnostics(session.id)
+    }
+    internal var diagnosticWindowProvider: (CaptureSession) -> TargetWindowDiagnostics? = { session ->
+        session.targetWindowDiagnostics ?: targetWindowDiagnosticsTracker.snapshot(
+            expectedSessionId = session.id,
+            nowElapsedMs = container.monotonicClock.elapsedRealtimeMs(),
+        )
+    }
     private var pendingVerifiedWindowPackage: String? = null
     private val pendingForegroundWindow = PendingForegroundWindow()
 
@@ -702,13 +714,8 @@ class FlashSkipAccessibilityService : AccessibilityService() {
         CaptureTraceLog.summary(
             session,
             reason,
-            diagnostics = { session.failureDiagnostics ?: captureAdapter?.timeoutDiagnostics(session.id) },
-            targetWindow = {
-                session.targetWindowDiagnostics ?: targetWindowDiagnosticsTracker.snapshot(
-                    expectedSessionId = session.id,
-                    nowElapsedMs = container.monotonicClock.elapsedRealtimeMs(),
-                )
-            },
+            diagnostics = { diagnosticSnapshotProvider(session) },
+            targetWindow = { diagnosticWindowProvider(session) },
             savedSample = savedSample,
         )
     }
